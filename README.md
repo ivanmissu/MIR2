@@ -21,3 +21,7 @@ Double click DelphiX60.dpk, Open Package dialog, Install this component.
 4.Install TWMImage Component  
 cd D:\GameOfMir\MirClient  
 Double click MirGame.dpk, Open Package dialog, Install this component.
+
+## Java migration baseline
+
+The execution baseline described in `GameOfMir/doc/mir2-java-development-plan.md` starts under `java-server/`. The S0 protocol slice currently includes the packed 12-byte message, legacy 6-bit codec, GBK byte-boundary helpers, extracted protocol constants, and CI tests. See `java-server/README.md` and `java-server/docs/g0-checklist.md`.
