@@ -12,6 +12,9 @@ public record ServerConfig(
     GatePorts ports,
     String advertisedHost,
     String serverName,
+    Path mapFile,
+    String mapId,
+    int worldTickMillis,
     String bootstrapUser,
     String bootstrapPassword) {
 
@@ -20,7 +23,10 @@ public record ServerConfig(
     Objects.requireNonNull(ports, "ports");
     advertisedHost = requireText(advertisedHost, "advertised host");
     serverName = requireText(serverName, "server name");
+    mapId = requireText(mapId, "map id");
     if (serverName.indexOf('/') >= 0) throw new IllegalArgumentException("server name must not contain '/'");
+    if (worldTickMillis < 1 || worldTickMillis > 10_000)
+      throw new IllegalArgumentException("world tick interval must be between 1 and 10000 milliseconds");
     if ((bootstrapUser == null) != (bootstrapPassword == null))
       throw new IllegalArgumentException("bootstrap user and password must be configured together");
     if (bootstrapUser != null && (bootstrapUser.isBlank() || bootstrapPassword.isEmpty()))
@@ -40,6 +46,9 @@ public record ServerConfig(
             port(environment, "MIR2_GAME_PORT", GatePorts.DEFAULT_GAME)),
         value(environment, "MIR2_ADVERTISED_HOST", "127.0.0.1"),
         value(environment, "MIR2_SERVER_NAME", "MIR2"),
+        nullablePath(environment.get("MIR2_MAP_FILE")),
+        value(environment, "MIR2_MAP_ID", "0"),
+        positiveInt(environment, "MIR2_WORLD_TICK_MS", 50),
         nullable(environment.get("MIR2_BOOTSTRAP_USER")),
         nullable(environment.get("MIR2_BOOTSTRAP_PASSWORD")));
   }
@@ -62,8 +71,24 @@ public record ServerConfig(
     return value == null || value.isBlank() ? fallback : value.trim();
   }
 
+  private static int positiveInt(Map<String, String> environment, String key, int fallback) {
+    String raw = value(environment, key, Integer.toString(fallback));
+    try {
+      int result = Integer.parseInt(raw);
+      if (result <= 0) throw new NumberFormatException();
+      return result;
+    } catch (NumberFormatException error) {
+      throw new IllegalArgumentException(key + " must be a positive integer", error);
+    }
+  }
+
   private static String nullable(String value) {
-    return value == null || value.isBlank() ? null : value;
+    return value == null || value.isBlank() ? null : value.trim();
+  }
+
+  private static Path nullablePath(String value) {
+    String normalized = nullable(value);
+    return normalized == null ? null : Path.of(normalized);
   }
 
   private static String requireText(String value, String name) {
