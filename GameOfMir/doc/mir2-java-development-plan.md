@@ -19,13 +19,13 @@
 | ✅ 完成 | W02：登录+选角最小路径中的账号/角色领域模型 | 注册、登录、会话、角色列表、创建、删除 | `java-server/auth`、`java-server/character` |
 | 🟡 部分完成 | W01：20 组 golden | 已有 20 组确定性回环向量；尚未接入 Delphi 实际抓包 golden | `java-server/docs/g0-checklist.md` |
 | 🟡 部分完成 | W02：SQLite 数据存储 | 当前为内存实现，SQLite DAO 尚未实现 | 下一步补 persistence 模块 |
-| ⬜ 未开始 | W02：Netty 接入骨架（7000/7100/7200） | 尚未实现 | 当前下一步 |
+| 🟡 部分完成 | W02：接入骨架（7000/7100/7200） | 已完成 JDK TCP 三监听器 PoC；Netty 替换、协议路由和限速未完成 | `java-server/gate`；下一步接入会话路由 |
 | ⬜ 未开始 | W03：tick、地图、移动广播 | 尚未实现 | 完成接入层后开始 |
 | ⬜ 未开始 | W03：近战怪、击杀、掉落、拾取 | 尚未实现 | 完成 tick/world 后开始 |
 
 ### 当前下一步（Next Session）
 
-1. 建立 `gate` 模块，统一定义 7000（登录）、7100（选角）、7200（游戏）端口和连接生命周期。
+1. 将 `gate` 的连接生命周期接入登录/选角/游戏会话路由，并补充协议帧解析。
 2. 将 `AuthService`、`CharacterService` 接入会话路由，形成登录→角色列表→创建/删除/选择的服务端最小链路。
 3. 建立 `persistence` 模块和 SQLite schema/DAO，替换当前内存账号与角色存储，并补充重启恢复测试。
 4. 完成后再进入 W03：单逻辑线程 tick、空世界、移动广播。
