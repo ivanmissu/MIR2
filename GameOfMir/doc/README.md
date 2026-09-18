@@ -6,11 +6,11 @@
 
 | # | 文档 | 文件 | 定位 |
 |---|------|------|------|
-| ① | **MIR2 项目分析报告** | [mir2-analysis-report.html](mir2-analysis-report.html) | 代码库全景：系统架构、模块解析、协议剖析、技术债务 —— **认知基线** |
-| ② | **Java 迁移可行性评估报告** | [mir2-java-migration-feasibility.html](mir2-java-migration-feasibility.html) | Delphi→Java 迁移的代码取证与 12 章 GO/NO-GO 评估 —— **决策基线** |
-| ③ | **Java 迁移开发计划书** | [mir2-java-development-plan.html](mir2-java-development-plan.html) | 30 周 / 6 决策门 / 240 人日执行蓝图：阶段任务、工程规范、CI/CD、预算 —— **执行基线** |
+| ① | **MIR2 项目分析报告** | [mir2-analysis-report.md](mir2-analysis-report.md) | 代码库全景：系统架构、模块解析、协议剖析、技术债务 —— **认知基线** |
+| ② | **Java 迁移可行性评估报告** | [mir2-java-migration-feasibility.md](mir2-java-migration-feasibility.md) | Delphi→Java 迁移的代码取证与 12 章 GO/NO-GO 评估 —— **决策基线** |
+| ③ | **Java 迁移开发计划书** | [mir2-java-development-plan.md](mir2-java-development-plan.md) | 30 周 / 6 决策门 / 240 人日执行蓝图：阶段任务、工程规范、CI/CD、预算 —— **执行基线** |
 
-> 三份文档为自包含 HTML（暗色主题，无外部依赖），直接用浏览器打开即可，建议按 ① → ② → ③ 顺序阅读。
+> 三份文档均为 Markdown 格式，在 GitHub 上可直接阅读（含 Mermaid 架构图、表格与目录锚点），建议按 ① → ② → ③ 顺序阅读。
 
 ## 📄 原有文档
 
