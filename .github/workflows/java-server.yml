@@ -55,5 +55,7 @@ jobs:
           done
           cat "$RUNNER_TEMP/mir2-server.log"
           exit 1
-      - name: Build Docker image
-        run: docker build --tag mir2-java-server:ci .
+      - name: Validate Compose and build Docker image
+        run: |
+          docker compose --file compose.yml config
+          docker build --tag mir2-java-server:ci .
