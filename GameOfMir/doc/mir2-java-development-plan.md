@@ -6,6 +6,30 @@
 
 本计划以《可行性评估报告》的 GO 结论为基线，将 8–12 人月的迁移工程拆解为 **1 个 PoC + 5 个阶段（P0–P4）+ 6 道决策门（G0–G5）**，覆盖团队分工、周级任务分解、工程规范、 CI/CD、发布回滚与预算，可直接作为项目执行与跟踪的依据。
 
+> **执行状态（截至 2026-09-18）**：已完成 S0/W01 的协议基座和 W02 的账号/角色服务 PoC，当前处于 **S0 PoC：接入层与真实客户端链路之前**。下次继续开发请从「当前下一步」开始；本节和第 15 节的状态以代码实际完成情况为准。
+
+## ✅ 当前执行进度（Session Handoff）
+
+| 状态 | 计划任务 | 已交付内容 | 代码位置 / 验收依据 |
+| --- | --- | --- | --- |
+| ✅ 完成 | W01：Grobal2 常量与 12B codec | `TDefaultMessage` 小端序编解码；302 个 `CM_ / SM_` 常量 | `java-server/protocol/DefaultMessage.java`、`ProtocolConstants.java`；`ProtocolTest` |
+| ✅ 完成 | W01：EDcode 6-bit | OLDMODE 6-bit 编解码及消息封装 | `java-server/protocol/SixBitCodec.java`、`MessageCodec.java` |
+| ✅ 完成 | W01：DES | DES/ECB/NoPadding + Delphi 零填充兼容封装 | `java-server/protocol/DesCodec.java`；回环测试 |
+| ✅ 完成 | W01：GBK 字节语义 | 按 GBK 字节截断角色名，避免中文半字符截断 | `java-server/protocol/ByteStrings.java`；边界测试 |
+| ✅ 完成 | W02：登录+选角最小路径中的账号/角色领域模型 | 注册、登录、会话、角色列表、创建、删除 | `java-server/auth`、`java-server/character` |
+| 🟡 部分完成 | W01：20 组 golden | 已有 20 组确定性回环向量；尚未接入 Delphi 实际抓包 golden | `java-server/docs/g0-checklist.md` |
+| 🟡 部分完成 | W02：SQLite 数据存储 | 当前为内存实现，SQLite DAO 尚未实现 | 下一步补 persistence 模块 |
+| ⬜ 未开始 | W02：Netty 接入骨架（7000/7100/7200） | 尚未实现 | 当前下一步 |
+| ⬜ 未开始 | W03：tick、地图、移动广播 | 尚未实现 | 完成接入层后开始 |
+| ⬜ 未开始 | W03：近战怪、击杀、掉落、拾取 | 尚未实现 | 完成 tick/world 后开始 |
+
+### 当前下一步（Next Session）
+
+1. 建立 `gate` 模块，统一定义 7000（登录）、7100（选角）、7200（游戏）端口和连接生命周期。
+2. 将 `AuthService`、`CharacterService` 接入会话路由，形成登录→角色列表→创建/删除/选择的服务端最小链路。
+3. 建立 `persistence` 模块和 SQLite schema/DAO，替换当前内存账号与角色存储，并补充重启恢复测试。
+4. 完成后再进入 W03：单逻辑线程 tick、空世界、移动广播。
+
 ## 📑 目录
 
 - [01 · 计划总览（Overview）](#overview)
@@ -379,6 +403,7 @@ staging 从 P1 起常驻（对拍需要）；prod 在 W28 预备。**所有环�
 | 版本 | 日期 | 变更 |
 | --- | --- | --- |
 | `v1.0` | `2026-09-18` | 首次发布：基于可行性评估 v1.1 的 GO 结论编制；30 周计划 / 6 决策门 / 240 人日 |
+| `v1.0.1` | `2026-09-18` | 增加执行状态与会话交接记录：S0/W01 协议基座完成，W02 账号/角色领域服务完成，明确下一步为 gate + SQLite + 最小链路 |
 
 > [!WARNING]
 > **合规声明：**本计划仅用于技术学习与私密社区研究。传奇 IP 与美术资源版权归盛趣游戏 / Wemade 所有； 禁止商业运营、公开拉新与客户端资源分发。上线运营前请再次确认法律边界（详见评估报告第 09 节 R8）。
