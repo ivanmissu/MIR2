@@ -5,9 +5,14 @@ import com.mir2.character.CharacterService;
 import com.mir2.gate.GateServer;
 import com.mir2.gate.SessionRouter;
 import com.mir2.persistence.SqliteStore;
+import com.mir2.world.GameMap;
+import com.mir2.world.Mir2MapLoader;
+import com.mir2.world.WorldEngine;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -22,6 +27,7 @@ public final class Mir2Server implements AutoCloseable {
   private final AtomicBoolean started = new AtomicBoolean();
   private final AtomicBoolean closed = new AtomicBoolean();
   private SqliteStore store;
+  private WorldEngine world;
   private GateServer gates;
 
   public Mir2Server(ServerConfig config) {
@@ -44,12 +50,26 @@ public final class Mir2Server implements AutoCloseable {
         LOG.info(() -> "Created bootstrap account '" + config.bootstrapUser() + "'");
       }
 
+      GameMap initialMap;
+      if (config.mapFile() == null) {
+        initialMap = GameMap.empty(config.mapId(), "PoC empty map", 256, 256);
+      } else {
+        Path mapFile = config.mapFile().toAbsolutePath().normalize();
+        initialMap = Mir2MapLoader.load(config.mapId(), mapFile);
+      }
+      world = new WorldEngine(
+          new WorldEngine.Config(Duration.ofMillis(config.worldTickMillis()), 12, 10_000),
+          List.of(initialMap));
+      world.start();
+
       CharacterService characters = new CharacterService(store);
       gates = new GateServer(config.ports(), new SessionRouter(auth, characters), config.gateConfig());
       gates.start();
       LOG.info(() -> "MIR2 Java server started: login=" + config.ports().login()
           + ", select=" + config.ports().select() + ", game=" + config.ports().game()
-          + ", advertisedHost=" + config.advertisedHost() + ", database=" + database);
+          + ", advertisedHost=" + config.advertisedHost() + ", database=" + database
+          + ", map=" + initialMap.id() + "(" + initialMap.width() + "x" + initialMap.height() + ")"
+          + ", worldTickMs=" + config.worldTickMillis());
     } catch (IOException | RuntimeException error) {
       close();
       throw error;
@@ -57,7 +77,9 @@ public final class Mir2Server implements AutoCloseable {
   }
 
   public boolean isRunning() {
-    return gates != null && gates.isRunning() && !closed.get();
+    return gates != null && gates.isRunning()
+        && world != null && world.isRunning()
+        && !closed.get();
   }
 
   public void awaitShutdown() throws InterruptedException {
@@ -68,6 +90,7 @@ public final class Mir2Server implements AutoCloseable {
   public void close() {
     if (!closed.compareAndSet(false, true)) return;
     if (gates != null) gates.close();
+    if (world != null) world.close();
     if (store != null) store.close();
     stopped.countDown();
     LOG.info("MIR2 Java server stopped");

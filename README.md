@@ -25,6 +25,7 @@ Java 服务端。
     ├── gate/           网关层：三端口 Socket 服务与会话路由
     ├── auth/           账号认证
     ├── character/      角色列表 / 创建 / 删除 / 选择
+    ├── world/          单线程 Tick、地图碰撞、对象生命周期与视野广播
     ├── persistence/    SQLite 持久化
     └── bootstrap/      进程启动入口与可执行 JAR 打包
 ```
@@ -40,6 +41,9 @@ Java 服务端。
 - 三端口 Socket 服务器，兼容旧版 `#<序号><消息头><消息体>!` 帧格式
 - 登录认证、服务器选择、角色列表 / 创建 / 删除 / 选择 的完整映射
 - 账号与角色的 SQLite 持久化
+- W03 世界核心：50ms 单逻辑线程 Tick、命令队列、对象进入/离开与确定性生命周期
+- Delphi `.map` 文件加载（52 字节头、12 字节列优先单元）及背景/前景碰撞标志
+- 八方向走路/跑步、动态占位碰撞、12 格方形视野与出现/移动/消失事件广播
 - 可执行 shaded JAR 与 Docker Compose 打包
 
 ## 环境要求
@@ -94,6 +98,9 @@ java -jar java-server/bootstrap/target/mir2-server.jar
 | `MIR2_GAME_PORT` | `7200` | 游戏网关监听端口 |
 | `MIR2_ADVERTISED_HOST` | `127.0.0.1` | 下发给客户端的下一段连接地址 |
 | `MIR2_SERVER_NAME` | `MIR2` | 显示给客户端的服务器名称 |
+| `MIR2_MAP_FILE` | 未设置 | 可选：首张 Delphi `.map` 文件；未设置时建立 256×256 空白 PoC 地图 |
+| `MIR2_MAP_ID` | `0` | 首张地图 ID（对应客户端地图文件名） |
+| `MIR2_WORLD_TICK_MS` | `50` | 世界逻辑 Tick 间隔（毫秒） |
 | `MIR2_BOOTSTRAP_USER` | 未设置 | 可选：初始测试账号名 |
 | `MIR2_BOOTSTRAP_PASSWORD` | 未设置 | 与初始账号配套的密码 |
 
@@ -149,8 +156,9 @@ docker compose -f java-server/compose.yml up --build
 
 - 编译与启动冒烟测试**尚不能**证明与真实 `mir2.exe` 完全兼容，真实客户端联调验证仍在
   进行中；
-- 游戏世界逻辑（W03 阶段：移动、战斗、怪物、物品等）尚未开始，当前进入 7200 端口后仅
-  有基础会话；
+- W03 的世界内核、地图碰撞和移动视野事件已经实现，但 **7200 游戏网关尚未把真实客户端
+  的 RunLogin / CM_WALK / CM_RUN 消息接入世界命令队列**，因此客户端当前仍不能实际进图行走；
+- 战斗、怪物 AI、掉落、拾取和背包尚未实现；
 - DES 封装已按 Delphi 语义实现，但仍需 Delphi 端密文金样本做最终核对。
 
 ## 参与迁移
