@@ -6,6 +6,7 @@ This is the first executable slice of the development plan: a dependency-free pr
 
 - packed Delphi `TDefaultMessage` (12 bytes, little-endian)
 - legacy OLDMODE 6-bit transport encoding/decoding
+- DES compatibility wrapper with Delphi zero-padding semantics
 - GBK boundary helpers with byte—not UTF-16 character—limits
 - 20 deterministic message round-trip golden vectors plus binary and GBK edge tests
 - 302 `CM_` / `SM_` constants mechanically extracted from `Grobal2.pas`

@@ -17,3 +17,4 @@
 - [ ] Delphi-captured byte-for-byte vectors
 - [ ] unmodified client login
 - [ ] Linux container build
+| `Common/DES.pas:EncryStr/DecryStr` | `protocol/DesCodec` | implemented with DES/ECB/NoPadding + zero padding; requires Delphi ciphertext golden vectors |
