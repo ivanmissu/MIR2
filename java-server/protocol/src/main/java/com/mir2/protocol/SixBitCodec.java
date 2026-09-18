@@ -13,7 +13,7 @@ public final class SixBitCodec {
  public static byte[] decode(byte[] encoded){
   ByteArrayOutputStream out=new ByteArrayOutputStream(encoded.length*3/4); int bitPos=2,madeBits=0,tmp=0;
   for(byte raw:encoded){int ch=(raw&255)-0x3c;if(ch<0)break;if(madeBits+6>=8){out.write((tmp|((ch&63) >>> (6-bitPos)))&255);madeBits=0;if(bitPos<6)bitPos+=2;else{bitPos=2;continue;}}
-   tmp=((ch<<bitPos)&(0xff << (8-bitPos)))&255; madeBits+=8-bitPos;}
+   tmp=((ch<<bitPos)&((0xff << bitPos)&0xff))&255; madeBits+=8-bitPos;}
   return out.toByteArray();
  }
  public static String encodeString(byte[] bytes){return new String(encode(bytes),java.nio.charset.StandardCharsets.ISO_8859_1);}
