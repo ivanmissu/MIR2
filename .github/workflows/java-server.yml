@@ -5,8 +5,6 @@ on:
     paths:
       - 'java-server/**'
       - '.github/workflows/java-server.yml'
-permissions:
-  contents: write
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -42,14 +40,6 @@ jobs:
           path: java-server/bootstrap/target/mir2-server.jar
           if-no-files-found: error
           retention-days: 7
-      - name: Expose JAR through Git object API
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          blob_sha=$(base64 -w0 bootstrap/target/mir2-server.jar \
-            | jq -Rs '{content: ., encoding: "base64"}' \
-            | gh api --method POST "repos/${GITHUB_REPOSITORY}/git/blobs" --input - --jq .sha)
-          echo "::notice title=MIR2 executable JAR blob::$blob_sha"
       - name: Smoke-test executable JAR
         shell: bash
         run: |
