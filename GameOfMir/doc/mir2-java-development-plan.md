@@ -18,7 +18,7 @@
 | ✅ 完成 | W01：GBK 字节语义 | 按 GBK 字节截断角色名，避免中文半字符截断 | `java-server/protocol/ByteStrings.java`；边界测试 |
 | ✅ 完成 | W02：登录+选角最小路径中的账号/角色领域模型 | 注册、登录、会话、角色列表、创建、删除 | `java-server/auth`、`java-server/character` |
 | 🟡 部分完成 | W01：20 组 golden | 已有 20 组确定性回环向量；尚未接入 Delphi 实际抓包 golden | `java-server/docs/g0-checklist.md` |
-| 🟡 部分完成 | W02：SQLite 数据存储 | 当前为内存实现，SQLite DAO 尚未实现 | 下一步补 persistence 模块 |
+| 🟡 部分完成 | W02：SQLite 数据存储 | 已完成 SQLite schema/JDBC 账号与角色 DAO；AuthService/CharacterService 尚未切换到该 DAO | `java-server/persistence`；下一步完成服务注入与重启恢复集成 |
 | 🟡 部分完成 | W02：接入骨架（7000/7100/7200） | 已完成三监听器、16 字节 wire codec、Auth/Character 会话路由；Netty 替换、限速和真实客户端字段映射未完成 | `java-server/gate`；下一步接入 SQLite 与真实 socket handler |
 | ⬜ 未开始 | W03：tick、地图、移动广播 | 尚未实现 | 完成接入层后开始 |
 | ⬜ 未开始 | W03：近战怪、击杀、掉落、拾取 | 尚未实现 | 完成 tick/world 后开始 |
