@@ -22,7 +22,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          mvn --batch-mode --no-transfer-progress test 2>&1 | tee maven-test.log
+          mvn --batch-mode --no-transfer-progress verify 2>&1 | tee maven-test.log
           status=${PIPESTATUS[0]}
           if (( status != 0 )); then
             while IFS= read -r line; do

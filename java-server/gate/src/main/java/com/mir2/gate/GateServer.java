@@ -17,6 +17,7 @@ public final class GateServer implements AutoCloseable {
   private final BiConsumer<ClientConnection, IOException> handler;
   private final ExecutorService connections = Executors.newVirtualThreadPerTaskExecutor();
   private final List<ServerSocket> listeners = new CopyOnWriteArrayList<>();
+  private final List<ClientConnection> clients = new CopyOnWriteArrayList<>();
   private volatile boolean running;
 
   public GateServer(GatePorts ports, BiConsumer<ClientConnection, IOException> handler) {
@@ -52,7 +53,15 @@ public final class GateServer implements AutoCloseable {
         Socket socket = server.accept();
         socket.setKeepAlive(true);
         ClientConnection connection = new ClientConnection(socket, kind);
-        connections.submit(() -> handler.accept(connection, null));
+        clients.add(connection);
+        connections.submit(() -> {
+          try {
+            handler.accept(connection, null);
+          } finally {
+            clients.remove(connection);
+            connection.close();
+          }
+        });
       } catch (IOException error) {
         if (!server.isClosed()) handler.accept(null, error);
       }
@@ -74,6 +83,8 @@ public final class GateServer implements AutoCloseable {
       }
     }
     listeners.clear();
+    for (ClientConnection client : clients) client.close();
+    clients.clear();
     connections.shutdownNow();
   }
 }
