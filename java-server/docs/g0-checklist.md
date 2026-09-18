@@ -8,7 +8,7 @@ This checklist deliberately distinguishes local deterministic checks from claims
 | 20 golden vectors | Partial | 20 deterministic round trips exist; replace/add Delphi-captured wire vectors |
 | 6-bit codec | Partial | OLD mode round trips; verify against captured `EDcode.pas` output |
 | GBK byte limits | Pass | boundary unit test, including incomplete multibyte prefix |
-| Real client login | Not started | implement auth/session and Netty ports |
+| Real client login | Partial | socket framing and login/selection handler implemented; validate against mir2.exe and captured traffic |
 | Walk/kill/pickup/relogin | Not started | implement engine MVP |
 | 50 bots × 1 hour | Not started | implement bot harness |
 | Linux container build | CI configured | requires GitHub Actions run with JDK 21 |

@@ -10,6 +10,8 @@ This is the first executable slice of the development plan: a dependency-free pr
 - GBK boundary helpers with byte—not UTF-16 character—limits
 - 20 deterministic message round-trip golden vectors plus binary and GBK edge tests
 - 302 `CM_` / `SM_` constants mechanically extracted from `Grobal2.pas`
+- three-port socket handler with legacy `#<sequence><header><body>!` framing
+- initial Delphi-compatible login, server selection, character list/create/delete/select field mapping
 
 The repository environment does not include JDK/Maven, so CI is the authoritative build environment. Run with JDK 21 and Maven 3.9+:
 
