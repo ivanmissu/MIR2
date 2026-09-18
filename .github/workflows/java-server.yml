@@ -1,0 +1,21 @@
+name: Java server protocol baseline
+on:
+  pull_request:
+  push:
+    paths:
+      - 'java-server/**'
+      - '.github/workflows/java-server.yml'
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: java-server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - run: mvn --batch-mode --no-transfer-progress test

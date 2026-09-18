@@ -6,6 +6,60 @@
 
 本计划以《可行性评估报告》的 GO 结论为基线，将 8–12 人月的迁移工程拆解为 **1 个 PoC + 5 个阶段（P0–P4）+ 6 道决策门（G0–G5）**，覆盖团队分工、周级任务分解、工程规范、 CI/CD、发布回滚与预算，可直接作为项目执行与跟踪的依据。
 
+> **执行状态（截至 2026-09-18）**：S0/W01 协议基座已完成；W02 账号、角色、SQLite 持久化已完成；Gate 接入骨架和会话路由已完成初版。当前处于 **S0 PoC：真实客户端字段映射和 W03 游戏世界闭环之前**。下次继续开发请从本节的「当前下一步」开始；未完成项统一见「未完成清单」。
+
+## ✅ 当前执行进度（Session Handoff）
+
+| 状态 | 计划任务 | 已交付内容 | 代码位置 / 验收依据 |
+| --- | --- | --- | --- |
+| ✅ 完成 | W01：Grobal2 常量与 12B codec | `TDefaultMessage` 小端序编解码；302 个 `CM_ / SM_` 常量 | `java-server/protocol/DefaultMessage.java`、`ProtocolConstants.java`；`ProtocolTest` |
+| ✅ 完成 | W01：EDcode 6-bit | OLDMODE 6-bit 编解码及消息封装 | `java-server/protocol/SixBitCodec.java`、`MessageCodec.java` |
+| ✅ 完成 | W01：DES | DES/ECB/NoPadding + Delphi 零填充兼容封装 | `java-server/protocol/DesCodec.java`；回环测试 |
+| ✅ 完成 | W01：GBK 字节语义 | 按 GBK 字节截断角色名，避免中文半字符截断 | `java-server/protocol/ByteStrings.java`；边界测试 |
+| ✅ 完成 | W02：登录+选角最小路径中的账号/角色领域模型 | 注册、登录、会话、角色列表、创建、删除 | `java-server/auth`、`java-server/character` |
+| 🟡 部分完成 | W01：20 组 golden | 已有 20 组确定性回环向量；尚未接入 Delphi 实际抓包 golden | `java-server/docs/g0-checklist.md` |
+| ✅ 完成 | W02：SQLite 数据存储 | AuthService、CharacterService 已支持注入 SQLiteStore；账号/角色数据通过 SQLite 持久化并可重启恢复 | `java-server/persistence`；集成测试待 CI/JDK 执行 |
+| 🟡 部分完成 | W02：接入骨架（7000/7100/7200） | 已完成三监听器、16 字节 wire codec、Auth/Character 会话路由；真实 socket handler、Netty 替换、限速和客户端字段映射未完成 | `java-server/gate`；下一步为真实 socket handler 与客户端消息映射 |
+| ⬜ 未开始 | W03：tick、地图、移动广播 | 尚未实现 | 完成接入层后开始 |
+| ⬜ 未开始 | W03：近战怪、击杀、掉落、拾取 | 尚未实现 | 完成 tick/world 后开始 |
+
+### 当前下一步（Next Session）
+
+1. 在 `GateServer` 中接入实际 socket handler：按 GateKind 建立连接状态、读取 `WireMessageCodec` 消息并分发响应。
+2. 根据 `Grobal2.pas` 核对登录/选角消息字段，完成真实客户端的账号登录、角色列表、创建、删除、选择响应映射。
+3. 在 CI 中执行 Maven/JDK 21 全量测试，修复跨模块集成问题；补充 SQLite 文件重启恢复的 CI 报告。
+4. 完成以上接入链路后，进入 W03：单逻辑线程 tick、空世界、地图加载和移动广播。
+
+### 未完成清单（明确边界）
+
+#### S0 PoC
+
+- ⬜ Delphi 实际 traffic recorder 与 20 组字节级 golden 对拍
+- ⬜ 真 `mir2.exe` 登录、选区、角色列表、建删角色、进入世界
+- ⬜ Tick 循环、地图加载、移动广播
+- ⬜ 近战怪、击杀、掉落、拾取、重登不丢档
+- ⬜ 50 机器人 × 1 小时稳定性验证
+- ⬜ G0 决策门评审与 v0.1 基线 tag
+
+#### P0/P1
+
+- ⬜ 完整 216 SM_ / 51 CM_ 协议字段规格和 golden 套件
+- ⬜ Netty 正式接入、IP 黑名单、连接限制、限速、防加速校验
+- ⬜ 旧 IdDB/Hum.DB/Mir.DB 迁移器
+- ⬜ env-lint 与 Envir 资源扫描
+- ⬜ traffic-recorder / replayer / bot-swarm 三件套
+- ⬜ Web 控制台
+
+#### P2–P4
+
+- ⬜ 地图碰撞、对象生命周期、九宫格视野、战斗和经验
+- ⬜ 物品、背包、装备、存档周期保存
+- ⬜ 57 种怪物 AI、59 个技能、NPC 脚本
+- ⬜ 交易、组队、PK、红名、行会、攻城
+- ⬜ 500 机器人 × 4 小时压测、灰度、Docker 双架构、上线回滚演练
+
+> **当前已完成的范围只到账号/角色领域服务和接入层 PoC，以上未完成项不得视为已支持。**
+
 ## 📑 目录
 
 - [01 · 计划总览（Overview）](#overview)
@@ -379,6 +433,8 @@ staging 从 P1 起常驻（对拍需要）；prod 在 W28 预备。**所有环�
 | 版本 | 日期 | 变更 |
 | --- | --- | --- |
 | `v1.0` | `2026-09-18` | 首次发布：基于可行性评估 v1.1 的 GO 结论编制；30 周计划 / 6 决策门 / 240 人日 |
+| `v1.0.1` | `2026-09-18` | 增加执行状态与会话交接记录：S0/W01 协议基座完成，W02 账号/角色领域服务完成，明确下一步为 gate + SQLite + 最小链路 |
+| `v1.0.2` | `2026-09-18` | 更新已完成/未完成矩阵：Gate 初版、会话路由、SQLite 注入与重启恢复已完成；明确真实客户端链路、W03 世界闭环及 P0–P4 未完成项 |
 
 > [!WARNING]
 > **合规声明：**本计划仅用于技术学习与私密社区研究。传奇 IP 与美术资源版权归盛趣游戏 / Wemade 所有； 禁止商业运营、公开拉新与客户端资源分发。上线运营前请再次确认法律边界（详见评估报告第 09 节 R8）。
