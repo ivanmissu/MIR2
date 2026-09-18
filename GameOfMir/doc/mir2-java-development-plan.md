@@ -18,7 +18,7 @@
 | ✅ 完成 | W01：GBK 字节语义 | 按 GBK 字节截断角色名，避免中文半字符截断 | `java-server/protocol/ByteStrings.java`；边界测试 |
 | ✅ 完成 | W02：登录+选角最小路径中的账号/角色领域模型 | 注册、登录、会话、角色列表、创建、删除 | `java-server/auth`、`java-server/character` |
 | 🟡 部分完成 | W01：20 组 golden | 已有 20 组确定性回环向量；尚未接入 Delphi 实际抓包 golden | `java-server/docs/g0-checklist.md` |
-| ✅ 完成 | W02：SQLite 数据存储 | AuthService、CharacterService 已支持注入 SQLiteStore；账号/角色数据通过 SQLite 持久化并可重启恢复 | `java-server/persistence`；集成测试待 CI/JDK 执行 |
+| ✅ 完成 | W02：SQLite 数据存储 | AuthService、CharacterService 已支持注入 SQLiteStore；账号/角色数据通过 SQLite 持久化并可重启恢复；JDK 21 CI 全量测试已通过 | `java-server/persistence`；GitHub Actions run `35327565795` |
 | 🟡 部分完成 | W02：接入骨架（7000/7100/7200） | 已完成三监听器、`#序号+消息头+消息体!` 分帧、连接状态、整数认证码桥接和登录/选服/角色查询建删选字段映射；Netty 替换、限速及真客户端验证未完成 | `java-server/gate`；`LegacyGateHandlerTest`、`WireMessageCodecTest` |
 | ⬜ 未开始 | W03：tick、地图、移动广播 | 尚未实现 | 完成接入层后开始 |
 | ⬜ 未开始 | W03：近战怪、击杀、掉落、拾取 | 尚未实现 | 完成 tick/world 后开始 |
@@ -27,7 +27,7 @@
 
 1. 用真 `mir2.exe` 和 Delphi 抓包验证已实现的分帧及登录/选角字段，修正认证、应答确认符和异常码差异。
 2. 为接入层补充连接数限制、消息大小/频率限制与空闲超时，再评估用 Netty 替换当前虚拟线程 socket transport。
-3. 在 CI 中执行 Maven/JDK 21 全量测试，修复跨模块集成问题；补充 SQLite 文件重启恢复的 CI 报告。
+3. 保持 Maven/JDK 21 CI 全绿；当前全量测试已在 GitHub Actions run `35327565795` 通过，后续为真实抓包补 golden 后继续扩充门禁。
 4. 接入链路验证后进入 W03：单逻辑线程 tick、空世界、地图加载和移动广播。
 
 ### 未完成清单（明确边界）
