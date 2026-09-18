@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MIR2 服务端 Java 化迁移 · 开发计划书</title>
+<style>
+  :root{
+    --bg:#0d0f14; --bg2:#12151d; --card:#171b25; --card2:#1d2230;
+    --border:#262c3a; --border2:#333b4e;
+    --gold:#e8c064; --gold2:#c9973a; --amber:#f0a04b;
+    --text:#d7dce6; --muted:#8b93a5; --dim:#5d6474;
+    --blue:#5aa9e6; --green:#6fce7e; --red:#e06c6c; --purple:#a78bfa;
+    --java:#f89820; --java2:#5382a1;
+    --sans:"Segoe UI","PingFang SC","Microsoft YaHei",-apple-system,sans-serif;
+    --mono:"Cascadia Code",Consolas,"JetBrains Mono",monospace;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.7;font-size:15px}
+  ::selection{background:var(--java);color:#111}
+  nav{position:sticky;top:0;z-index:99;background:rgba(13,15,20,.92);backdrop-filter:blur(10px);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:4px;padding:0 24px;height:52px;overflow-x:auto;white-space:nowrap}
+  nav .brand{font-weight:700;color:var(--java);margin-right:18px;letter-spacing:1px}
+  nav a{color:var(--muted);text-decoration:none;font-size:13px;padding:6px 12px;border-radius:6px;transition:.2s}
+  nav a:hover{color:var(--java);background:var(--card2)}
+  header{position:relative;padding:80px 24px 60px;text-align:center;background:
+    radial-gradient(1200px 500px at 50% -10%, rgba(248,152,32,.10), transparent 60%),
+    radial-gradient(800px 400px at 80% 20%, rgba(111,206,126,.06), transparent 60%),
+    linear-gradient(180deg,#10131a 0%,var(--bg) 100%);
+    border-bottom:1px solid var(--border)}
+  header .kicker{color:var(--java);letter-spacing:6px;font-size:12px;text-transform:uppercase;margin-bottom:18px}
+  header h1{font-size:clamp(28px,4.6vw,46px);font-weight:800;letter-spacing:2px;
+    background:linear-gradient(135deg,#ffd9a0 10%,var(--java) 50%,#b06a0a 90%);
+    -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  header .sub{color:var(--muted);max-width:840px;margin:16px auto 0;font-size:15.5px}
+  header .sub b{color:var(--text)}
+  .badges{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin-top:28px}
+  .badge{background:var(--card);border:1px solid var(--border2);border-radius:999px;padding:5px 16px;font-size:13px;color:var(--text)}
+  .badge i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px}
+  .b-java i{background:var(--java)} .b-blue i{background:var(--blue)} .b-green i{background:var(--green)} .b-gold i{background:var(--gold)} .b-red i{background:var(--red)}
+  main{max-width:1080px;margin:0 auto;padding:0 24px 40px}
+  section{padding:56px 0 8px}
+  .sec-head{display:flex;align-items:baseline;gap:14px;margin-bottom:26px;border-bottom:1px solid var(--border);padding-bottom:14px}
+  .sec-head .no{font-family:var(--mono);color:var(--java);font-size:14px;border:1px solid var(--java);border-radius:6px;padding:2px 9px}
+  .sec-head h2{font-size:24px;font-weight:700;letter-spacing:1px}
+  .sec-head .en{color:var(--dim);font-size:12px;letter-spacing:2px;text-transform:uppercase;margin-left:auto}
+  .grid{display:grid;gap:16px}
+  .g4{grid-template-columns:repeat(4,1fr)} .g3{grid-template-columns:repeat(3,1fr)} .g2{grid-template-columns:repeat(2,1fr)}
+  @media(max-width:860px){.g4{grid-template-columns:repeat(2,1fr)}.g3,.g2{grid-template-columns:1fr}}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px 22px;transition:.25s}
+  .card:hover{border-color:var(--java);transform:translateY(-2px)}
+  .card h3{font-size:16px;margin-bottom:8px;color:var(--java)}
+  .card p{color:var(--muted);font-size:13.5px}
+  .card .big{font-size:30px;font-weight:800;font-family:var(--mono);color:var(--text)}
+  .card .big small{font-size:13px;color:var(--dim);font-weight:400}
+  .stat-label{color:var(--muted);font-size:13px;margin-top:2px}
+  .callout{background:linear-gradient(135deg,rgba(248,152,32,.08),rgba(248,152,32,.02));border:1px solid rgba(248,152,32,.35);border-left:4px solid var(--java);border-radius:10px;padding:18px 22px;margin:18px 0;color:var(--text);font-size:14px}
+  .callout b{color:var(--java)}
+  .callout.warn{background:linear-gradient(135deg,rgba(224,108,108,.08),transparent);border-color:rgba(224,108,108,.35);border-left-color:var(--red)}
+  .callout.warn b{color:var(--red)}
+  .callout.info{background:linear-gradient(135deg,rgba(90,169,230,.08),transparent);border-color:rgba(90,169,230,.35);border-left-color:var(--blue)}
+  .callout.info b{color:var(--blue)}
+  .callout.ok{background:linear-gradient(135deg,rgba(111,206,126,.08),transparent);border-color:rgba(111,206,126,.35);border-left-color:var(--green)}
+  .callout.ok b{color:var(--green)}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;margin:14px 0}
+  th{background:var(--card2);color:var(--java);text-align:left;padding:10px 14px;font-weight:600;border-bottom:2px solid var(--java);white-space:nowrap}
+  td{padding:9px 14px;border-bottom:1px solid var(--border);color:var(--text)}
+  td.mono,th.mono{font-family:var(--mono);font-size:12.5px}
+  tr:hover td{background:rgba(248,152,32,.04)}
+  td .tag{display:inline-block;background:var(--card2);border:1px solid var(--border2);border-radius:5px;padding:1px 8px;font-size:11.5px;color:var(--muted);font-family:var(--mono)}
+  code{font-family:var(--mono);background:var(--card2);border:1px solid var(--border);border-radius:5px;padding:1px 7px;font-size:12.5px;color:var(--java)}
+  .codeblock{background:#0a0c11;border:1px solid var(--border);border-radius:10px;padding:16px 20px;font-family:var(--mono);font-size:12.5px;line-height:1.8;overflow-x:auto;color:#a8b3c7;margin:14px 0}
+  .codeblock .c{color:#5d6474}.codeblock .k{color:#f89820}.codeblock .s{color:#8fce6f}.codeblock .a{color:#5aa9e6}
+  ul.clean{list-style:none;padding-left:0}
+  ul.clean li{padding:7px 0 7px 26px;position:relative;color:var(--muted);font-size:14px;border-bottom:1px dashed var(--border)}
+  ul.clean li:last-child{border-bottom:none}
+  ul.clean li::before{content:"◆";position:absolute;left:4px;color:var(--java);font-size:10px;top:11px}
+  ul.clean li b{color:var(--text)}
+  ul.clean li.bad::before{content:"✕";color:var(--red);font-size:12px;top:9px}
+  ul.clean li.good::before{content:"✓";color:var(--green);font-size:12px;top:9px}
+  .gate{background:#141812;border:1px solid rgba(111,206,126,.45);border-left:5px solid var(--green);border-radius:10px;padding:16px 20px;margin:16px 0;font-size:14px}
+  .gate b{color:var(--green)}
+  .gantt .row{display:grid;grid-template-columns:210px 1fr 130px;gap:12px;align-items:center;margin:8px 0;font-size:13px}
+  .gantt .track{background:var(--card2);border-radius:6px;height:26px;position:relative}
+  .gantt .bar{position:absolute;top:0;height:100%;border-radius:6px;display:flex;align-items:center;padding-left:10px;font-size:11px;font-family:var(--mono);color:#111;font-weight:700;white-space:nowrap;overflow:hidden}
+  .gantt .q0{background:linear-gradient(90deg,#8fce6f,#6fce7e)}
+  .gantt .q1{background:linear-gradient(90deg,#5aa9e6,#7ec3f0)}
+  .gantt .q2{background:linear-gradient(90deg,#f0a04b,#f8c07a)}
+  .gantt .q3{background:linear-gradient(90deg,#e8c064,#f5daa0)}
+  .gantt .q4{background:linear-gradient(90deg,#a78bfa,#c4aefc)}
+  .gantt .q5{background:linear-gradient(90deg,#e06c6c,#f09090)}
+  .gantt .wk{font-family:var(--mono);color:var(--dim);font-size:12px;text-align:right}
+  .pill{display:inline-block;font-family:var(--mono);font-size:11px;border-radius:5px;padding:1px 8px;margin-left:8px;vertical-align:2px}
+  .pill.a{background:rgba(248,152,32,.15);color:var(--java);border:1px solid rgba(248,152,32,.4)}
+  .pill.b{background:rgba(90,169,230,.15);color:var(--blue);border:1px solid rgba(90,169,230,.4)}
+  .pill.ab{background:rgba(167,139,250,.15);color:var(--purple);border:1px solid rgba(167,139,250,.4)}
+  .num{font-family:var(--mono);text-align:right}
+  footer{border-top:1px solid var(--border);margin-top:60px;padding:34px 24px;text-align:center;color:var(--dim);font-size:12.5px}
+  footer .fbrand{color:var(--java);letter-spacing:3px;font-weight:700;margin-bottom:6px}
+</style>
+</head>
+<body>
+
+<nav>
+  <span class="brand">📋 MIR2 → Java · 开发计划</span>
+  <a href="#overview">计划总览</a>
+  <a href="#scope">目标范围</a>
+  <a href="#team">团队协作</a>
+  <a href="#roadmap">总路线图</a>
+  <a href="#poc">PoC</a>
+  <a href="#p1">接入层</a>
+  <a href="#p2">引擎MVP</a>
+  <a href="#p3">玩法全量</a>
+  <a href="#p4">上线冲刺</a>
+  <a href="#std">工程规范</a>
+  <a href="#cicd">CI/CD</a>
+  <a href="#release">发布回滚</a>
+  <a href="#budget">预算</a>
+  <a href="#inventory">翻译清单</a>
+  <a href="#appendix">附录</a>
+</nav>
+
+<header>
+  <div class="kicker">Development Plan · v1.0 · 2026-09-18</div>
+  <h1>MIR2 服务端 Java 化迁移<br>开发计划书</h1>
+  <p class="sub">本计划以《可行性评估报告》的 GO 结论为基线，将 8–12 人月的迁移工程拆解为
+  <b>1 个 PoC + 5 个阶段（P0–P4）+ 6 道决策门（G0–G5）</b>，覆盖团队分工、周级任务分解、工程规范、
+  CI/CD、发布回滚与预算，可直接作为项目执行与跟踪的依据。</p>
+  <div class="badges">
+    <span class="badge b-green"><i></i>30 周日历（约 7 个月）</span>
+    <span class="badge b-java"><i></i>2 人团队 · 240 人日</span>
+    <span class="badge b-blue"><i></i>6 道决策门 G0–G5</span>
+    <span class="badge b-gold"><i></i>上线目标：2027 年 5 月</span>
+    <span class="badge b-red"><i></i>全程 Linux/Docker 交付</span>
+  </div>
+</header>
+
+<main>
+
+<!-- ================= 01 ================= -->
+<section id="overview">
+  <div class="sec-head"><span class="no">01</span><h2>计划总览</h2><span class="en">Overview</span></div>
+
+  <table>
+    <tr><th>项目</th><th>内容</th></tr>
+    <tr><td>计划版本</td><td>v1.0（2026-09-18），基线：可行性评估报告 v1.1</td></tr>
+    <tr><td>交付物</td><td><code>mir2-server</code>：单 JVM 模块化单体（Netty + 单逻辑线程引擎 + SQLite + Web 控制台），Docker 镜像，旧档迁移工具，运维手册</td></tr>
+    <tr><td>硬性约束</td><td>mir2.exe 客户端<b>零改动</b>直连（12B 帧 / 6-bit 编码 / DES / GBK 逐字节兼容）；部署平台 Linux；非商业用途</td></tr>
+    <tr><td>总体节奏</td><td>准备期 3 周（培训/环境）→ PoC 3 周 → P0–P4 共 27 周 → 上线 2027-05（目标，整体可平移）</td></tr>
+    <tr><td>预算规模</td><td>240 人日（约 48 人周 ≈ 11 人月，落在评估的 8–12 人月区间）；现金成本 &lt; ¥1,500</td></tr>
+    <tr><td>相关文档</td><td><a href="/" style="color:var(--gold)">① 项目分析报告</a> · <a href="/java-migration.html" style="color:var(--gold)">② Java 迁移可行性评估</a> · ③ 本计划书</td></tr>
+  </table>
+
+  <div class="grid g4">
+    <div class="card" style="text-align:center"><div class="big">30<small> 周</small></div><div class="stat-label">总日历周期<br><small>2026-10-12 → 2027-05-07</small></div></div>
+    <div class="card" style="text-align:center"><div class="big">240<small> 人日</small></div><div class="stat-label">计划工作量<br><small>2 人 × 30 周 × 80% 负载</small></div></div>
+    <div class="card" style="text-align:center"><div class="big">6<small> 道</small></div><div class="stat-label">决策门 G0–G5<br><small>每门有量化通过标准</small></div></div>
+    <div class="card" style="text-align:center"><div class="big">15<small> 个</small></div><div class="stat-label">双周 Sprint<br><small>每周五演示 + 阶段门评审</small></div></div>
+  </div>
+
+  <div class="callout info">
+    <b>计划的两条铁律（来自评估报告，全程有效）：</b>
+    ① <b>行为冻结</b>——迁移期只做等价翻译，任何玩法改进/数值调整一律进 V2 backlog；
+    ② <b>对拍先行</b>——没有 golden 用例覆盖的消息与公式，不允许开始翻译对应模块。
+  </div>
+</section>
+
+<!-- ================= 02 ================= -->
+<section id="scope">
+  <div class="sec-head"><span class="no">02</span><h2>目标、范围与完成定义</h2><span class="en">Goals &amp; DoD</span></div>
+
+  <div class="grid g2">
+    <div class="card">
+      <h3>范围内（In Scope）</h3>
+      <ul class="clean">
+        <li><b>9 个 Delphi 程序</b>的全部服务端功能：登录、选角、存档、三网关、游戏引擎、日志、总控（后两者由合并与 Web 控制台替代）</li>
+        <li><b>协议层</b>：216 个 SM_ / 51 个 CM_ 分支的逐字节兼容实现</li>
+        <li><b>存档迁移</b>：Hum.DB / Mir.DB / IdDB → SQLite，含校验工具</li>
+        <li><b>Envir 资源加载</b>：MonGen、Market_Def 脚本等 100+ 配置文件原格式兼容</li>
+        <li><b>Linux 部署</b>：Docker 双架构镜像 + compose 编排 + 运维手册</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>范围外（Out of Scope，进 V2 backlog）</h3>
+      <ul class="clean">
+        <li class="bad">任何数值/掉率/AI 行为「优化」与新增玩法</li>
+        <li class="bad">客户端修改（含反外挂补丁）</li>
+        <li class="bad">多服务器分布式架构（单进程够用）</li>
+        <li class="bad">账号充值/计费体系（原 Fee 相关仅做字段兼容）</li>
+        <li class="bad">商业运营相关功能（法律红线）</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="gate">
+    <b>项目级完成定义（DoD = 评估报告 M5，G5 验收）：</b>
+    ① 真 mir2.exe 全流程可用：登录→选角→打怪→掉落→交易→攻城；② 51 个 CM_ 分支 golden 用例 100% 通过且入 CI；
+    ③ 旧服存档迁移逐条校验通过；④ 500 机器人 × 4 小时压测无崩溃、无死锁、内存平稳；
+    ⑤ 灰度 2 周无回滚级缺陷；⑥ Docker 镜像在 Linux x86/ARM 双架构可运行；⑦ 运维手册与回滚演练完成。
+  </div>
+</section>
+
+<!-- ================= 03 ================= -->
+<section id="team">
+  <div class="sec-head"><span class="no">03</span><h2>团队与协作机制</h2><span class="en">Team &amp; Cadence</span></div>
+
+  <div class="grid g3">
+    <div class="card">
+      <h3>角色 A · 引擎负责人（1 人）</h3>
+      <p><b style="color:var(--text)">职责：</b>M2Server 引擎翻译（对象/战斗/怪物/脚本/攻城）、单逻辑线程架构 owner、golden 规格提取。<br>
+      <b style="color:var(--text)">要求：</b>Java 服务端 5 年+；准备期完成 Pascal 阅读训练（2–4 周，能读懂+能断点调试）。</p>
+    </div>
+    <div class="card">
+      <h3>角色 B · 平台/工具工程师（1 人）</h3>
+      <p><b style="color:var(--text)">职责：</b>protocol/gate/auth/character 模块、三件套工具（录制/回放/机器人）、CI/CD、Docker、Web 控制台、压测。<br>
+      <b style="color:var(--text)">要求：</b>Netty 与 Linux 运维熟练，测试工具开发经验。</p>
+    </div>
+    <div class="card">
+      <h3>外部参与（非全职）</h3>
+      <p><b style="color:var(--text)">种子玩家：</b>10–20 名老玩家（灰度盲测「手感」）；<br>
+      <b style="color:var(--text)">Delphi 顾问（可选）：</b>按需答疑 2–4 人日，处理疑难 Pascal 语义；<br>
+      <b style="color:var(--text)">法务提醒：</b>运营边界由项目负责人把关（非商业/私密社区）。</p>
+    </div>
+  </div>
+
+  <div class="grid g2">
+    <div class="card">
+      <h3>协作节奏</h3>
+      <ul class="clean">
+        <li><b>每日：</b>15 分钟站会（昨天/今天/阻塞），远程异步亦可</li>
+        <li><b>每周五：</b>Sprint 内演示（可运行产物，不许 PPT）+ 周报</li>
+        <li><b>双周：</b>Sprint 规划与回顾（15 个 Sprint）</li>
+        <li><b>阶段末：</b>决策门评审（对照 G0–G5 量化标准，Go / Fix / Stop 三选一）</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>任务跟踪与分支约定</h3>
+      <ul class="clean">
+        <li>任务粒度 ≤ 2 人日；每任务附「对应 Delphi 源码位置 + 验收方式」两个字段</li>
+        <li>GitHub Issues + Milestone（按 G0–G5 建 6 个 Milestone）+ Projects 看板</li>
+        <li>分支：trunk-based，feature 分支存活 ≤ 3 天；PR 必须过 CI + 1 人评审</li>
+        <li>风险跟踪：评估报告 R1–R9 每周过一遍状态（Open/Mitigated/Closed）</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 04 ================= -->
+<section id="roadmap">
+  <div class="sec-head"><span class="no">04</span><h2>总路线图（30 周 + 6 决策门）</h2><span class="en">Roadmap &amp; Gates</span></div>
+
+  <div class="gantt">
+    <div class="row"><span>准备期 · 培训与环境</span><div class="track"><div class="bar q0" style="left:0%;width:9%">3 周</div></div><span class="wk">W-3 ~ W0<br>2026-09-21 起</span></div>
+    <div class="row"><span>S0 · PoC 最小闭环</span><div class="track"><div class="bar q1" style="left:9%;width:10%">W01–03</div></div><span class="wk">→ 2026-11-01<br>G0 决策门</span></div>
+    <div class="row"><span>P0 · 规格与工具基座</span><div class="track"><div class="bar q2" style="left:19%;width:6.7%">W04–05</div></div><span class="wk">→ 2026-11-13<br>G1 决策门</span></div>
+    <div class="row"><span>P1 · 协议与接入层</span><div class="track"><div class="bar q3" style="left:25.7%;width:13.3%">W06–09</div></div><span class="wk">→ 2026-12-11<br>G2 决策门</span></div>
+    <div class="row"><span>P2 · 引擎 MVP</span><div class="track"><div class="bar q4" style="left:39%;width:20%">W10–15</div></div><span class="wk">→ 2027-01-22<br>G3 决策门</span></div>
+    <div class="row"><span>P3 · 玩法全量</span><div class="track"><div class="bar q3" style="left:59%;width:40%">W16–27</div></div><span class="wk">→ 2027-04-16<br>G4 决策门</span></div>
+    <div class="row"><span>P4 · 迁移/压测/上线</span><div class="track"><div class="bar q5" style="left:89%;width:11%">W28–30</div></div><span class="wk">→ 2027-05-07<br>G5 上线</span></div>
+  </div>
+
+  <table>
+    <tr><th>决策门</th><th>时点</th><th>量化通过标准（全部满足才 Go）</th><th>不通过的动作</th></tr>
+    <tr><td class="mono">G0 · PoC</td><td>W03 末</td><td>真 mir2.exe 登录→走路→打怪→捡装备→重登不丢；20 组 golden 字节级一致；50 机器人×1h 稳定；全程 Linux 容器构建</td><td>回评估 R1/R4/R5 定位；最多追加 1 周 PoC-2，再议</td></tr>
+    <tr><td class="mono">G1 · 协议基座</td><td>W05 末</td><td>协议规格文档 v1.0 评审通过（216 SM_/51 CM_ 全表）；NPC 脚本指令全量清单提取完毕；env-lint 可扫描示例 Envir</td><td>规格缺口回填，P1 顺延（最多 1 周）</td></tr>
+    <tr><td class="mono">G2 · 真客户端登录</td><td>W09 末</td><td>mir2.exe 完成登录/选区/角色列表/建删角色/进入空世界；golden 套件入 CI 且 100% 绿；账号与角色数据存 SQLite 可重启恢复</td><td>阻断性缺陷清单 ≤3 项时修复后复验，&gt;3 项回退规划</td></tr>
+    <tr><td class="mono">G3 · 打怪闭环</td><td>W15 末</td><td>移动/攻击手感 3 名老玩家盲测无差异；10 种怪 AI 对拍一致；掉落/背包/装备/存档全链路可用；影子对拍工具上线</td><td>冻结 P3 启动，专项修复「手感」差异</td></tr>
+    <tr><td class="mono">G4 · 玩法等价</td><td>W27 末</td><td>59 技能 × 3 职业可用；NPC 脚本指令清单覆盖率 100%（未实现指令为 0）；行会/攻城/交易/组队/红名全流程通过脚本化测试</td><td>按缺失清单排 2 周补齐窗口，砍非核心玩法入 V2</td></tr>
+    <tr><td class="mono">G5 · 可上线</td><td>W30 末</td><td>项目级 DoD 七项全部满足（见第 02 节）</td><td>上线顺延，不允许带伤上线</td></tr>
+  </table>
+
+  <div class="callout">
+    <b>人力负载核算：</b>2 人 × 30 周 = 300 人日容量；计划任务 240 人日（80% 负载），余 60 人日吸收请假、会议、故障与计划外工作。任何阶段实际消耗超出预算 <b>15%</b> 即触发里程碑重排。
+  </div>
+</section>
+
+<!-- ================= 05 PoC ================= -->
+<section id="poc">
+  <div class="sec-head"><span class="no">05</span><h2>S0 · PoC 最小闭环（W01–W03，30 人日）</h2><span class="en">Proof of Concept</span></div>
+
+  <p style="color:var(--muted)">目标：用最小代价验证两大不确定性（协议兼容、引擎骨架），产出物全部保留进正式工程，<b>零浪费</b>。</p>
+
+  <table>
+    <tr><th>周</th><th>任务</th><th>Owner</th><th class="num">人日</th><th>产出</th></tr>
+    <tr><td class="mono" rowspan="2">W01</td><td>翻译 Grobal2 常量 + EDcode 6-bit + DES + 12B codec</td><td><span class="pill a">A</span></td><td class="num">6</td><td class="mono">protocol 模块 v0</td></tr>
+    <tr><td>Delphi 侧流量录制工具（挂在旧服前抓 golden）</td><td><span class="pill b">B</span></td><td class="num">4</td><td class="mono">traffic-recorder + 20 组用例</td></tr>
+    <tr><td class="mono" rowspan="2">W02</td><td>Netty 接入骨架（7000/7100/7200 三端口）</td><td><span class="pill b">B</span></td><td class="num">4</td><td class="mono">gate 骨架 + 心跳/限速</td></tr>
+    <tr><td>登录+选角最小路径（内存账号库）</td><td><span class="pill a">A</span></td><td class="num">6</td><td class="mono">mir2.exe 可进空世界</td></tr>
+    <tr><td class="mono" rowspan="3">W03</td><td>tick 循环 + 地图加载 + 移动广播</td><td><span class="pill a">A</span></td><td class="num">5</td><td class="mono">engine/world v0</td></tr>
+    <tr><td>1 种近战怪 + 击杀/掉落/拾取</td><td><span class="pill b">B</span></td><td class="num">3</td><td class="mono">打怪闭环</td></tr>
+    <tr><td>集成演示 + 老玩家盲测 + G0 评审材料</td><td><span class="pill ab">AB</span></td><td class="num">2</td><td class="mono">G0 评审包</td></tr>
+  </table>
+
+  <div class="gate"><b>G0 通过标准：</b>评估报告第 11 节五条（真客户端无断线乱码 / golden 100% / 盲测无差异 / 50 机器人 1h / Linux 容器全程）。<b>通过后立即冻结 PoC 代码为 v0.1 基线 tag。</b></div>
+</section>
+
+<!-- ================= 06 P0-P1 ================= -->
+<section id="p1">
+  <div class="sec-head"><span class="no">06</span><h2>P0–P1 · 规格基座与接入层（W04–W09，55 人日）</h2><span class="en">Spec &amp; Access Layer</span></div>
+
+  <div class="grid g2">
+    <div class="card">
+      <h3>P0 · 规格与工具基座（W04–05，20 人日）</h3>
+      <table>
+        <tr><th>任务</th><th>Owner</th><th class="num">人日</th></tr>
+        <tr><td>协议规格文档 v1.0（216 SM_ / 51 CM_ 全表 + 字段语义）</td><td><span class="pill a">A</span></td><td class="num">5</td></tr>
+        <tr><td>NPC 脚本指令全量清单提取（grep 源码枚举）</td><td><span class="pill a">A</span></td><td class="num">4</td></tr>
+        <tr><td>战斗/掉落/升级公式提取表（逐函数注释来源行号）</td><td><span class="pill a">A</span></td><td class="num">4</td></tr>
+        <tr><td>env-lint：Envir 引用完整性/大小写/行尾扫描</td><td><span class="pill b">B</span></td><td class="num">4</td></tr>
+        <tr><td>三件套骨架：recorder / replayer / bot-swarm</td><td><span class="pill b">B</span></td><td class="num">3</td></tr>
+      </table>
+      <p style="color:var(--dim);font-size:12.5px">G1 = 规格评审通过 + golden 入 CI。规格文档是后续所有翻译的「合同」。</p>
+    </div>
+    <div class="card">
+      <h3>P1 · 接入与账号（W06–09，35 人日）</h3>
+      <table>
+        <tr><th>任务</th><th>Owner</th><th class="num">人日</th></tr>
+        <tr><td>protocol 模块硬化：全部消息 POJO/codec/单测</td><td><span class="pill a">A</span></td><td class="num">8</td></tr>
+        <tr><td>LoginGate/SelGate 接入（IP 黑名单/连接限制）</td><td><span class="pill b">B</span></td><td class="num">5</td></tr>
+        <tr><td>RunGate 转发（消息过滤/防加速校验）</td><td><span class="pill b">B</span></td><td class="num">6</td></tr>
+        <tr><td>auth：账号验证/DES 口令/会话路由（IdDB→SQLite）</td><td><span class="pill a">A</span></td><td class="num">8</td></tr>
+        <tr><td>character：建删角色/角色列表 DAO + 校验</td><td><span class="pill a">A</span></td><td class="num">6</td></tr>
+        <tr><td>Web 控制台骨架（Javalin，在线列表/日志）</td><td><span class="pill b">B</span></td><td class="num">2</td></tr>
+      </table>
+      <p style="color:var(--dim);font-size:12.5px">G2 = 真 mir2.exe 走完整登录选角流程，数据可重启恢复。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 07 P2 ================= -->
+<section id="p2">
+  <div class="sec-head"><span class="no">07</span><h2>P2 · 引擎 MVP（W10–W15，55 人日）</h2><span class="en">Engine MVP</span></div>
+
+  <p style="color:var(--muted)">目标：跑通「走路→战斗→掉落→背包→存档」核心闭环，建立引擎骨架与对拍能力。本阶段结束即具备小范围内测资格。</p>
+
+  <table>
+    <tr><th>任务</th><th>对应源码</th><th>Owner</th><th class="num">人日</th></tr>
+    <tr><td>地图引擎：.map 读取 / 48×32 碰撞 / 门与传送点</td><td class="mono">Envir.pas</td><td><span class="pill a">A</span></td><td class="num">8</td></tr>
+    <tr><td>对象系统骨架：BaseObject 生命周期 / 消息队列</td><td class="mono">ObjBase.pas(骨架)</td><td><span class="pill a">A</span></td><td class="num">8</td></tr>
+    <tr><td>移动/走路校验（防加速，时序与原版一致）</td><td class="mono">ObjBase.Run</td><td><span class="pill a">A</span></td><td class="num">6</td></tr>
+    <tr><td>视野与九宫格广播</td><td class="mono">ObjBase 可见性</td><td><span class="pill b">B</span></td><td class="num">6</td></tr>
+    <tr><td>近战公式：命中/伤害/死亡/经验</td><td class="mono">ObjBase 战斗段</td><td><span class="pill a">A</span></td><td class="num">8</td></tr>
+    <tr><td>物品：掉落表/背包 46 格/穿脱装备</td><td class="mono">ItmUnit + LocalDB</td><td><span class="pill b">B</span></td><td class="num">8</td></tr>
+    <tr><td>存档：在线周期保存 + 下线即存</td><td class="mono">RunDB/UsrEngn</td><td><span class="pill b">B</span></td><td class="num">4</td></tr>
+    <tr><td>怪物 AI 框架 + 首批 10 种常见怪（稻草人/鸡/鹿/多钩猫…）</td><td class="mono">ObjMon.pas</td><td><span class="pill a">A</span></td><td class="num">5</td></tr>
+    <tr><td>影子对拍 harness：同操作流双服 diff 状态快照</td><td class="mono">—</td><td><span class="pill b">B</span></td><td class="num">2</td></tr>
+  </table>
+
+  <div class="gate"><b>G3 通过标准：</b>打怪闭环全链路 + 老玩家盲测手感无差异 + 10 种怪 AI 对拍一致 + 影子对拍工具可用。<b>此门是全项目质量分水岭。</b></div>
+</section>
+
+<!-- ================= 08 P3 ================= -->
+<section id="p3">
+  <div class="sec-head"><span class="no">08</span><h2>P3 · 玩法全量（W16–W27，70 人日）</h2><span class="en">Full Gameplay</span></div>
+
+  <table>
+    <tr><th>任务块</th><th>内容</th><th>对应源码</th><th>Owner</th><th class="num">人日</th></tr>
+    <tr><td>技能系统</td><td>59 技能 × 3 职业：弹道/范围/ Buff/召唤/瞬移</td><td class="mono">Magic.pas + JClasses</td><td><span class="pill a">A</span></td><td class="num">18</td></tr>
+    <tr><td>怪物全量</td><td>剩余 47 种怪：远程/施法/召唤/钻地/自爆/守卫/城门</td><td class="mono">ObjMon/2/3 + ObjAxeMon</td><td><span class="pill a">A</span></td><td class="num">10</td></tr>
+    <tr><td>NPC 脚本引擎</td><td>Market_Def 全指令集：买卖/修理/传送/任务对话/收购物品</td><td class="mono">ObjNpc.pas + Mission</td><td><span class="pill a">A</span></td><td class="num">15</td></tr>
+    <tr><td>交互系统</td><td>交易/组队/PK 红名/守卫正义/摆摊边界</td><td class="mono">ObjBase 相关段</td><td><span class="pill b">B</span></td><td class="num">8</td></tr>
+    <tr><td>行会系统</td><td>创建/入退/行会战/同盟</td><td class="mono">Guild.pas</td><td><span class="pill b">B</span></td><td class="num">6</td></tr>
+    <tr><td>沙巴克攻城</td><td>城堡/城门/城墙/箭塔可破坏物 + 攻城时间窗</td><td class="mono">Castle.pas + ObjMon2 守卫</td><td><span class="pill a">A</span></td><td class="num">8</td></tr>
+    <tr><td>GM 与管理</td><td>Command.ini 全命令 + Web 控制台完整版</td><td class="mono">各 *Config 窗体</td><td><span class="pill b">B</span></td><td class="num">5</td></tr>
+  </table>
+
+  <div class="callout warn">
+    <b>P3 风险提示（对应评估 R2/R6）：</b>本阶段最容易发生「顺手优化」与范围蔓延。规则：每完成一个技能/怪物/指令，先过对拍再合入；
+    发现原版疑似 bug 一律记录进 <code>quirks.md</code>（忠实复刻 + 标注），由项目负责人统一裁决是否修复。<b>任何玩法改动不进本阶段。</b>
+  </div>
+
+  <div class="gate"><b>G4 通过标准：</b>脚本指令覆盖率 100%（未实现指令数为 0，CI 强制断言）；59 技能/57 怪/行会/攻城脚本化测试全绿；影子对拍连续 3 天无差异告警。</div>
+</section>
+
+<!-- ================= 09 P4 ================= -->
+<section id="p4">
+  <div class="sec-head"><span class="no">09</span><h2>P4 · 迁移、压测与上线（W28–W30，30 人日）</h2><span class="en">Migration &amp; Launch</span></div>
+
+  <table>
+    <tr><th>任务</th><th>Owner</th><th class="num">人日</th><th>产出</th></tr>
+    <tr><td>存档迁移工具：Hum.DB/Mir.DB/IdDB → SQLite（逐字段映射 + 双向往返校验）</td><td><span class="pill a">A</span></td><td class="num">8</td><td class="mono">tools/migrator + 迁移报告</td></tr>
+    <tr><td>bot-swarm 压测：500 机器人 × 4h 跑图/打怪/交易混合负载 + 调优</td><td><span class="pill b">B</span></td><td class="num">6</td><td class="mono">压测报告（延迟/内存/GC）</td></tr>
+    <tr><td>灰度：10–20 名种子玩家 2 周封闭测试（与 W26 起并行）</td><td><span class="pill ab">AB</span></td><td class="num">6</td><td class="mono">灰度缺陷清单</td></tr>
+    <tr><td>上线清单 + 回滚演练（含旧服热备切换实操）</td><td><span class="pill b">B</span></td><td class="num">4</td><td class="mono">runbook v1.0</td></tr>
+    <tr><td>运维手册与交接文档</td><td><span class="pill b">B</span></td><td class="num">3</td><td class="mono">docs/ops-manual</td></tr>
+    <tr><td>正式上线 + 72 小时护航期</td><td><span class="pill ab">AB</span></td><td class="num">3</td><td class="mono">G5 签发</td></tr>
+  </table>
+
+  <div class="gate"><b>G5 = 项目 DoD 七项全满足（第 02 节）。</b>上线后进入 2 周护航期：旧 Delphi 服保留热备，可 15 分钟内回切。</div>
+</section>
+
+<!-- ================= 10 规范 ================= -->
+<section id="std">
+  <div class="sec-head"><span class="no">10</span><h2>工程规范与质量体系</h2><span class="en">Standards &amp; Quality</span></div>
+
+  <div class="grid g2">
+    <div class="card">
+      <h3>模块依赖规则（单向，CI 强制校验）</h3>
+      <div class="codeblock">admin ──→ engine ──→ character/auth ──→ protocol
+  │           │                            │
+  └───────────┴────────→ persistence ←─────┘
+gate ──→ protocol          commons（零依赖，被所有模块引用）</div>
+      <ul class="clean">
+        <li><b>protocol 不许 import 任何业务模块</b>（保证可独立对拍）</li>
+        <li>engine 之外不许直接操作 session/发送消息</li>
+        <li>循环依赖 = CI 红灯，无例外</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>测试要求（合入门禁）</h3>
+      <ul class="clean">
+        <li><b>golden 字节级用例：</b>每消息至少 1 正例 + 1 边界例；总数 ≥ 120，CI 100% 通过</li>
+        <li><b>单元测试覆盖率：</b>protocol / combat / persistence ≥ 70%（Jacoco 门禁）</li>
+        <li><b>影子对拍：</b>P2 起每日夜间跑一轮，diff 告警进晨会</li>
+        <li><b>压测：</b>每个阶段门跑一次递增压测（50→200→500 机器人）</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>AI 辅助翻译流水线（本项目效率关键）</h3>
+      <ul class="clean">
+        <li>四步合入：<b>AI 初译 → 人工 diff 评审 → 单测 + golden 对拍 → 合入</b>，缺一不可</li>
+        <li><b>伤害/掉落/升级公式禁止 AI 直译</b>：人工从源码提取，双通道验证（源码推导 + 抓包对照）</li>
+        <li>AI 输出中每个含糊语义必须生成 <code>// TODO(verify)</code> 注释，评审清单化处理</li>
+        <li>翻译对照表入库：<code>docs/translation-map.md</code> 记录「Delphi 单元 ↔ Java 类」映射</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>编码与日志规范</h3>
+      <ul class="clean">
+        <li>协议边界一律 <code>byte[] + GBK</code>，禁用 String 直传网络层（评估 R4）</li>
+        <li>逻辑线程内<b>禁止</b> sleep / 散落异步 / 阻塞 I/O（评估 R5），延迟统一 tick 调度器</li>
+        <li>日志分级：<code>ECONOMY</code>（交易/掉落）/ <code>ACTION</code>（战斗）/ <code>SECURITY</code>（登录/封禁）三类独立 appender</li>
+        <li>禁止硬编码路径 / 魔法数字；数值一律来自配置或常量类（对应源码行号注释）</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 11 CI/CD ================= -->
+<section id="cicd">
+  <div class="sec-head"><span class="no">11</span><h2>CI/CD 与环境矩阵</h2><span class="en">CI/CD &amp; Environments</span></div>
+
+  <div class="grid g2">
+    <div class="card">
+      <h3>流水线（GitHub Actions）</h3>
+      <div class="codeblock"><span class="c"># PR 触发：编译 + 单测 + golden + env-lint + 依赖检查</span>
+on: pull_request
+  - mvn verify            <span class="c"># 含 120+ golden 用例</span>
+  - archunit check        <span class="c"># 模块依赖单向校验</span>
+  - env-lint --envir tests/fixtures   <span class="c"># 大小写/引用/行尾</span>
+
+<span class="c"># main 合入：staging 自动部署</span>
+  - docker compose up -d  <span class="c"># staging 环境</span>
+
+<span class="c"># tag v*：生产镜像构建（手动确认部署）</span>
+  - docker buildx --platform linux/amd64,linux/arm64
+  - push ghcr.io/&lt;org&gt;/mir2-server:v*</div>
+    </div>
+    <div class="card">
+      <h3>环境矩阵</h3>
+      <table>
+        <tr><th>环境</th><th>用途</th><th>规格</th></tr>
+        <tr><td class="mono">local</td><td>开发自测（Linux 容器内跑）</td><td>开发机 Docker</td></tr>
+        <tr><td class="mono">staging</td><td>影子对拍 / 灰度前验证（与 Delphi 旧服并行）</td><td>2C4G VPS</td></tr>
+        <tr><td class="mono">prod</td><td>正式社区服</td><td>2C4G ARM + 对象存储备份</td></tr>
+      </table>
+      <p style="margin-top:8px">staging 从 P1 起常驻（对拍需要）；prod 在 W28 预备。<b>所有环境同一镜像 tag 矩阵管理，禁止手改生产容器。</b></p>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 12 发布 ================= -->
+<section id="release">
+  <div class="sec-head"><span class="no">12</span><h2>发布与回滚</h2><span class="en">Release &amp; Rollback</span></div>
+
+  <div class="grid g2">
+    <div class="card">
+      <h3>上线检查清单（节选）</h3>
+      <ul class="clean">
+        <li class="good">存档迁移报告：记录数一致 + 抽样 50 角色字段 diff 为 0</li>
+        <li class="good">golden / 影子对拍 / 压测三报告全绿，附 G5 评审记录</li>
+        <li class="good">备份任务上线并验证可恢复（VACUUM INTO + 异地同步）</li>
+        <li class="good">监控告警就位（探活 + tick 延迟 + 磁盘 + 在线数）</li>
+        <li class="good">回滚演练完成一次（≤ 15 分钟恢复旧服）</li>
+        <li class="good">玩家公告与客户端连接指引（无需改客户端，仅换 IP 段说明）</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>灰度与回滚策略</h3>
+      <table>
+        <tr><th>阶段</th><th>流量</th><th>时长</th><th>晋级条件</th></tr>
+        <tr><td>灰度一</td><td>10–20 种子玩家</td><td>2 周</td><td>无回滚级缺陷 + 手感反馈收敛</td></tr>
+        <tr><td>灰度二</td><td>≤ 50 人</td><td>1 周</td><td>性能指标达标 + 经济日志抽查无异常</td></tr>
+        <tr><td>全量</td><td>全部</td><td>—</td><td>—</td></tr>
+      </table>
+      <p style="margin-top:8px"><b style="color:var(--red)">回滚预案：</b>镜像 tag 秒级回滚（&lt;5 分钟）；存档异常回滚 = 恢复迁移前快照 + 增量重放；极端情况切回 Delphi 旧服热备（≤ 15 分钟），Java 服数据按最后一致快照回迁。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 13 预算 ================= -->
+<section id="budget">
+  <div class="sec-head"><span class="no">13</span><h2>预算汇总</h2><span class="en">Budget</span></div>
+
+  <table>
+    <tr><th>科目</th><th class="num">数量</th><th>说明</th></tr>
+    <tr><td>人力（核心）</td><td class="num">240 人日 ≈ 11 人月</td><td>2 人 × 30 周 × 80% 负载；含 PoC 与灰度护航</td></tr>
+    <tr><td>人力（外部）</td><td class="num">2–4 人日</td><td>Delphi 顾问按需答疑（可选）+ 种子玩家致谢</td></tr>
+    <tr><td>云主机</td><td class="num">约 ¥600–1,100</td><td>2C4G × 2 环境（staging+prod）× 7 个月，ARM 机型</td></tr>
+    <tr><td>备份存储</td><td class="num">约 ¥50</td><td>对象存储 7 天快照 × 2 份</td></tr>
+    <tr><td>域名（可选）</td><td class="num">约 ¥60/年</td><td>仅提示用；客户端连 IP 亦可</td></tr>
+    <tr><td><b>现金总计</b></td><td class="num"><b>&lt; ¥1,500</b></td><td>主要成本为人力；时间成本见左</td></tr>
+  </table>
+
+  <div class="callout info">
+    <b>成本对齐说明：</b>本计划 240 人日落在可行性评估「8–12 人月」区间内（48 人周 ≈ 11 人月），其中已含 60 人日缓冲。
+    若 G0 后决定压缩：可将 P3 的「行会/攻城」后置到上线后 V1.1（省约 14 人日，风险为开服玩法不全，复古服可接受），总工期可缩至 26 周。
+  </div>
+</section>
+
+<!-- ================= 14 清单 ================= -->
+<section id="inventory">
+  <div class="sec-head"><span class="no">14</span><h2>附录 A · Delphi → Java 翻译清单</h2><span class="en">Translation Inventory</span></div>
+
+  <p style="color:var(--muted)">「策略」图例：<span class="tag">直译</span> 逐行/逐函数翻译并对拍 ｜ <span class="tag">拆分</span> 巨型文件拆为多类 ｜ <span class="tag">替代</span> 由新架构组件替代，仅参考行为 ｜ <span class="tag">废弃</span> 不迁移</p>
+
+  <table>
+    <tr><th>Delphi 源文件</th><th class="num">行数</th><th>目标 Java 模块</th><th>策略</th><th>阶段</th></tr>
+    <tr><td class="mono">Common/Grobal2.pas</td><td class="num">~3,000</td><td class="mono">protocol（常量+POJO）</td><td><span class="tag">直译</span></td><td>PoC/P1</td></tr>
+    <tr><td class="mono">Common/EDcode.pas + DES.pas</td><td class="num">~1,500</td><td class="mono">protocol/codec</td><td><span class="tag">直译</span> + 字节级 golden</td><td>PoC</td></tr>
+    <tr><td class="mono">Common/HUtil32 + MudUtil</td><td class="num">~3,000</td><td class="mono">commons</td><td><span class="tag">直译</span>（工具函数）</td><td>P1</td></tr>
+    <tr><td class="mono">M2Server/ObjBase.pas</td><td class="num">26,821</td><td class="mono">engine/object + combat + world</td><td><span class="tag">拆分</span>（→10+ 类）</td><td>P2/P3</td></tr>
+    <tr><td class="mono">M2Server/ObjNpc.pas + Mission.pas</td><td class="num">~12,500</td><td class="mono">engine/script</td><td><span class="tag">拆分</span> + 指令清单驱动</td><td>P3</td></tr>
+    <tr><td class="mono">M2Server/M2Share.pas</td><td class="num">11,087</td><td class="mono">core/config</td><td><span class="tag">拆分</span>（全局状态→配置类）</td><td>P1/P2</td></tr>
+    <tr><td class="mono">M2Server/LocalDB.pas</td><td class="num">3,670</td><td class="mono">persistence/loader</td><td><span class="tag">直译</span>（数据加载）</td><td>P2</td></tr>
+    <tr><td class="mono">M2Server/UsrEngn.pas</td><td class="num">3,176</td><td class="mono">engine/world（tick）</td><td><span class="tag">直译</span></td><td>P2</td></tr>
+    <tr><td class="mono">M2Server/ObjMon/2/3 + ObjAxeMon</td><td class="num">~7,400</td><td class="mono">engine/monster（57 类）</td><td><span class="tag">直译</span>（策略模式重组）</td><td>P2/P3</td></tr>
+    <tr><td class="mono">M2Server/Envir.pas</td><td class="num">1,575</td><td class="mono">engine/world/map</td><td><span class="tag">直译</span></td><td>P2</td></tr>
+    <tr><td class="mono">M2Server/Magic.pas + JClasses.pas</td><td class="num">~2,000</td><td class="mono">engine/skill</td><td><span class="tag">直译</span></td><td>P3</td></tr>
+    <tr><td class="mono">M2Server/Castle/Guild/Event/ItmUnit</td><td class="num">~4,500</td><td class="mono">engine/guild + castle + item</td><td><span class="tag">直译</span></td><td>P3</td></tr>
+    <tr><td class="mono">M2Server/svMain + JNetwork + JSocket</td><td class="num">~6,100</td><td class="mono">bootstrap + gate</td><td><span class="tag">替代</span>（Netty/启动类）</td><td>P1</td></tr>
+    <tr><td class="mono">M2Server/GameConfig/FunctionConfig 等 25 窗体</td><td class="num">~9,000</td><td class="mono">admin（Web 控制台）</td><td><span class="tag">替代</span></td><td>P1/P3</td></tr>
+    <tr><td class="mono">DBServer/HumDB.pas + DBSMain</td><td class="num">~5,000</td><td class="mono">tools/migrator + character</td><td><span class="tag">拆分</span>（格式→迁移器，逻辑→DAO）</td><td>P1/P4</td></tr>
+    <tr><td class="mono">DBServer 其余（窗体/工具）</td><td class="num">~4,000</td><td class="mono">admin</td><td><span class="tag">替代</span></td><td>P3/P4</td></tr>
+    <tr><td class="mono">LoginSrv 全部</td><td class="num">6,496</td><td class="mono">auth</td><td><span class="tag">直译</span>（IdDB→SQLite）</td><td>P1</td></tr>
+    <tr><td class="mono">LoginGate / SelGate / RunGate</td><td class="num">12,351</td><td class="mono">gate（×3 Netty 端口）</td><td><span class="tag">替代</span>（过滤逻辑直译）</td><td>P1</td></tr>
+    <tr><td class="mono">GameCenter</td><td class="num">6,652</td><td class="mono">—</td><td><span class="tag">废弃</span>（compose/systemd 替代）</td><td>—</td></tr>
+    <tr><td class="mono">LogDataServer</td><td class="num">3,216</td><td class="mono">logging（Logback）</td><td><span class="tag">废弃</span></td><td>—</td></tr>
+  </table>
+
+  <div class="callout">
+    <b>清单维护规则：</b>此表随开发推进更新「状态」列（未开始/翻译中/已对拍/已合入），并同步 <code>docs/translation-map.md</code>；每阶段门评审时核对覆盖率。
+  </div>
+</section>
+
+<!-- ================= 15 附录 ================= -->
+<section id="appendix">
+  <div class="sec-head"><span class="no">15</span><h2>附录 B · 文档索引与版本</h2><span class="en">Documents &amp; Changelog</span></div>
+
+  <table>
+    <tr><th>#</th><th>文档</th><th>文件</th><th>定位</th></tr>
+    <tr><td>①</td><td>MIR2 项目分析报告</td><td class="mono"><a href="/" style="color:var(--gold)">mir2-analysis-report.html</a></td><td>代码库全景：架构、模块、协议、风险（认知基线）</td></tr>
+    <tr><td>②</td><td>Java 迁移可行性评估</td><td class="mono"><a href="/java-migration.html" style="color:var(--gold)">mir2-java-migration-feasibility.html</a></td><td>GO/NO-GO 决策依据：代码取证、12 章评估（决策基线）</td></tr>
+    <tr><td>③</td><td>开发计划书（本文档）</td><td class="mono">mir2-java-development-plan.html</td><td>执行蓝图：阶段/任务/门禁/规范/预算（执行基线）</td></tr>
+  </table>
+
+  <table>
+    <tr><th>版本</th><th>日期</th><th>变更</th></tr>
+    <tr><td class="mono">v1.0</td><td class="mono">2026-09-18</td><td>首次发布：基于可行性评估 v1.1 的 GO 结论编制；30 周计划 / 6 决策门 / 240 人日</td></tr>
+  </table>
+
+  <div class="callout warn">
+    <b>合规声明：</b>本计划仅用于技术学习与私密社区研究。传奇 IP 与美术资源版权归盛趣游戏 / Wemade 所有；
+    禁止商业运营、公开拉新与客户端资源分发。上线运营前请再次确认法律边界（详见评估报告第 09 节 R8）。
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="fbrand">📋 MIR2 → JAVA · DEVELOPMENT PLAN v1.0</div>
+  <div>基线：ivanmissu/MIR2 · 9 程序 / 142,007 行 Pascal → 单 JVM / Linux·Docker · 兼容 mir2.exe 零改动</div>
+  <div>2026-09-18 编制 · 计划假设 2026-10-12 启动（可整体平移） · 前置阅读：项目分析报告 / 可行性评估报告</div>
+</footer>
+
+</body>
+</html>
