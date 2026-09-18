@@ -1,42 +1,32 @@
-# MIR2 Java Server
+# MIR2 Java server · S0 executable baseline
 
-Legend of Mir 2 (热血传奇) 服务端的 Java 迁移版本，从原始 Delphi 服务端与协议源码移植而来。本文档说明 `java-server/` 的构建、运行与配置方法。
+This directory contains the executable Java migration slice derived from the original Delphi server and protocol sources.
 
-## 功能概览
+## Implemented
 
-- 打包版 Delphi `TDefaultMessage`（12 字节，小端）
-- 传统 OLDMODE 6-bit 传输编解码
-- 兼容 Delphi 零填充语义的 DES 封装
-- 按字节（而非 UTF-16 字符）限长的 GBK 边界辅助方法
-- 从 `Grobal2.pas` 机械提取的 302 个 `CM_` / `SM_` 协议常量
-- 采用传统 `#<序号><头><体>!` 帧格式的三端口 Socket 服务端
-- 登录、选区、角色列表 / 创建 / 删除 / 选择的映射实现
-- 基于 SQLite 的账号与角色持久化
-- 可执行的 shaded JAR 与 Docker Compose 打包
+- packed Delphi `TDefaultMessage` (12 bytes, little-endian)
+- legacy OLDMODE 6-bit transport encoding/decoding
+- DES compatibility wrapper with Delphi zero-padding semantics
+- GBK boundary helpers with byte—not UTF-16 character—limits
+- 20 deterministic message round-trip vectors plus binary and GBK edge tests
+- 302 `CM_` / `SM_` constants mechanically extracted from `Grobal2.pas`
+- three-port socket server with legacy `#<sequence><header><body>!` framing
+- initial login, server selection, and character list/create/delete/select mapping
+- SQLite account and character persistence
+- executable shaded JAR and Docker Compose packaging
 
-## 环境要求
+## Build and run
 
-- JDK 21
-- Maven 3.9+
-- （可选）Docker，用于容器化部署
-
-## 构建与运行
-
-在仓库根目录执行：
+JDK 21 and Maven 3.9+ are required:
 
 ```bash
-# 编译并运行全部测试
 mvn -f java-server/pom.xml verify
-
-# 启动服务端
 java -jar java-server/bootstrap/target/mir2-server.jar
 ```
 
-默认监听 TCP 端口 **7000**、**7100**、**7200**，数据存储在工作目录下的 `data/mir2.db`。使用 `Ctrl+C` 或 `SIGTERM` 停止；关闭钩子会干净地关闭监听器与 SQLite。
+The default process listens on TCP ports 7000, 7100, and 7200 and stores data in `data/mir2.db` relative to its working directory. Stop it with `Ctrl+C` or `SIGTERM`; the shutdown hook closes listeners and SQLite cleanly.
 
-### 创建首个测试账号
-
-在空数据库上创建一个测试账号：
+To create a first test account on an empty database:
 
 ```bash
 MIR2_BOOTSTRAP_USER=hero \
@@ -44,28 +34,26 @@ MIR2_BOOTSTRAP_PASSWORD=change-me \
 java -jar java-server/bootstrap/target/mir2-server.jar
 ```
 
-引导账号仅在该用户名尚不存在时创建；后续启动不会重置其密码。
+The bootstrap account is created only when that username does not already exist. Its password is not reset on later starts.
 
-## 配置
+## Configuration
 
-所有配置通过环境变量提供：
-
-| 环境变量 | 默认值 | 说明 |
+| Environment variable | Default | Purpose |
 |---|---:|---|
-| `MIR2_DATABASE` | `data/mir2.db` | SQLite 数据库文件路径 |
-| `MIR2_LOGIN_PORT` | `7000` | LoginGate 监听端口 |
-| `MIR2_SELECT_PORT` | `7100` | SelGate 监听端口 |
-| `MIR2_GAME_PORT` | `7200` | RunGate 监听端口 |
-| `MIR2_ADVERTISED_HOST` | `127.0.0.1` | 返回给 `mir2.exe` 用于下一次连接的地址 |
-| `MIR2_SERVER_NAME` | `MIR2` | 展示给客户端的服务器名称 |
-| `MIR2_BOOTSTRAP_USER` | 未设置 | 可选的初始测试账号 |
-| `MIR2_BOOTSTRAP_PASSWORD` | 未设置 | 与初始账号配对的密码 |
+| `MIR2_DATABASE` | `data/mir2.db` | SQLite file path |
+| `MIR2_LOGIN_PORT` | `7000` | LoginGate listener |
+| `MIR2_SELECT_PORT` | `7100` | SelGate listener |
+| `MIR2_GAME_PORT` | `7200` | RunGate listener |
+| `MIR2_ADVERTISED_HOST` | `127.0.0.1` | Address returned to `mir2.exe` for its next connection |
+| `MIR2_SERVER_NAME` | `MIR2` | Server name shown to the client |
+| `MIR2_BOOTSTRAP_USER` | unset | Optional initial test account |
+| `MIR2_BOOTSTRAP_PASSWORD` | unset | Password paired with the initial account |
 
-> 当客户端运行在另一台电脑时，`MIR2_ADVERTISED_HOST` 必须设置为服务端的局域网或公网地址，而不能是 `127.0.0.1`。
+For a client on another computer, `MIR2_ADVERTISED_HOST` must be the server's LAN or public address, not `127.0.0.1`.
 
 ## Docker Compose
 
-在仓库根目录执行：
+From the repository root:
 
 ```bash
 MIR2_ADVERTISED_HOST=192.0.2.10 \
@@ -74,17 +62,10 @@ MIR2_BOOTSTRAP_PASSWORD=change-me \
 docker compose -f java-server/compose.yml up --build
 ```
 
-SQLite 数据保存在名为 `mir2-data` 的命名卷中。镜像以非特权用户运行。
+SQLite is retained in the named `mir2-data` volume. The image runs as an unprivileged user.
 
-## 兼容性说明
+## Compatibility notes
 
-- `EDcode.pas` 当前为 `ENDECODEMODE = OLDMODE`，因此本基线不会应用 NEWMODE 替换表。在没有 Delphi 黄金采样对照前请勿更改。
-- `DefaultMessage` 使用无符号 16 位校验与有符号 32 位 `Recog`，与 Delphi 的 `Word` 和 `Integer` 布局一致。
-- 编译与启动冒烟测试尚未完整证明与 `mir2.exe` 的兼容性。真实客户端验证与 W03 游戏世界实现仍在进行中。
+`EDcode.pas` currently has `ENDECODEMODE = OLDMODE`; therefore this baseline intentionally does not apply the NEWMODE substitution tables. Do not change this without Delphi golden captures. `DefaultMessage` uses unsigned 16-bit validation and signed 32-bit `Recog`, matching Delphi's `Word` and `Integer` layout.
 
-## 更多文档
-
-- `java-server/README.md` — S0 可执行基线详情
-- `java-server/docs/g0-checklist.md` — G0 检查清单
-- `java-server/docs/translation-map.md` — Delphi → Java 翻译映射
-- `GameOfMir/doc/mir2-java-development-plan.md` — Java 迁移开发计划
+Compilation and startup smoke tests do not yet prove full `mir2.exe` compatibility. Real-client validation and the W03 game-world implementation remain pending.
