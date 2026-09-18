@@ -1,0 +1,24 @@
+services:
+  mir2-server:
+    build:
+      context: .
+    image: mir2-java-server:local
+    restart: unless-stopped
+    ports:
+      - "${MIR2_LOGIN_PORT:-7000}:${MIR2_LOGIN_PORT:-7000}"
+      - "${MIR2_SELECT_PORT:-7100}:${MIR2_SELECT_PORT:-7100}"
+      - "${MIR2_GAME_PORT:-7200}:${MIR2_GAME_PORT:-7200}"
+    environment:
+      MIR2_DATABASE: /app/data/mir2.db
+      MIR2_LOGIN_PORT: ${MIR2_LOGIN_PORT:-7000}
+      MIR2_SELECT_PORT: ${MIR2_SELECT_PORT:-7100}
+      MIR2_GAME_PORT: ${MIR2_GAME_PORT:-7200}
+      MIR2_ADVERTISED_HOST: ${MIR2_ADVERTISED_HOST:-127.0.0.1}
+      MIR2_SERVER_NAME: ${MIR2_SERVER_NAME:-MIR2}
+      MIR2_BOOTSTRAP_USER: ${MIR2_BOOTSTRAP_USER:-}
+      MIR2_BOOTSTRAP_PASSWORD: ${MIR2_BOOTSTRAP_PASSWORD:-}
+    volumes:
+      - mir2-data:/app/data
+
+volumes:
+  mir2-data:

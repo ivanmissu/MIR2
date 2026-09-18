@@ -12,10 +12,57 @@ jobs:
       run:
         working-directory: java-server
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
           cache: maven
-      - run: mvn --batch-mode --no-transfer-progress test
+      - name: Run Maven tests
+        shell: bash
+        run: |
+          set +e
+          mvn --batch-mode --no-transfer-progress verify 2>&1 | tee maven-test.log
+          status=${PIPESTATUS[0]}
+          if (( status != 0 )); then
+            while IFS= read -r line; do
+              message=${line//'%'/'%25'}
+              message=${message//$'\r'/'%0D'}
+              message=${message//$'\n'/'%0A'}
+              echo "::error title=Maven test failure::$message"
+            done < <(grep -E '^\[ERROR\]' maven-test.log | tail -20)
+          fi
+          exit "$status"
+      - name: Upload executable JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: mir2-server-jar
+          path: java-server/bootstrap/target/mir2-server.jar
+          if-no-files-found: error
+          retention-days: 7
+      - name: Smoke-test executable JAR
+        shell: bash
+        run: |
+          MIR2_DATABASE="$RUNNER_TEMP/mir2-smoke.db" \
+          MIR2_LOGIN_PORT=17000 \
+          MIR2_SELECT_PORT=17100 \
+          MIR2_GAME_PORT=17200 \
+          MIR2_BOOTSTRAP_USER=smoke \
+          MIR2_BOOTSTRAP_PASSWORD=smoke-password \
+          java -jar bootstrap/target/mir2-server.jar >"$RUNNER_TEMP/mir2-server.log" 2>&1 &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true' EXIT
+          for attempt in {1..20}; do
+            if (echo >/dev/tcp/127.0.0.1/17000) 2>/dev/null \
+                && (echo >/dev/tcp/127.0.0.1/17100) 2>/dev/null \
+                && (echo >/dev/tcp/127.0.0.1/17200) 2>/dev/null; then
+              exit 0
+            fi
+            sleep 0.5
+          done
+          cat "$RUNNER_TEMP/mir2-server.log"
+          exit 1
+      - name: Validate Compose and build Docker image
+        run: |
+          docker compose --file compose.yml config
+          docker build --tag mir2-java-server:ci .

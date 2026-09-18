@@ -2,6 +2,7 @@
   <parent><groupId>com.mir2</groupId><artifactId>mir2-server</artifactId><version>0.1.0-SNAPSHOT</version></parent>
   <artifactId>mir2-persistence</artifactId>
   <dependencies>
+    <dependency><groupId>com.mir2</groupId><artifactId>mir2-auth</artifactId><version>${project.version}</version></dependency>
     <dependency><groupId>com.mir2</groupId><artifactId>mir2-character</artifactId><version>${project.version}</version></dependency>
     <dependency><groupId>org.xerial</groupId><artifactId>sqlite-jdbc</artifactId><version>3.46.1.0</version></dependency>
     <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId><version>5.10.3</version><scope>test</scope></dependency>
