@@ -174,10 +174,11 @@ public sealed interface WorldEvent
     }
   }
 
-  record ItemPickedUp(int playerId, GroundItem item) implements WorldEvent {
+  record ItemPickedUp(int playerId, GroundItem item, BackpackItem backpackItem) implements WorldEvent {
     public ItemPickedUp {
       if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
       Objects.requireNonNull(item, "item");
+      Objects.requireNonNull(backpackItem, "backpackItem");
     }
   }
 

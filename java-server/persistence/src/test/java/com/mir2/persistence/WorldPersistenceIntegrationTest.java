@@ -3,6 +3,7 @@ package com.mir2.persistence;
 import com.mir2.character.Character;
 import com.mir2.world.AttackKind;
 import com.mir2.world.AttackResult;
+import com.mir2.world.BackpackItem;
 import com.mir2.world.Direction;
 import com.mir2.world.GameMap;
 import com.mir2.world.MonsterTemplate;
@@ -10,6 +11,7 @@ import com.mir2.world.MoveResult;
 import com.mir2.world.MovementKind;
 import com.mir2.world.PlayerState;
 import com.mir2.world.Position;
+import com.mir2.world.StdItems;
 import com.mir2.world.WorldEngine;
 import com.mir2.world.WorldObjectSnapshot;
 import java.nio.file.Files;
@@ -73,6 +75,10 @@ class WorldPersistenceIntegrationTest {
             "the adjacent orc should have persisted at least one hit");
         assertEquals(List.of("鸡肉"),
             beforeRestart.backpack().stream().map(item -> item.name()).toList());
+        BackpackItem pickedUp = beforeRestart.backpack().getFirst();
+        assertTrue(pickedUp.makeIndex() > 0, "picked-up items need a stable make index");
+        assertEquals(StdItems.chickenMeat(), pickedUp.item());
+        assertEquals(pickedUp.dura(), pickedUp.duraMax());
         run(world, world.leavePlayer(player.id()));
       }
     }
@@ -89,6 +95,10 @@ class WorldPersistenceIntegrationTest {
             restartedWorld, restartedWorld.playerState(restored.id()));
         assertEquals(beforeRestart, restoredPrivateState);
         assertFalse(restoredPrivateState.backpack().isEmpty());
+        // The make index must survive the restart unchanged; the allocator continues past it.
+        assertEquals(beforeRestart.backpack().getFirst().makeIndex(),
+            restoredPrivateState.backpack().getFirst().makeIndex());
+        assertEquals(StdItems.chickenMeat(), restoredPrivateState.backpack().getFirst().item());
       }
     } finally {
       Files.deleteIfExists(file);
@@ -99,7 +109,7 @@ class WorldPersistenceIntegrationTest {
     WorldEngine.Config config =
         new WorldEngine.Config(Duration.ofMillis(50), 12, 1_000, 900, 5_000, 180_000);
     return new WorldEngine(config, List.of(GameMap.empty("0", "PoC", 20, 20)),
-        now::get, new Random(20020522L), store);
+        now::get, new Random(20020522L), store, store.itemDatabase());
   }
 
   private static <T> T run(WorldEngine world, CompletableFuture<T> future) {

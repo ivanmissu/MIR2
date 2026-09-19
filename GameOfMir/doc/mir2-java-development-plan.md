@@ -1,12 +1,12 @@
 # MIR2 服务端 Java 化迁移 开发计划书
 
-*Development Plan · v1.0.10 · 2026-09-19*
+*Development Plan · v1.0.11 · 2026-09-19*
 
 **30 周日历（约 7 个月）** · **2 人团队 · 240 人日** · **6 道决策门 G0–G5** · **上线目标：2027 年 5 月** · **全程 Linux/Docker 交付**
 
 本计划以《可行性评估报告》的 GO 结论为基线，将 8–12 人月的迁移工程拆解为 **1 个 PoC + 5 个阶段（P0–P4）+ 6 道决策门（G0–G5）**，覆盖团队分工、周级任务分解、工程规范、 CI/CD、发布回滚与预算，可直接作为项目执行与跟踪的依据。
 
-> **执行状态（截至 2026-09-19）**：S0/W01 协议基座已完成；W02 账号、角色、SQLite 持久化已完成；Gate 接入与会话路由已完成初版；可执行 JAR、环境配置、优雅停机及 Docker Compose 已交付。W03 的 **Tick、地图、碰撞、对象生命周期、12 格视野、RunLogin、移动协议及 GAME→World 接线** 已形成自动化闭环；近战攻击、单种怪物 AI、击杀/经验、掉落/拾取也已实现。本次会话完成 **战斗与背包状态落库**：`Ability` 与 46 格背包通过 SQLite 原子保存并在进图前恢复，旧 W02 数据库可原位升级，角色性别/发型/衣服/武器外观参与 `Feature`。自动化已覆盖「打怪 → 捡装备 → 重启 Store/World → 重登不丢」。下一步是真实 `mir2.exe` 对拍，并补齐真实客户端需要的完整 `TClientItem/SM_BAGITEMS` 载荷。
+> **执行状态（截至 2026-09-19）**：S0/W01 协议基座已完成；W02 账号、角色、SQLite 持久化已完成；Gate 接入与会话路由已完成初版；可执行 JAR、环境配置、优雅停机及 Docker Compose 已交付。W03 的 **Tick、地图、碰撞、对象生命周期、12 格视野、RunLogin、移动协议及 GAME→World 接线** 已形成自动化闭环；近战攻击、单种怪物 AI、击杀/经验、掉落/拾取与战斗/背包状态落库已完成。本次会话完成 **W04 物品目录与背包同步**：完整 `StdItem` 模板与 SQLite `std_items` 目录、复刻 `GetItemNumber` 的稳定 `MakeIndex`、耐久字段、**76 字节 `TClientItem`** 小端编解码，以及 `CM_QUERYBAGITEMS → SM_BAGITEMS`（空包静默）与 `SM_ADDITEM` 完整载荷；W03 库存背包可原位升级并重编号。下一步是真实 `mir2.exe` 对拍（重点验证 `TClientItem` 布局推导与 `SM_BAGITEMS` 字段顺序），对拍差异补进 golden。
 
 ## ✅ 当前执行进度（Session Handoff）
 
@@ -23,20 +23,58 @@
 | 🟡 部分完成 | W02：接入骨架（7000/7100/7200） | 已完成三监听器、`#序号+消息头+消息体!` 分帧、连接状态、整数认证码桥接和登录/选服/角色查询建删选字段映射；GAME 首包已按 `**账号/角色/认证码/版本/登录码` 独立解析，并校验认证码与已选角色；Netty 替换、限速及真客户端验证未完成 | `java-server/gate`；`LegacyGateHandlerTest`、`WireMessageCodecTest` |
 | 🟡 部分完成 | W03：tick、地图、移动广播 | 单 owner Tick、地图/碰撞、12 格视野、7200 RunLogin、GAME 会话进出、`SM_NEWMAP/LOGON/MAPDESCRIPTION`、`TCharDesc`、移动确认与观察者广播均已接通 | `GameProtocolAdapterTest`、`GameSessionIntegrationTest`；模拟双会话闭环已通过，尚缺真客户端对拍 |
 | ✅ 完成（本地闭环） | W03：近战怪、击杀、掉落、拾取与重登存档 | 近战攻击、怪物 AI、经验、掉落/拾取已实现；HP/MP/等级/经验与 46 格背包由 SQLite 原子保存并进图恢复，角色外观字段已落库。真实客户端 `TClientItem` 与对拍仍归并行兼容任务 | `WorldCombatTest`、`GameCombatProtocolTest`、`WorldPersistenceIntegrationTest`；CI run `35427011522` |
+| ✅ 完成（本地闭环） | W04：最小物品目录 + `TClientItem` + 背包同步 | 完整 `StdItem`（66 字节 `TStdItem` 全字段）+ `ItemDatabase` 端口 + SQLite `std_items` 启动种子；`MakeIndex` 复刻 `GetItemNumber` 并按持久化高水位接续；拾取满耐久；76 字节 `TClientItem` 编解码；`CM_QUERYBAGITEMS → SM_BAGITEMS`、`SM_ADDITEM` 完整载荷；W03 背包原位升级 | `ClientItemCodecTest`、`GameCombatProtocolTest`（新增 bag-items 用例）、`SqliteStoreTest`（目录种子 + W03 升级）、`WorldPersistenceIntegrationTest`；CI run `35433957340` 全绿（Maven 全量测试、fat JAR 三端口冒烟、Compose 校验、Docker 镜像构建） |
 
 ### 当前下一步（Next Session）
 
-> **下次开发起点：**第 1–3、5–6 项已完成。主线转到第 4/7 项的真实客户端对拍；在验证真客户端拾取与重登背包前，应先实现最小物品目录与完整 `TClientItem`、`CM_QUERYBAGITEMS → SM_BAGITEMS` 载荷。该工作不得扩展成完整装备/交易系统。
+> **下次开发起点：**第 1–3、5–6 项及最小物品目录/`TClientItem`/`SM_BAGITEMS` 已完成。主线转到第 4/7 项的真实客户端对拍：用真 `mir2.exe` 验证拾取、`SM_ADDITEM` 载荷与重登 `SM_BAGITEMS`，重点核对 TClientItem 76 字节布局推导（`String[20]`=21 字节 → `TStdItem`=66 字节，`MakeIndex` 4 字节对齐至偏移 68）与真客户端 `sizeof(TClientItem)` 是否一致；对拍差异补进 golden。装备穿脱、使用物品（`CM_EAT`）、丢弃（`CM_DROPITEM`）属于后续物品切片，不得在对拍前提前扩展。
 
 1. ✅ **接通 7200 首包认证：**已按 `Client/ClMain.pas:SendRunLogin` 的 `**账号/角色/认证码/客户端版本/RUNLOGINCODE` 格式增加独立 headerless 首包解析；`GateSessionRegistry` 会在 `CM_SELCHR` 时记录角色，并在 GAME 登录时联合校验认证码、账号和已选角色。非法首包返回 `SM_STARTFAIL` 并关闭连接。
 2. ✅ **实现移动协议适配器：**已将 `CM_TURN / CM_WALK / CM_RUN` 的 `Recog` 打包坐标与 `Tag` 方向转换为 `WorldEngine.turn/move`；成功/拒绝事件转换为 `+GOOD/<tick>` / `+FAIL/<tick>`，观察者事件转换为 `SM_WALK / SM_RUN / SM_TURN / SM_DISAPPEAR`。
 3. ✅ **补齐进图最小消息并接线会话：**`MapEntered` 已转换为 `SM_NEWMAP + SM_LOGON + SM_MAPDESCRIPTION`，实现 8 字节小端 `TCharDesc` 与 16 字节 `TMessageBodyWL`；认证 GAME socket 会加入/移出 `WorldEngine`，支持可配置出生点和邻近空位选择。双模拟会话已覆盖“进入→互相出现→走/跑→离开视野→断线清理”。
-4. **真实客户端对拍：**用真 `mir2.exe` 和 Delphi 抓包确认 RunLogin、`+GOOD/+FAIL`、`SM_*` 字段及应答顺序，重点核对日夜亮度、裸装 Feature、角色名/颜色附加体和完整 `SM_LOGON` 后续序列；差异补进 golden，同时保持 Maven/JDK 21、fat JAR 冒烟和 Docker 构建全绿。
+4. **真实客户端对拍：**用真 `mir2.exe` 和 Delphi 抓包确认 RunLogin、`+GOOD/+FAIL`、`SM_*` 字段及应答顺序，重点核对日夜亮度、裸装 Feature、角色名/颜色附加体、完整 `SM_LOGON` 后续序列，以及 **拾取 → `SM_ADDITEM` 的 76 字节 `TClientItem` 载荷** 与 **`SM_LOGON` 后客户端自发 `CM_QUERYBAGITEMS` → `SM_BAGITEMS` 的应答顺序与字段**；差异补进 golden，同时保持 Maven/JDK 21、fat JAR 冒烟和 Docker 构建全绿。
 5. ✅ **近战战斗切片：**已实现 `Ability`（HP/MP/DC/AC/等级/经验）、`AttackKind`、单格正面攻击与 Delphi 共用的 `CM_HIT` 动作间隔、伤害 = 攻击随机值 − 防御随机值；`MonsterTemplate`（鸡 / 半兽人）带视野索敌、追击、独立攻击间隔与尸体超时清理；`ItemDrop` / `GroundItem` 实现「N 分之一」掉落、地面物品视野同步与 `CM_PICKUP` 拾取；协议侧新增 `SM_HIT/HEAVYHIT/BIGHIT`、`SM_STRUCK`（TMessageBodyWL）、`SM_HEALTHSPELLCHANGED`、`SM_DEATH`（TCharDesc）、`SM_WINEXP`、`SM_ITEMSHOW/ITEMHIDE/ADDITEM`。
 6. ✅ **战斗与背包状态落库：**新增 `PlayerStateStore` 端口及 SQLite 实现，将完整 `Ability` 与最多 46 个 `BackpackItem` 在伤害、经验、拾取和离场时保存；进图在 `MapEntered` 前按角色 UUID 恢复。`character_state` 与 `character_inventory` 事务更新，角色删除级联清理；旧 W02 `characters` 表自动增加性别/发型/衣服/武器外观列并回填默认状态。`CM_NEWCHR` 的 hair/sex 已贯通到 `SM_LOGON Feature`。`WorldPersistenceIntegrationTest` 覆盖 Store/World 双重启后的 HP、经验、背包恢复。
-7. **真实客户端对拍（可并行）：**用真 `mir2.exe` 和 Delphi 抓包确认 RunLogin、`+GOOD/+FAIL`、进图与战斗 `SM_*` 的字段及应答顺序，差异补进 golden。
-8. 接入层的连接数限制、消息大小/频率限制、空闲超时和 Netty 替换仍需完成，但不阻塞上述 world 协议闭环的 PoC 顺序。
-9. 57 种怪物、技能/魔法、远程与群攻仍不得提前扩展，等存档闭环与对拍完成后再按 P2 计划推进。
+7. ✅ **最小物品目录与背包同步（W04）：**`StdItem`/`ItemDatabase`/`StdItems` 落地最小目录（鸡肉/鹿肉/木剑/金创药(小量)）并以 SQLite `std_items` 持久化；`MakeIndex` 复刻 `GetItemNumber` 语义并从持久化高水位接续；`ClientItemCodec` 输出 76 字节小端 `TClientItem`；`CM_QUERYBAGITEMS → SM_BAGITEMS` 与 `SM_ADDITEM` 完整载荷接通；W03 背包行原位升级并在进图时重编号。物品数值仍为 TODO(verify) 占位，待真实 StdItems 数据导入。
+8. **真实客户端对拍（可并行）：**用真 `mir2.exe` 和 Delphi 抓包确认 RunLogin、`+GOOD/+FAIL`、进图与战斗 `SM_*` 的字段及应答顺序，差异补进 golden。
+9. 接入层的连接数限制、消息大小/频率限制、空闲超时和 Netty 替换仍需完成，但不阻塞上述 world 协议闭环的 PoC 顺序。
+10. 57 种怪物、技能/魔法、远程与群攻仍不得提前扩展，等存档闭环与对拍完成后再按 P2 计划推进。
+
+### W04 物品目录与背包同步交接明细（2026-09-19）
+
+#### 已落地代码
+
+- `world/StdItem`：完整 `TStdItem` 模板（name/stdMode/shape/weight/aniCount/source/needIdentify/looks/duraMax/ac/mac/dc/mc/sc/need/needLevel/price），u32 字段用 `long` 保存并在写入线上时截断；`packedRange(min,max)` 复刻 `ItmUnit.pas GetItemAddValue` 的 `MakeLong` 打包；`placeholder(name,looks)` 兜底目录外名称。
+- `world/ItemDatabase` + `world/StdItems`：world 内的目录端口（等价 M2Server 内存 `StdItemList`），最小目录 = 鸡肉/鹿肉/木剑/金创药(小量)；数值按经典数据设置但全部标 `TODO(verify)`，待真实 StdItems 导入校正。
+- `world/BackpackItem`：由 `(name, looks)` 升级为 `(StdItem 模板, makeIndex, dura, duraMax)`；`of(template, makeIndex)` 复刻 `CopyToUserItemFromName` 的满耐久创建（实例耐久 = 模板 DuraMax 低 16 位）。
+- `world/WorldEngine`：新增 `ItemDatabase` 注入；`allocateMakeIndex` 复刻 `M2Share.GetItemNumber`（单调递增，超过 `High(Integer)/2-1` 回绕到 1），构造时从 `PlayerStateStore.itemMakeIndexHighWater()` 接续，重启不重号；拾取时按名称解析模板（目录缺失则用地面 looks 兜底）；掉落 Looks 优先取目录模板值；进图恢复时为 W03 旧行（makeIndex=0）重编号。
+- `gate/ClientItemCodec`：76 字节小端 `TClientItem`（packed 66 字节 `TStdItem` + 2 字节对齐填充 + `MakeIndex`(偏移 68) + `Dura`/`DuraMax` word）；`String[20]` 名字槽 = 1 长度字节 + GBK 载荷 + 零填充；`encodeBag` 按 Delphi 惯例给每个条目补尾随 `/`。
+- `gate/GameProtocolAdapter`：`CM_QUERYBAGITEMS → SM_BAGITEMS`（recog=玩家、series=数量、空包完全静默，与 `ObjBase.pas:15952` 一致）；`SM_ADDITEM` 载荷从纯名字升级为完整 `TClientItem`（`SendAddItem` 无分隔符）。
+- `persistence/SqliteStore`：新增 `std_items` 表并在启动时 `INSERT OR IGNORE` 种子目录；`character_inventory` 增加 `make_index/dura/dura_max` 列（W03 原位升级）；载入按名称 LEFT JOIN 模板、缺失时用 placeholder 保留条目；保存时对包内模板 `INSERT OR IGNORE`（首写为准，不覆盖精调数据）；`itemMakeIndexHighWater()` 取 `MAX(make_index)`；`itemDatabase()` 启动快照交给引擎。
+- `bootstrap`：`WorldEngine` 装配接入 `store.itemDatabase()`。
+
+#### 关键证据与推导（TClientItem = 76 字节）
+
+- `TStdItem`（packed，Grobal2.pas:540）：`String[20]` 名字槽 21 字节 + 7 个单字节字段 + `Looks` word + 9 个 dword = **66 字节**（源码 "60 bytes" 注释源自旧版 `String[14]`，已过时）。
+- `TClientItem`（非 packed，Grobal2.pas:562）：`MakeIndex: Integer` 按 4 字节自然对齐落在偏移 68，字节 66–67 为对齐填充，加 `Dura`/`DuraMax` 两个 word 共 **76 字节**；客户端 `ClMain.pas ClientGetAddItem/ClientGetBagItmes` 均按 `sizeof(TClientItem)` 解码。此前计划中的 "68 字节" 是基于过时注释的推导，已更正；最终以 Delphi 抓包 golden 为准。
+- `SM_BAGITEMS`：头 `MakeDefaultMsg(SM_BAGITEMS, Recog, 0, 0, Count)`，正文 = 每件 `EncodeBuffer(TClientItem) + '/'`（含末尾 `/`）；空包不发送。`SM_ADDITEM`：series=1，正文为单个无分隔 `TClientItem` 块。
+- `MakeIndex`：`GetItemNumber`（M2Share.pas:3611）单调递增；`CopyToUserItemFromName`（UsrEngn.pas:1624）创建实例时 `Dura := DuraMax := StdItem.DuraMax`。
+
+#### 验收证据
+
+- `gate/ClientItemCodecTest`：76 字节布局逐偏移断言（GBK 名字槽、`MakeLong(2,5)` 的 DC、66–67 填充、`MakeIndex` 偏移 68）、6-bit 回环、20 字节满槽名字、实例耐久 word 截断、bag 正文 `/` 拼接与空串。
+- `gate/GameCombatProtocolTest`：拾取后 `SM_ADDITEM` 解码出完整模板 + 正数 `MakeIndex`；新增 `CM_QUERYBAGITEMS` 用例断言空包静默、拾取后 series=1 且正文与 `encodeBag` 逐字节一致。
+- `world/WorldCombatTest`：拾取事件携带完整模板、`MakeIndex>0`、满耐久。
+- `persistence/SqliteStoreTest`：磨损木剑（makeIndex=101, dura=7/20）+ 满耐久鸡肉的完整往返；目录种子与未知名称 placeholder 保留；W03 `character_inventory`（仅 name+looks）原位升级、升级行 join 到目录模板、重编号往返；高水位断言。
+- `persistence/WorldPersistenceIntegrationTest`：杀鸡拾取 → 重启 Store/World → 重登，`MakeIndex` 与模板逐字段不丢。
+
+#### 明确未实现 / 注意事项
+
+- 物品数值（价格/恢复量/耐久）是最小占位目录，全部标注 `TODO(verify)`；真实 StdItems.DB 导入前不得用于经济平衡。
+- `SM_UPDATEITEM`（耐久变化）、`CM_EAT`（使用物品）、`CM_DROPITEM`（丢弃）、装备槽 `UseItems` 与 `SM_SENDUSEITEMS` 均未实现，属于后续物品切片。
+- 目录查找按名称精确匹配；Delphi `CompareText` 的大小写不敏感语义对中文名称无影响，待英文物品名导入时再对齐。
+- `TClientItem` 布局是从 Grobal2.pas 字段表推导的（Delphi 记录对齐规则），**尚未有 Delphi 端抓包 golden**；真客户端对拍是 G0 前置条件。
+- 46 件物品的 `SM_BAGITEMS` 正文约 4.7K 字符，低于 8192 字节帧上限；更大背包需分帧时按 Delphi 行为再定。
 
 ### W03 存档闭环交接明细（2026-09-19）
 
@@ -57,7 +95,7 @@
 
 #### 下一步边界
 
-- 当前持久化条目只有名称和 `Looks`；下一步先做最小物品目录、稳定 `MakeIndex`、耐久字段、68 字节 `TClientItem` 编码以及 `CM_QUERYBAGITEMS → SM_BAGITEMS`，随后才能用真客户端验收重登背包。
+- ~~当前持久化条目只有名称和 `Looks`~~（已由 W04 交付）：最小物品目录、稳定 `MakeIndex`、耐久字段、76 字节 `TClientItem` 编码以及 `CM_QUERYBAGITEMS → SM_BAGITEMS` 均已落地；真客户端验收重登背包仍待对拍。
 - SQLite 当前按每次战斗状态变化同步写入，满足 PoC 一致性但不代表最终吞吐方案；P2 压测后再决定脏标记/周期批量保存，不得在 G0 对拍前提前复杂化。
 - 角色表已有衣服/武器 shape，但尚无穿脱命令、装备槽和属性重算；这些属于后续物品/装备切片。
 
@@ -81,7 +119,7 @@
 
 #### 明确未实现 / 注意事项
 
-- **完整背包线上载荷仍未实现**：服务端已持久化并恢复背包，但 `BackpackItem` 暂只有名称与 `Looks`；缺少物品数据库、`MakeIndex`、耐久及 68 字节 `TClientItem`，所以真客户端的 `SM_ADDITEM/SM_BAGITEMS` 仍不能视为完成。
+- ~~**完整背包线上载荷仍未实现**~~（已由 W04 交付）：`BackpackItem` 现携带完整模板、`MakeIndex` 与耐久，`SM_ADDITEM/SM_BAGITEMS` 输出 76 字节 `TClientItem`；但未经真客户端对拍前仍不能视为「真客户端验证完成」。
 - 伤害公式是 Delphi 基础攻防区间的简化版，未包含幸运/诅咒、命中闪避、护身与麻痹等修正；等级提升、`SM_LEVELUP` 与属性成长也未实现。
 - 玩家死亡后仅广播 `SM_DEATH` 并禁止移动/攻击，尚无复活、掉落惩罚与 `SM_ALIVE`。
 - 掉落只有物品名与 `Looks`，没有完整 `TClientItem`（60 字节 `TStdItem` + 耐久），因此 `SM_ADDITEM` 目前只带名字，接入真实客户端前必须补物品数据库。
@@ -121,7 +159,7 @@
 - ⬜ Delphi 实际 traffic recorder 与 20 组字节级 golden 对拍
 - ⬜ 真 `mir2.exe` 登录、选区、角色列表、建删角色、进入世界
 - 🟡 Tick/地图/碰撞/视野、7200 认证、进图与移动 socket 闭环已完成并有双会话集成测试；真 `mir2.exe` 广播验证未完成
-- ✅ 近战怪、击杀、掉落、拾取与 **HP/MP/等级/经验/背包重登存档** 已有确定性及 SQLite 重启集成测试；真客户端完整物品载荷与对拍仍未完成
+- ✅ 近战怪、击杀、掉落、拾取、**HP/MP/等级/经验/背包重登存档** 与 **完整 `TClientItem`/`SM_BAGITEMS` 载荷** 已有确定性及 SQLite 重启集成测试；真客户端对拍仍未完成
 - ⬜ 50 机器人 × 1 小时稳定性验证
 - ⬜ G0 决策门评审与 v0.1 基线 tag
 
@@ -137,12 +175,12 @@
 #### P2–P4
 
 - 🟡 地图碰撞、玩家/近战怪生命周期、12 格视野、基础战斗/经验及协议实发已完成；门/传送和其他非玩家对象未完成
-- 🟡 掉落、拾取、46 格背包及状态存档已完成；完整物品数据库、`TClientItem`、装备穿脱与周期批量存档未完成
+- 🟡 掉落、拾取、46 格背包、状态存档、最小物品目录、`MakeIndex`/耐久与 76 字节 `TClientItem`/`SM_BAGITEMS` 已完成；装备穿脱、物品使用/丢弃与周期批量存档未完成
 - ⬜ 57 种怪物 AI、59 个技能、NPC 脚本
 - ⬜ 交易、组队、PK、红名、行会、攻城
 - ⬜ 500 机器人 × 4 小时压测、灰度、Docker 双架构、上线回滚演练
 
-> **当前已完成范围包括协议/账号/角色/SQLite、7200→World 的移动/近战/拾取闭环及重登存档；尚未经过真实 `mir2.exe` 对拍，完整物品与装备系统等未完成项不得视为已支持。**
+> **当前已完成范围包括协议/账号/角色/SQLite、7200→World 的移动/近战/拾取闭环、重登存档及完整 `TClientItem`/`SM_BAGITEMS` 背包同步；尚未经过真实 `mir2.exe` 对拍，装备/技能等未完成项不得视为已支持。**
 
 ## 📑 目录
 
@@ -527,6 +565,7 @@ staging 从 P1 起常驻（对拍需要）；prod 在 W28 预备。**所有环�
 | `v1.0.8` | `2026-09-19` | 完成 GAME→World 生命周期接线、最小进图消息、`TCharDesc/TMessageBodyWL`、可配置出生点及双 socket 进入/出现/走跑/离视野/断线集成测试；下一步为真客户端对拍 |
 | `v1.0.9` | `2026-09-19` | W03 战斗切片交接：近战攻击与动作间隔、伤害/击退消息、单种近战怪 AI、掉落表与拾取、经验结算全部落地；新增 `MIR2_MONSTER_COUNT/KIND` 配置与 `WorldCombatTest`、`GameCombatProtocolTest`；下一步固定为战斗与背包状态落库 |
 | `v1.0.10` | `2026-09-19` | 完成 Ability/46 格背包 SQLite 事务存档、进图恢复、W02 schema 原位升级及角色性别/发型/装备外观 Feature；新增跨 Store/World 重启闭环测试，CI run `35427011522` 全绿；下一步为完整 `TClientItem/SM_BAGITEMS` 与真客户端对拍 |
+| `v1.0.11` | `2026-09-19` | W04 物品目录与背包同步：完整 `StdItem`/`ItemDatabase`/SQLite `std_items`、`GetItemNumber` 语义的稳定 `MakeIndex`、耐久字段、76 字节 `TClientItem` 小端编解码（更正旧 "68 字节" 推导）、`CM_QUERYBAGITEMS → SM_BAGITEMS` 与 `SM_ADDITEM` 完整载荷、W03 背包原位升级；下一步为真客户端对拍 |
 
 > [!WARNING]
 > **合规声明：**本计划仅用于技术学习与私密社区研究。传奇 IP 与美术资源版权归盛趣游戏 / Wemade 所有； 禁止商业运营、公开拉新与客户端资源分发。上线运营前请再次确认法律边界（详见评估报告第 09 节 R8）。

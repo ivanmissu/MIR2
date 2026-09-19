@@ -99,6 +99,11 @@ class WorldCombatTest {
           .map(WorldEvent.ItemPickedUp.class::cast)
           .findFirst().orElseThrow();
       assertEquals(dropped.item(), pickedUp.item());
+      // The bag entry carries the full template, a fresh make index and full durability,
+      // mirroring UsrEngn.pas CopyToUserItemFromName.
+      assertEquals(StdItems.chickenMeat(), pickedUp.backpackItem().item());
+      assertTrue(pickedUp.backpackItem().makeIndex() > 0);
+      assertEquals(pickedUp.backpackItem().dura(), pickedUp.backpackItem().duraMax());
       assertTrue(run(world, world.itemsAt("0", new Position(6, 5))).isEmpty());
     }
   }
@@ -180,7 +185,9 @@ class WorldCombatTest {
   private WorldEngine engine(GameMap map) {
     WorldEngine.Config config =
         new WorldEngine.Config(Duration.ofMillis(50), 12, 1_000, 900, 5_000, 180_000);
-    return new WorldEngine(config, List.of(map), now::get, new Random(20020522L));
+    // The pickup loop resolves full templates from the minimal standard-item catalog.
+    return new WorldEngine(config, List.of(map), now::get, new Random(20020522L),
+        PlayerStateStore.none(), ItemDatabase.of(StdItems.defaults()));
   }
 
   private void advance(long millis) {
