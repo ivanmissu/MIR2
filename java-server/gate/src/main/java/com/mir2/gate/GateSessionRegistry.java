@@ -8,10 +8,18 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /** Bridges the Java auth token to the positive Integer certification used by mir2.exe. */
 public final class GateSessionRegistry {
-  public record SelectedCharacter(UUID id, String name) {
+  public record SelectedCharacter(UUID id, String name, int feature) {
+    public SelectedCharacter(UUID id, String name) {
+      this(id, name, 0);
+    }
+
     public SelectedCharacter {
       Objects.requireNonNull(id, "id");
       Objects.requireNonNull(name, "name");
+    }
+
+    private static SelectedCharacter from(Character character) {
+      return new SelectedCharacter(character.id(), character.name(), character.feature());
     }
   }
 
@@ -22,7 +30,7 @@ public final class GateSessionRegistry {
     }
 
     private Session select(Character character) {
-      return new Session(account, authToken, new SelectedCharacter(character.id(), character.name()));
+      return new Session(account, authToken, SelectedCharacter.from(character));
     }
   }
 
@@ -39,16 +47,22 @@ public final class GateSessionRegistry {
 
   public Session require(String account, int certification) {
     Session session = sessions.get(certification);
-    if (session == null || !session.account().equals(account)) throw new SecurityException("invalid certification");
+    if (session == null || !session.account().equals(account)) {
+      throw new SecurityException("invalid certification");
+    }
     return session;
   }
 
   /** Records the character approved by CM_SELCHR so a GAME login cannot substitute another name. */
   public Session select(String account, int certification, Character character) {
     Objects.requireNonNull(character, "character");
-    if (!account.equals(character.account())) throw new SecurityException("character does not belong to account");
+    if (!account.equals(character.account())) {
+      throw new SecurityException("character does not belong to account");
+    }
     return sessions.compute(certification, (ignored, current) -> {
-      if (current == null || !current.account().equals(account)) throw new SecurityException("invalid certification");
+      if (current == null || !current.account().equals(account)) {
+        throw new SecurityException("invalid certification");
+      }
       return current.select(character);
     });
   }
