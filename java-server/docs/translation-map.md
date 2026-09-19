@@ -27,6 +27,7 @@
 | `M2Server/ObjBase.pas:ClientQueryBagItems` / `SendAddItem` | `gate/GameProtocolAdapter` | `CM_QUERYBAGITEMS → SM_BAGITEMS` (series=count, '/'-terminated entries, silent on empty bag) and `SM_ADDITEM` full TClientItem body implemented |
 | `DBServer` inventory record with per-item MakeIndex/Dura | `persistence/SqliteStore` (character_inventory + std_items join) | make_index/dura/dura_max persisted per slot; W03 rows upgraded in place and renumbered by the engine on restore |
 | Equipment slots (`UseItems`), magic, NPC scripts | next/future slices | equipment/magic/scripts not started; deliberately outside the W04 bag-sync slice |
+| Client-side stress: no Delphi equivalent (new Java-side tooling) | `loadtest/` module: `LoadtestMain` (CLI), `BotWireClient` (real `#…!` frames + prefix rotation + 12-byte little-endian header + 6-bit body, GBK), `Mir2Bot` (login→create→enter→walk/hit/pickup→periodic relogin state machine), `BotSwarm` (ramped start, live monitor line, verdict), `BotMetrics`/`BotReport` (markdown+csv), `BotSwarmEmbeddedTest` (CI) | the swarm speaks the same wire protocol as `mir2.exe`; it replaces a room full of human testers, not the golden-vector work |
 
 ## G0 evidence status
 
@@ -41,4 +42,4 @@
 - [x] Local relog persistence of HP/MP/level/experience/bag across SQLite and World restart
 - [x] Full 76-byte TClientItem encoding plus `CM_QUERYBAGITEMS → SM_BAGITEMS` in deterministic tests (byte-offset layout derived from the Grobal2.pas field list)
 - [ ] Real-client TClientItem/SM_BAGITEMS relog validation
-- [ ] 50-bot one-hour stability run
+- [ ] 50-bot one-hour stability run — harness delivered and scaled evidence in: 50×5 min PASS (0 errors) in both embedded and remote-fatjar modes (reports in `g0-evidence/`) plus a 50×2 min gate per PR in CI; the full 1 h run reproduces via `--duration 1h` and its report will be appended

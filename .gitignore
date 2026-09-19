@@ -64,3 +64,9 @@ __recovery/
 
 # Castalia statistics file (since XE7 Castalia is distributed with Delphi)
 *.stat
+
+# Java server loadtest output (bot-swarm reports and scratch databases)
+java-server/reports/
+java-server/**/reports/
+mir2.db
+reports/

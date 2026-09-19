@@ -27,7 +27,8 @@ Java 服务端。
     ├── character/      角色列表 / 创建 / 删除 / 选择
     ├── world/          单线程 Tick、地图碰撞、对象生命周期与视野广播
     ├── persistence/    SQLite 持久化
-    └── bootstrap/      进程启动入口与可执行 JAR 打包
+    ├── bootstrap/      进程启动入口与可执行 JAR 打包
+    └── loadtest/       bot 压测军团（全链路稳定性压测与报告）
 ```
 
 ## 已实现的 Java 功能
@@ -53,6 +54,10 @@ Java 服务端。
 - **物品目录与背包同步（W04）**：最小标准物品库（`StdItem` 完整 `TStdItem` 字段 + SQLite `std_items` 表）、
   复刻 `GetItemNumber` 的稳定 `MakeIndex`、耐久字段、76 字节 `TClientItem` 小端编解码，
   以及 `CM_QUERYBAGITEMS → SM_BAGITEMS`（含空包静默）与 `SM_ADDITEM` 完整载荷
+- **bot 压测军团（loadtest 模块）**：走真实 TCP 三端口全链路（登录→建号→进图→走/打/捡→周期性重登）
+  的 50+ 机器人稳定性压测工具，输出中文 Markdown/CSV 报告（进图率、重登数、动作 +GOOD/+FAIL/超时、
+  p50/p90/p99/max 应答延迟、服务端消息分布、错误分类）；支持 embedded（进程内起服务端 + JVM 堆采样）
+  与 remote（对独立进程的 `mir2-server.jar`）两种模式
 - 可执行 shaded JAR 与 Docker Compose 打包
 
 ## 环境要求
@@ -94,6 +99,28 @@ java -jar java-server/bootstrap/target/mir2-server.jar
 ```
 
 引导账号只在该用户名不存在时创建；后续重启**不会**重置它的密码。
+
+### 4. 压测（bot 军团）
+
+`loadtest` 模块提供无需真实客户端的稳定性压测：机器人用**与 `mir2.exe` 相同的线上协议**
+（`#…!` 帧、前缀轮转、12 字节小端消息头 + 6 位编码体、GBK）走完 登录→建号→进图→走/打/捡→周期性重登 全链路。
+
+```bash
+# 模式一：embedded——进程内起服务端（临时库 + 随机端口 + 堆采样），单命令即可复现
+java -jar java-server/loadtest/target/mir2-loadtest.jar \
+  --embedded --bots 50 --duration 1h --monsters 24 --relog-every 90s
+
+# 模式二：remote——对已运行的 mir2-server.jar 实例压测（先准备好机器人账号）
+java -jar java-server/loadtest/target/mir2-loadtest.jar \
+  --prepare-db data/mir2.db --bots 50
+java -jar java-server/loadtest/target/mir2-loadtest.jar \
+  --host 127.0.0.1 --login-port 7000 --bots 50 --duration 1h --relog-every 90s
+```
+
+运行结束在 `reports/` 生成中文 Markdown + CSV 报告；退出码即压测结论（PASS=0）。
+所有参数（持续时间、节奏、重登周期、随机种子、报告目录等）见 `--help`。
+CI 在每个 PR 上跑一轮缩短版（50 机器人 × 2 分钟）作为稳定性回归。
+
 
 ## 配置说明
 
@@ -167,7 +194,9 @@ docker compose -f java-server/compose.yml up --build
 ## 已知限制与路线图
 
 - 编译与启动冒烟测试**尚不能**证明与真实 `mir2.exe` 完全兼容，真实客户端联调验证仍在
-  进行中；
+  进行中；bot 压测军团（50 机器人 × 5 分钟全链路，embedded 与 remote 双模式，
+  报告见 `java-server/docs/g0-evidence/`）已先行覆盖协议回归与稳定性，但**不能替代**真实
+  客户端对拍；
 - 7200 游戏网关已把 RunLogin、移动与战斗消息接入世界命令队列，并通过双会话 Socket 集成测试；
   但**尚未与真实 `mir2.exe` 对拍**，字段与消息顺序仍属待验证假设；
 - 近战战斗、近战怪物 AI、掉落/拾取及 HP/MP/等级/经验/背包重登存档已实现；W04 起背包条目携带完整
