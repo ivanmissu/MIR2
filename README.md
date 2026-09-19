@@ -100,6 +100,7 @@ java -jar java-server/bootstrap/target/mir2-server.jar
 | `MIR2_SERVER_NAME` | `MIR2` | 显示给客户端的服务器名称 |
 | `MIR2_MAP_FILE` | 未设置 | 可选：首张 Delphi `.map` 文件；未设置时建立 256×256 空白 PoC 地图 |
 | `MIR2_MAP_ID` | `0` | 首张地图 ID（对应客户端地图文件名） |
+| `MIR2_SPAWN_X` / `MIR2_SPAWN_Y` | `10` / `10` | GAME 首次进图坐标；占用时自动选择邻近可行走格 |
 | `MIR2_WORLD_TICK_MS` | `50` | 世界逻辑 Tick 间隔（毫秒） |
 | `MIR2_BOOTSTRAP_USER` | 未设置 | 可选：初始测试账号名 |
 | `MIR2_BOOTSTRAP_PASSWORD` | 未设置 | 与初始账号配套的密码 |

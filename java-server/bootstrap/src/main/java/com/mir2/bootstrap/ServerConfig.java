@@ -14,6 +14,8 @@ public record ServerConfig(
     String serverName,
     Path mapFile,
     String mapId,
+    int spawnX,
+    int spawnY,
     int worldTickMillis,
     String bootstrapUser,
     String bootstrapPassword) {
@@ -25,6 +27,8 @@ public record ServerConfig(
     serverName = requireText(serverName, "server name");
     mapId = requireText(mapId, "map id");
     if (serverName.indexOf('/') >= 0) throw new IllegalArgumentException("server name must not contain '/'");
+    if (spawnX < 0 || spawnX > 0xffff || spawnY < 0 || spawnY > 0xffff)
+      throw new IllegalArgumentException("spawn coordinates must be unsigned 16-bit values");
     if (worldTickMillis < 1 || worldTickMillis > 10_000)
       throw new IllegalArgumentException("world tick interval must be between 1 and 10000 milliseconds");
     if ((bootstrapUser == null) != (bootstrapPassword == null))
@@ -48,6 +52,8 @@ public record ServerConfig(
         value(environment, "MIR2_SERVER_NAME", "MIR2"),
         nullablePath(environment.get("MIR2_MAP_FILE")),
         value(environment, "MIR2_MAP_ID", "0"),
+        nonNegativeInt(environment, "MIR2_SPAWN_X", 10),
+        nonNegativeInt(environment, "MIR2_SPAWN_Y", 10),
         positiveInt(environment, "MIR2_WORLD_TICK_MS", 50),
         nullable(environment.get("MIR2_BOOTSTRAP_USER")),
         nullable(environment.get("MIR2_BOOTSTRAP_PASSWORD")));
@@ -72,13 +78,19 @@ public record ServerConfig(
   }
 
   private static int positiveInt(Map<String, String> environment, String key, int fallback) {
+    int result = nonNegativeInt(environment, key, fallback);
+    if (result == 0) throw new IllegalArgumentException(key + " must be a positive integer");
+    return result;
+  }
+
+  private static int nonNegativeInt(Map<String, String> environment, String key, int fallback) {
     String raw = value(environment, key, Integer.toString(fallback));
     try {
       int result = Integer.parseInt(raw);
-      if (result <= 0) throw new NumberFormatException();
+      if (result < 0) throw new NumberFormatException();
       return result;
     } catch (NumberFormatException error) {
-      throw new IllegalArgumentException(key + " must be a positive integer", error);
+      throw new IllegalArgumentException(key + " must be a non-negative integer", error);
     }
   }
 

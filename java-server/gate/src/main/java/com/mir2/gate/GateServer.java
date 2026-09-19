@@ -30,6 +30,13 @@ public final class GateServer implements AutoCloseable {
     this(ports, new LegacyGateHandler(router, new GateSessionRegistry(), config, Throwable::printStackTrace));
   }
 
+  /** Creates all three gates and connects authenticated GAME sessions to the world engine. */
+  public GateServer(GatePorts ports, SessionRouter router, LegacyGateHandler.Config config,
+      LegacyGateHandler.WorldConfig world) {
+    this(ports, new LegacyGateHandler(
+        router, new GateSessionRegistry(), config, Throwable::printStackTrace, world));
+  }
+
   public synchronized void start() throws IOException {
     if (running) throw new IllegalStateException("already started");
     try {

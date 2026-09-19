@@ -3,10 +3,13 @@ package com.mir2.bootstrap;
 import com.mir2.auth.AuthService;
 import com.mir2.character.CharacterService;
 import com.mir2.gate.GateServer;
+import com.mir2.gate.LegacyGateHandler;
 import com.mir2.gate.SessionRouter;
 import com.mir2.persistence.SqliteStore;
+import com.mir2.world.Direction;
 import com.mir2.world.GameMap;
 import com.mir2.world.Mir2MapLoader;
+import com.mir2.world.Position;
 import com.mir2.world.WorldEngine;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -57,13 +60,19 @@ public final class Mir2Server implements AutoCloseable {
         Path mapFile = config.mapFile().toAbsolutePath().normalize();
         initialMap = Mir2MapLoader.load(config.mapId(), mapFile);
       }
+      Position spawn = new Position(config.spawnX(), config.spawnY());
+      if (!initialMap.isTerrainWalkable(spawn))
+        throw new IllegalArgumentException("configured spawn is outside the map or blocked: " + spawn);
       world = new WorldEngine(
           new WorldEngine.Config(Duration.ofMillis(config.worldTickMillis()), 12, 10_000),
           List.of(initialMap));
       world.start();
 
       CharacterService characters = new CharacterService(store);
-      gates = new GateServer(config.ports(), new SessionRouter(auth, characters), config.gateConfig());
+      LegacyGateHandler.WorldConfig worldConfig = new LegacyGateHandler.WorldConfig(
+          world, config.mapId(), spawn, Direction.DOWN);
+      gates = new GateServer(
+          config.ports(), new SessionRouter(auth, characters), config.gateConfig(), worldConfig);
       gates.start();
       LOG.info(() -> "MIR2 Java server started: login=" + config.ports().login()
           + ", select=" + config.ports().select() + ", game=" + config.ports().game()

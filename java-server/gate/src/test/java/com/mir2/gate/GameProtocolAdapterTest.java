@@ -78,6 +78,48 @@ class GameProtocolAdapterTest {
   }
 
   @Test
+  void mapEntryEmitsNewMapLogonDescriptionAndVisibleObjects() {
+    try (WorldEngine world = new WorldEngine(List.of(GameMap.empty("0", "比奇省", 20, 20)))) {
+      List<GameOutbound> output = new ArrayList<>();
+      var first = world.enterPlayer("first", "0", new Position(5, 5), Direction.DOWN,
+          0x11223344, 0x55667788, ignored -> {});
+      world.tickOnce();
+      assertEquals(1, first.join().id());
+
+      GameProtocolAdapter adapter = new GameProtocolAdapter(world, output::add);
+      var second = world.enterPlayerNear("second", "0", new Position(5, 5), Direction.UP,
+          0x01020304, 0x05060708, adapter);
+      world.tickOnce();
+      WorldObjectSnapshot player = second.join();
+
+      WirePacket newMap = ((GameOutbound.Packet) output.removeFirst()).packet();
+      assertEquals(ProtocolConstants.SM_NEWMAP, newMap.message().ident());
+      assertEquals(player.position().x(), newMap.message().param());
+      assertEquals(player.position().y(), newMap.message().tag());
+      assertEquals("0", WireMessageCodec.decodeBody(newMap.encodedBody()));
+
+      WirePacket logon = ((GameOutbound.Packet) output.removeFirst()).packet();
+      assertEquals(ProtocolConstants.SM_LOGON, logon.message().ident());
+      byte[] logonBody = SixBitCodec.decodeString(logon.encodedBody());
+      assertEquals(16, logonBody.length);
+      assertEquals(0x01020304, littleEndianInt(logonBody, 0));
+      assertEquals(0x05060708, littleEndianInt(logonBody, 4));
+
+      WirePacket description = ((GameOutbound.Packet) output.removeFirst()).packet();
+      assertEquals(ProtocolConstants.SM_MAPDESCRIPTION, description.message().ident());
+      assertEquals(-1, description.message().recog());
+      assertEquals("比奇省", WireMessageCodec.decodeBody(description.encodedBody()));
+
+      WirePacket appeared = ((GameOutbound.Packet) output.removeFirst()).packet();
+      assertEquals(ProtocolConstants.SM_TURN, appeared.message().ident());
+      assertEquals(first.join().id(), appeared.message().recog());
+      assertEquals(new CharacterDescription(0x11223344, 0x55667788),
+          CharacterDescription.decode(appeared.encodedBody()));
+      assertTrue(output.isEmpty());
+    }
+  }
+
+  @Test
   void observerEventsBecomeLegacyMovementPackets() {
     try (WorldEngine world = new WorldEngine(List.of(GameMap.empty("0", "PoC", 20, 20)))) {
       List<GameOutbound> output = new ArrayList<>();
@@ -111,6 +153,13 @@ class GameProtocolAdapterTest {
 
   private static int pack(int x, int y) {
     return (y << 16) | x;
+  }
+
+  private static int littleEndianInt(byte[] bytes, int offset) {
+    return (bytes[offset] & 0xff)
+        | ((bytes[offset + 1] & 0xff) << 8)
+        | ((bytes[offset + 2] & 0xff) << 16)
+        | (bytes[offset + 3] << 24);
   }
 
   private static WorldObjectSnapshot worldSnapshot(WorldEngine world, int playerId) {

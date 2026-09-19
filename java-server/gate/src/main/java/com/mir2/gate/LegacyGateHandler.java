@@ -3,7 +3,11 @@ package com.mir2.gate;
 import com.mir2.character.Character;
 import com.mir2.protocol.DefaultMessage;
 import com.mir2.protocol.ProtocolConstants;
+import com.mir2.world.Direction;
+import com.mir2.world.Position;
+import com.mir2.world.WorldEngine;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.BiConsumer;
@@ -25,10 +29,20 @@ public final class LegacyGateHandler implements BiConsumer<ClientConnection, IOE
     }
   }
 
+  public record WorldConfig(WorldEngine engine, String mapId, Position spawn, Direction direction) {
+    public WorldConfig {
+      Objects.requireNonNull(engine, "engine");
+      Objects.requireNonNull(mapId, "mapId");
+      Objects.requireNonNull(spawn, "spawn");
+      Objects.requireNonNull(direction, "direction");
+    }
+  }
+
   private final SessionRouter router;
   private final GateSessionRegistry sessions;
   private final Config config;
   private final Consumer<Throwable> errorHandler;
+  private final WorldConfig world;
 
   public LegacyGateHandler(SessionRouter router) {
     this(router, new GateSessionRegistry(), Config.defaults(), ignored -> {});
@@ -36,10 +50,16 @@ public final class LegacyGateHandler implements BiConsumer<ClientConnection, IOE
 
   public LegacyGateHandler(SessionRouter router, GateSessionRegistry sessions, Config config,
       Consumer<Throwable> errorHandler) {
+    this(router, sessions, config, errorHandler, null);
+  }
+
+  public LegacyGateHandler(SessionRouter router, GateSessionRegistry sessions, Config config,
+      Consumer<Throwable> errorHandler, WorldConfig world) {
     this.router = Objects.requireNonNull(router);
     this.sessions = Objects.requireNonNull(sessions);
     this.config = Objects.requireNonNull(config);
     this.errorHandler = Objects.requireNonNull(errorHandler);
+    this.world = world;
   }
 
   @Override
@@ -50,7 +70,13 @@ public final class LegacyGateHandler implements BiConsumer<ClientConnection, IOE
     }
     try (connection) {
       ConnectionState state = new ConnectionState();
-      if (connection.kind() == GateKind.GAME && !authenticateGameConnection(connection, state)) return;
+      if (connection.kind() == GateKind.GAME) {
+        if (!authenticateGameConnection(connection, state)) return;
+        if (world != null) {
+          serveGame(connection, state);
+          return;
+        }
+      }
 
       WirePacket packet;
       while ((packet = WireMessageCodec.readPacket(connection.input())) != null) {
@@ -59,6 +85,34 @@ public final class LegacyGateHandler implements BiConsumer<ClientConnection, IOE
       }
     } catch (IOException | RuntimeException error) {
       errorHandler.accept(error);
+    }
+  }
+
+  private void serveGame(ClientConnection connection, ConnectionState state) throws IOException {
+    GameProtocolAdapter adapter = new GameProtocolAdapter(world.engine(), outbound -> {
+      try {
+        WireMessageCodec.writeGameOutbound(connection.output(), outbound);
+      } catch (IOException error) {
+        connection.close();
+        throw new UncheckedIOException(error);
+      }
+    });
+
+    int playerId = 0;
+    try {
+      playerId = world.engine().enterPlayerNear(state.selectedCharacter.name(), world.mapId(), world.spawn(),
+          world.direction(), 0, 0, adapter).join().id();
+      WirePacket packet;
+      while ((packet = WireMessageCodec.readPacket(connection.input())) != null) {
+        adapter.handle(packet);
+      }
+    } catch (RuntimeException error) {
+      if (playerId == 0 && connection.isOpen()) {
+        WireMessageCodec.writePacket(connection.output(), failure(ProtocolConstants.SM_STARTFAIL, 0));
+      }
+      throw error;
+    } finally {
+      if (playerId > 0) world.engine().leavePlayer(playerId);
     }
   }
 
