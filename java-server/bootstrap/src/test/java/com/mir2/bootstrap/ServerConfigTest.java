@@ -16,6 +16,8 @@ class ServerConfigTest {
     assertEquals("127.0.0.1", config.advertisedHost());
     assertNull(config.mapFile());
     assertEquals("0", config.mapId());
+    assertEquals(10, config.spawnX());
+    assertEquals(10, config.spawnY());
     assertEquals(50, config.worldTickMillis());
     assertNull(config.bootstrapUser());
   }
@@ -31,6 +33,8 @@ class ServerConfigTest {
         Map.entry("MIR2_SERVER_NAME", "TestServer"),
         Map.entry("MIR2_MAP_FILE", "/srv/mir/maps/0.map"),
         Map.entry("MIR2_MAP_ID", "0-test"),
+        Map.entry("MIR2_SPAWN_X", "100"),
+        Map.entry("MIR2_SPAWN_Y", "200"),
         Map.entry("MIR2_WORLD_TICK_MS", "25"),
         Map.entry("MIR2_BOOTSTRAP_USER", "admin"),
         Map.entry("MIR2_BOOTSTRAP_PASSWORD", "secret")));
@@ -38,6 +42,8 @@ class ServerConfigTest {
     assertEquals("192.0.2.10", config.advertisedHost());
     assertEquals(Path.of("/srv/mir/maps/0.map"), config.mapFile());
     assertEquals("0-test", config.mapId());
+    assertEquals(100, config.spawnX());
+    assertEquals(200, config.spawnY());
     assertEquals(25, config.worldTickMillis());
     assertEquals("admin", config.bootstrapUser());
   }
@@ -50,5 +56,7 @@ class ServerConfigTest {
         () -> ServerConfig.from(Map.of("MIR2_LOGIN_PORT", "wrong")));
     assertThrows(IllegalArgumentException.class,
         () -> ServerConfig.from(Map.of("MIR2_WORLD_TICK_MS", "0")));
+    assertThrows(IllegalArgumentException.class,
+        () -> ServerConfig.from(Map.of("MIR2_SPAWN_X", "-1")));
   }
 }

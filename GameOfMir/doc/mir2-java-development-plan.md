@@ -1,12 +1,12 @@
 # MIR2 服务端 Java 化迁移 开发计划书
 
-*Development Plan · v1.0.5 · 2026-09-18*
+*Development Plan · v1.0.8 · 2026-09-19*
 
 **30 周日历（约 7 个月）** · **2 人团队 · 240 人日** · **6 道决策门 G0–G5** · **上线目标：2027 年 5 月** · **全程 Linux/Docker 交付**
 
 本计划以《可行性评估报告》的 GO 结论为基线，将 8–12 人月的迁移工程拆解为 **1 个 PoC + 5 个阶段（P0–P4）+ 6 道决策门（G0–G5）**，覆盖团队分工、周级任务分解、工程规范、 CI/CD、发布回滚与预算，可直接作为项目执行与跟踪的依据。
 
-> **执行状态（截至 2026-09-18）**：S0/W01 协议基座已完成；W02 账号、角色、SQLite 持久化已完成；Gate 接入与会话路由已完成初版；可执行 JAR、环境配置、优雅停机及 Docker Compose 已交付。W03 已建立 **单逻辑线程 Tick、Delphi `.map` 加载、碰撞占位、对象生命周期和 12 格视野事件**，但 7200 RunLogin/移动协议适配及打怪闭环仍未完成。下次继续开发请从本节的「当前下一步」开始；未完成项统一见「未完成清单」。
+> **执行状态（截至 2026-09-19）**：S0/W01 协议基座已完成；W02 账号、角色、SQLite 持久化已完成；Gate 接入与会话路由已完成初版；可执行 JAR、环境配置、优雅停机及 Docker Compose 已交付。W03 的 **Tick、地图、碰撞、对象生命周期、12 格视野、RunLogin、移动协议及 GAME→World 接线** 已形成自动化闭环；认证后会发送 `SM_NEWMAP / SM_LOGON / SM_MAPDESCRIPTION`，支持出现、走跑、离开视野与断线清理。下一步是真实 `mir2.exe` 对拍并修正进图字段和顺序。
 
 ## ✅ 当前执行进度（Session Handoff）
 
@@ -20,18 +20,18 @@
 | 🟡 部分完成 | W01：20 组 golden | 已有 20 组确定性回环向量；尚未接入 Delphi 实际抓包 golden | `java-server/docs/g0-checklist.md` |
 | ✅ 完成 | W02：SQLite 数据存储 | AuthService、CharacterService 已支持注入 SQLiteStore；账号/角色数据通过 SQLite 持久化并可重启恢复；JDK 21 CI 全量测试已通过 | `java-server/persistence`；GitHub Actions run `35329322893` |
 | ✅ 完成 | 可启动交付基座 | 增加 Main 入口、环境变量配置、首次测试账号、优雅停机、可执行 fat JAR、Dockerfile 与 Compose；JAR 三端口启动冒烟和镜像构建已进入 CI | `java-server/bootstrap`、`Dockerfile`、`compose.yml`；Actions run `35329322893` |
-| 🟡 部分完成 | W02：接入骨架（7000/7100/7200） | 已完成三监听器、`#序号+消息头+消息体!` 分帧、连接状态、整数认证码桥接和登录/选服/角色查询建删选字段映射；Netty 替换、限速及真客户端验证未完成 | `java-server/gate`；`LegacyGateHandlerTest`、`WireMessageCodecTest` |
-| 🟡 部分完成 | W03：tick、地图、移动广播 | 单 owner 线程 Tick/FIFO 命令队列；`.map` 二进制加载；静态+动态碰撞；对象进出；走/跑/转向；12 格出现/移动/消失事件 | `java-server/world`；尚缺 7200 协议适配与真客户端验证 |
+| 🟡 部分完成 | W02：接入骨架（7000/7100/7200） | 已完成三监听器、`#序号+消息头+消息体!` 分帧、连接状态、整数认证码桥接和登录/选服/角色查询建删选字段映射；GAME 首包已按 `**账号/角色/认证码/版本/登录码` 独立解析，并校验认证码与已选角色；Netty 替换、限速及真客户端验证未完成 | `java-server/gate`；`LegacyGateHandlerTest`、`WireMessageCodecTest` |
+| 🟡 部分完成 | W03：tick、地图、移动广播 | 单 owner Tick、地图/碰撞、12 格视野、7200 RunLogin、GAME 会话进出、`SM_NEWMAP/LOGON/MAPDESCRIPTION`、`TCharDesc`、移动确认与观察者广播均已接通 | `GameProtocolAdapterTest`、`GameSessionIntegrationTest`；模拟双会话闭环已通过，尚缺真客户端对拍 |
 | ⬜ 未开始 | W03：近战怪、击杀、掉落、拾取 | 尚未实现 | 完成 7200 → world 接入后开始 |
 
 ### 当前下一步（Next Session）
 
-> **下次开发起点：**从下面第 1 项开始，不需要重做 `world` 内核。本次 world 代码基线为 `a493d2e`（`feat(world): add tick map and movement core`），所在分支 `arena/01a0b407-mir2`。
+> **下次开发起点：**从下面第 4 项开始，不需要重做 `world` 内核。第 1–3 项已于 2026-09-19 完成；当前分支固定为 `arena/01a0b7e9-mir2`。
 
-1. **接通 7200 首包认证：**按 `Client/ClMain.pas:SendRunLogin` 的 `**账号/角色/认证码/客户端版本/RUNLOGINCODE` 格式，为 GAME 连接增加独立首包解析；把 `GateSessionRegistry` 中的认证码、账号和已选角色绑定起来。当前 `WireMessageCodec.readPacket` 假定包内含 16 字节编码消息头，不能直接当作 RunLogin 解析。
-2. **实现移动协议适配器：**将 `CM_TURN / CM_WALK / CM_RUN` 的 `Recog`（X/Y）、`Tag`（方向）转换为 `WorldEngine.turn/move`；将 `MoveAccepted/MoveRejected` 转成原客户端期待的 `+GOOD / +FAIL` 确认，将 `ObjectMoved/ObjectTurned/ObjectDisappeared` 转成 `SM_WALK / SM_RUN / SM_TURN / SM_DISAPPEAR`。
-3. **补齐进图最小消息：**把 `MapEntered` 转为 `SM_NEWMAP + SM_MAPDESCRIPTION`，提取并实现移动广播所需的 `TCharDesc` 二进制结构；用两个模拟 GAME 会话做“进入→互相出现→走/跑→离开视野→断线清理”集成测试。
-4. **真实客户端对拍：**用真 `mir2.exe` 和 Delphi 抓包确认 RunLogin、`+GOOD/+FAIL`、`SM_*` 字段及应答顺序，差异补进 golden；同时保持 Maven/JDK 21、fat JAR 冒烟和 Docker 构建全绿。
+1. ✅ **接通 7200 首包认证：**已按 `Client/ClMain.pas:SendRunLogin` 的 `**账号/角色/认证码/客户端版本/RUNLOGINCODE` 格式增加独立 headerless 首包解析；`GateSessionRegistry` 会在 `CM_SELCHR` 时记录角色，并在 GAME 登录时联合校验认证码、账号和已选角色。非法首包返回 `SM_STARTFAIL` 并关闭连接。
+2. ✅ **实现移动协议适配器：**已将 `CM_TURN / CM_WALK / CM_RUN` 的 `Recog` 打包坐标与 `Tag` 方向转换为 `WorldEngine.turn/move`；成功/拒绝事件转换为 `+GOOD/<tick>` / `+FAIL/<tick>`，观察者事件转换为 `SM_WALK / SM_RUN / SM_TURN / SM_DISAPPEAR`。
+3. ✅ **补齐进图最小消息并接线会话：**`MapEntered` 已转换为 `SM_NEWMAP + SM_LOGON + SM_MAPDESCRIPTION`，实现 8 字节小端 `TCharDesc` 与 16 字节 `TMessageBodyWL`；认证 GAME socket 会加入/移出 `WorldEngine`，支持可配置出生点和邻近空位选择。双模拟会话已覆盖“进入→互相出现→走/跑→离开视野→断线清理”。
+4. **真实客户端对拍：**用真 `mir2.exe` 和 Delphi 抓包确认 RunLogin、`+GOOD/+FAIL`、`SM_*` 字段及应答顺序，重点核对日夜亮度、裸装 Feature、角色名/颜色附加体和完整 `SM_LOGON` 后续序列；差异补进 golden，同时保持 Maven/JDK 21、fat JAR 冒烟和 Docker 构建全绿。
 5. **移动闭环稳定后再做打怪：**新增一种近战怪的 Tick/寻敌/追击/攻击，然后实现击杀、掉落、拾取与重登存档；不要在 7200 适配完成前提前扩展 57 种怪物。
 6. 接入层的连接数限制、消息大小/频率限制、空闲超时和 Netty 替换仍需完成，但不阻塞上述 world 协议闭环的 PoC 顺序。
 
@@ -56,9 +56,9 @@
 
 #### 明确未实现 / 注意事项
 
-- 7200 GAME 监听器仍会返回 `SM_STARTFAIL`，尚未把任何真实客户端连接放进 `WorldEngine`；所以“世界内核测试通过”不等于“mir2.exe 已可进图行走”。
-- 仓库没有随附可加载的 `.map` 资源，运行默认使用空白 PoC 地图；真实地图需通过 `MIR2_MAP_FILE` 指定。
-- `TCharDesc`、`SM_LOGON` 及完整进图消息顺序尚未翻译；出现/移动事件目前只是领域事件，还不是可直接发送的客户端数据包。
+- 7200 GAME 已接入 `WorldEngine` 并通过模拟 socket 验证进图和移动闭环；尚未获得真客户端抓包，因此亮度、外观、消息顺序等字段仍必须视为待对拍假设。
+- 仓库没有随附可加载的 `.map` 资源，运行默认使用空白 PoC 地图；真实地图需通过 `MIR2_MAP_FILE` 指定。出生点由 `MIR2_SPAWN_X/Y` 配置，占用时选择邻近空位。
+- `TCharDesc` 和 `TMessageBodyWL` 的结构及字节序已实现；当前角色模型尚未持久化性别、发型和装备，因此生产接线暂发裸装 Feature/零 Status，后续需随角色与物品域补全。
 - 动作时间间隔、防加速、门/传送点、怪物、战斗、经验、物品、背包和世界存档均未实现。
 - 当前跑步会严格检查两格路径上的地形和动态占位；与 Delphi `CanWalkEx/MoveToMovingObject` 的特殊放行语义仍需真实 golden 对拍，发现差异时先记录兼容 quirks，不要直接“优化”。
 
@@ -68,7 +68,7 @@
 
 - ⬜ Delphi 实际 traffic recorder 与 20 组字节级 golden 对拍
 - ⬜ 真 `mir2.exe` 登录、选区、角色列表、建删角色、进入世界
-- 🟡 Tick/地图/碰撞/视野事件内核已完成；7200 RunLogin 与移动协议适配、真客户端广播验证未完成
+- 🟡 Tick/地图/碰撞/视野、7200 认证、进图与移动 socket 闭环已完成并有双会话集成测试；真 `mir2.exe` 广播验证未完成
 - ⬜ 近战怪、击杀、掉落、拾取、重登不丢档
 - ⬜ 50 机器人 × 1 小时稳定性验证
 - ⬜ G0 决策门评审与 v0.1 基线 tag
@@ -120,7 +120,7 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 计划版本 | v1.0.5（2026-09-18），基线：可行性评估报告 v1.1 |
+| 计划版本 | v1.0.8（2026-09-19），基线：可行性评估报告 v1.1 |
 | 交付物 | `mir2-server`：单 JVM 模块化单体（Netty + 单逻辑线程引擎 + SQLite + Web 控制台），Docker 镜像，旧档迁移工具，运维手册 |
 | 硬性约束 | mir2.exe 客户端**零改动**直连（12B 帧 / 6-bit 编码 / DES / GBK 逐字节兼容）；部署平台 Linux；非商业用途 |
 | 总体节奏 | 准备期 3 周（培训/环境）→ PoC 3 周 → P0–P4 共 27 周 → 上线 2027-05（目标，整体可平移） |
@@ -470,13 +470,16 @@ staging 从 P1 起常驻（对拍需要）；prod 在 W28 预备。**所有环�
 | `v1.0.3` | `2026-09-18` | Gate 接入推进：实现真实 TCP 分帧、连接态认证桥接及登录/选服/角色操作初版字段映射；下一步调整为真客户端抓包验证、限速和 W03 |
 | `v1.0.4` | `2026-09-18` | 增加可执行 bootstrap、配置与优雅停机，交付 fat JAR、Dockerfile/Compose；CI 已验证 JAR 三端口启动与镜像构建 |
 | `v1.0.5` | `2026-09-18` | W03 world 内核交接：记录单线程 Tick、Delphi `.map`、碰撞占位、玩家生命周期、走跑转向及 12 格视野事件；固定下一步为 7200 RunLogin、移动 `CM_→world→SM_` 适配和真客户端验证；基线 `a493d2e`、CI run `35335312828` |
+| `v1.0.6` | `2026-09-19` | 完成 7200 headerless RunLogin 首包解析、认证码/账号/已选角色联合校验及非法登录拒绝；下一步调整为 GAME→World 移动协议适配 |
+| `v1.0.7` | `2026-09-19` | 完成移动协议适配器：`CM_TURN/WALK/RUN` 入站转换、`+GOOD/+FAIL` 动作确认及 `SM_TURN/WALK/RUN/DISAPPEAR` 观察者事件；下一步为进图消息与 GAME 会话生命周期接线 |
+| `v1.0.8` | `2026-09-19` | 完成 GAME→World 生命周期接线、最小进图消息、`TCharDesc/TMessageBodyWL`、可配置出生点及双 socket 进入/出现/走跑/离视野/断线集成测试；下一步为真客户端对拍 |
 
 > [!WARNING]
 > **合规声明：**本计划仅用于技术学习与私密社区研究。传奇 IP 与美术资源版权归盛趣游戏 / Wemade 所有； 禁止商业运营、公开拉新与客户端资源分发。上线运营前请再次确认法律边界（详见评估报告第 09 节 R8）。
 
 ---
 
-*📋 MIR2 → JAVA · DEVELOPMENT PLAN v1.0.5*
+*📋 MIR2 → JAVA · DEVELOPMENT PLAN v1.0.8*
 
 基线：ivanmissu/MIR2 · 9 程序 / 142,007 行 Pascal → 单 JVM / Linux·Docker · 兼容 mir2.exe 零改动
 

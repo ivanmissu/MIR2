@@ -9,7 +9,14 @@ public record WorldObjectSnapshot(
     WorldObjectType type,
     String mapId,
     Position position,
-    Direction direction) {
+    Direction direction,
+    int feature,
+    int status) {
+
+  public WorldObjectSnapshot(
+      int id, String name, WorldObjectType type, String mapId, Position position, Direction direction) {
+    this(id, name, type, mapId, position, direction, 0, 0);
+  }
 
   public WorldObjectSnapshot {
     if (id <= 0) throw new IllegalArgumentException("object id must be positive");

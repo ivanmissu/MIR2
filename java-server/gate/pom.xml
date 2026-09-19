@@ -3,6 +3,7 @@
   <artifactId>mir2-gate</artifactId>
   <dependencies><dependency><groupId>com.mir2</groupId><artifactId>mir2-auth</artifactId><version>${project.version}</version></dependency><dependency><groupId>com.mir2</groupId><artifactId>mir2-character</artifactId><version>${project.version}</version></dependency>
     <dependency><groupId>com.mir2</groupId><artifactId>mir2-protocol</artifactId><version>${project.version}</version></dependency>
+    <dependency><groupId>com.mir2</groupId><artifactId>mir2-world</artifactId><version>${project.version}</version></dependency>
     <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId><version>5.10.3</version><scope>test</scope></dependency>
   </dependencies>
 </project>

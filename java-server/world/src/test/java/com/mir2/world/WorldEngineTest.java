@@ -11,9 +11,27 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class WorldEngineTest {
+  @Test
+  void nearbySpawnAvoidsOccupiedCellAndPreservesAppearance() {
+    try (WorldEngine world = new WorldEngine(List.of(GameMap.empty("0", "PoC", 8, 8)))) {
+      var first = world.enterPlayer("first", "0", new Position(3, 3), Direction.DOWN, ignored -> {});
+      world.tickOnce();
+      assertEquals(new Position(3, 3), first.join().position());
+
+      var second = world.enterPlayerNear("second", "0", new Position(3, 3), Direction.UP,
+          0x12345678, 0x23456789, ignored -> {});
+      world.tickOnce();
+      WorldObjectSnapshot snapshot = second.join();
+      assertNotEquals(new Position(3, 3), snapshot.position());
+      assertEquals(0x12345678, snapshot.feature());
+      assertEquals(0x23456789, snapshot.status());
+    }
+  }
+
   @Test
   void tickSerializesLifecycleCollisionMovementAndVisibilityEvents() {
     GameMap map = GameMap.withBlockedCells(

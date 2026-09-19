@@ -98,12 +98,43 @@ public final class WorldEngine implements AutoCloseable {
       Position position,
       Direction direction,
       WorldEventSink sink) {
+    return enterPlayer(name, mapId, position, direction, 0, 0, sink);
+  }
+
+  public CompletableFuture<WorldObjectSnapshot> enterPlayer(
+      String name,
+      String mapId,
+      Position position,
+      Direction direction,
+      int feature,
+      int status,
+      WorldEventSink sink) {
     Objects.requireNonNull(name, "name");
     Objects.requireNonNull(mapId, "mapId");
     Objects.requireNonNull(position, "position");
     Objects.requireNonNull(direction, "direction");
     Objects.requireNonNull(sink, "sink");
-    return submit(() -> enter(name, mapId, position, direction, sink));
+    return submit(() -> enter(name, mapId, position, direction, feature, status, sink));
+  }
+
+  /** Enters at the requested spawn or the nearest currently available cell. */
+  public CompletableFuture<WorldObjectSnapshot> enterPlayerNear(
+      String name,
+      String mapId,
+      Position preferredPosition,
+      Direction direction,
+      int feature,
+      int status,
+      WorldEventSink sink) {
+    Objects.requireNonNull(name, "name");
+    Objects.requireNonNull(mapId, "mapId");
+    Objects.requireNonNull(preferredPosition, "preferredPosition");
+    Objects.requireNonNull(direction, "direction");
+    Objects.requireNonNull(sink, "sink");
+    return submit(() -> {
+      GameMap map = requireMap(mapId);
+      return enter(name, mapId, nearestAvailable(map, preferredPosition), direction, feature, status, sink);
+    });
   }
 
   public CompletableFuture<MoveResult> move(
@@ -161,7 +192,8 @@ public final class WorldEngine implements AutoCloseable {
   }
 
   private WorldObjectSnapshot enter(
-      String name, String mapId, Position position, Direction direction, WorldEventSink sink) {
+      String name, String mapId, Position position, Direction direction,
+      int feature, int status, WorldEventSink sink) {
     if (name.isBlank()) throw new IllegalArgumentException("player name must not be blank");
     if (playersByName.containsKey(name)) throw new IllegalStateException("player is already online: " + name);
     GameMap map = requireMap(mapId);
@@ -169,7 +201,7 @@ public final class WorldEngine implements AutoCloseable {
 
     int id = allocateObjectId();
     List<Integer> visibleIds = visibleIds(map, position, 0);
-    Player player = new Player(id, name, map, position, direction, sink);
+    Player player = new Player(id, name, map, position, direction, feature, status, sink);
     map.place(id, position);
     players.put(id, player);
     playersByName.put(name, id);
@@ -275,6 +307,26 @@ public final class WorldEngine implements AutoCloseable {
     }
   }
 
+  private static Position nearestAvailable(GameMap map, Position preferred) {
+    if (!map.contains(preferred)) throw new IllegalArgumentException("spawn lies outside map: " + preferred);
+    if (map.canWalk(preferred)) return preferred;
+    int maxRadius = Math.max(map.width(), map.height());
+    for (int radius = 1; radius < maxRadius; radius++) {
+      int lowX = Math.max(0, preferred.x() - radius);
+      int highX = Math.min(map.width() - 1, preferred.x() + radius);
+      int lowY = Math.max(0, preferred.y() - radius);
+      int highY = Math.min(map.height() - 1, preferred.y() + radius);
+      for (int x = lowX; x <= highX; x++) {
+        for (int y = lowY; y <= highY; y++) {
+          if (x != lowX && x != highX && y != lowY && y != highY) continue;
+          Position candidate = new Position(x, y);
+          if (map.canWalk(candidate)) return candidate;
+        }
+      }
+    }
+    throw new IllegalStateException("map has no available spawn cell: " + map.id());
+  }
+
   private List<Integer> visibleIds(GameMap map, Position center, int excludedId) {
     List<Integer> result = new ArrayList<>();
     for (int id : map.objectsInSquare(center, config.viewRange())) {
@@ -367,6 +419,8 @@ public final class WorldEngine implements AutoCloseable {
     private final int id;
     private final String name;
     private final GameMap map;
+    private final int feature;
+    private final int status;
     private final WorldEventSink sink;
     private Position position;
     private Direction direction;
@@ -377,17 +431,22 @@ public final class WorldEngine implements AutoCloseable {
         GameMap map,
         Position position,
         Direction direction,
+        int feature,
+        int status,
         WorldEventSink sink) {
       this.id = id;
       this.name = name;
       this.map = map;
       this.position = position;
       this.direction = direction;
+      this.feature = feature;
+      this.status = status;
       this.sink = sink;
     }
 
     private WorldObjectSnapshot snapshot() {
-      return new WorldObjectSnapshot(id, name, WorldObjectType.PLAYER, map.id(), position, direction);
+      return new WorldObjectSnapshot(
+          id, name, WorldObjectType.PLAYER, map.id(), position, direction, feature, status);
     }
   }
 }
