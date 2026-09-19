@@ -77,11 +77,31 @@ public final class WireMessageCodec {
 
   /** Server responses do not need the client's rotating sequence digit. */
   public static void writePacket(OutputStream out, WirePacket packet) throws IOException {
-    out.write(START);
-    out.write(encodedHeader(packet.message()));
-    out.write(packet.encodedBody().getBytes(StandardCharsets.ISO_8859_1));
-    out.write(END);
-    out.flush();
+    synchronized (out) {
+      out.write(START);
+      out.write(encodedHeader(packet.message()));
+      out.write(packet.encodedBody().getBytes(StandardCharsets.ISO_8859_1));
+      out.write(END);
+      out.flush();
+    }
+  }
+
+  /** Writes a GAME adapter output while serializing concurrent socket/world-thread sends. */
+  public static void writeGameOutbound(OutputStream out, GameOutbound outbound) throws IOException {
+    switch (outbound) {
+      case GameOutbound.Status status -> writeStatus(out, status);
+      case GameOutbound.Packet packet -> writePacket(out, packet.packet());
+    }
+  }
+
+  /** Writes the raw action acknowledgement consumed before normal 16-byte message decoding. */
+  public static void writeStatus(OutputStream out, GameOutbound.Status status) throws IOException {
+    String text = status.accepted() ? "+GOOD/" : "+FAIL/";
+    byte[] frame = ("#" + text + status.serverTick() + "!").getBytes(StandardCharsets.US_ASCII);
+    synchronized (out) {
+      out.write(frame);
+      out.flush();
+    }
   }
 
   public static String encodeBody(String text) {

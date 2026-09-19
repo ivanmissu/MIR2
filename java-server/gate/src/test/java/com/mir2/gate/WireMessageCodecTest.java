@@ -49,6 +49,14 @@ class WireMessageCodecTest {
   }
 
   @Test
+  void writesLegacyGoodAndFailStatusFrames() throws Exception {
+    ByteArrayOutputStream output = new ByteArrayOutputStream();
+    WireMessageCodec.writeStatus(output, new GameOutbound.Status(true, 1234));
+    WireMessageCodec.writeStatus(output, new GameOutbound.Status(false, 5678));
+    assertEquals("#+GOOD/1234!#+FAIL/5678!", output.toString(StandardCharsets.US_ASCII));
+  }
+
+  @Test
   void malformedRunLoginPacketsAreRejected() {
     String noPrefix = WireMessageCodec.encodeBody("hero/warrior/2/120040918/9");
     String missingField = WireMessageCodec.encodeBody("**hero/warrior/2/120040918");
