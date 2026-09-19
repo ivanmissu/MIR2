@@ -10,6 +10,14 @@ public interface PlayerStateStore {
   /** Saves ability and the complete ordered backpack as one durable unit. */
   void save(PlayerState state);
 
+  /**
+   * Highest per-instance item make index ever persisted, so the engine can seed its
+   * allocator and keep indexes unique across restarts. Transient stores return 0.
+   */
+  default long itemMakeIndexHighWater() {
+    return 0L;
+  }
+
   /** Used by isolated world tests and deployments that deliberately disable durable character state. */
   static PlayerStateStore none() {
     return new PlayerStateStore() {

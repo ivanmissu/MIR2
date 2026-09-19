@@ -71,7 +71,8 @@ public final class Mir2Server implements AutoCloseable {
       world = new WorldEngine(
           new WorldEngine.Config(Duration.ofMillis(config.worldTickMillis()), 12, 10_000),
           List.of(initialMap),
-          store);
+          store,
+          store.itemDatabase());
       world.start();
       spawnMonsters(initialMap, spawn);
 

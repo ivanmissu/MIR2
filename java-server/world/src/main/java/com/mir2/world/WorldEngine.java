@@ -84,14 +84,24 @@ public final class WorldEngine implements AutoCloseable {
   private final LongSupplier clock;
   private final Random random;
   private final PlayerStateStore playerStateStore;
+  private final ItemDatabase itemDatabase;
   private int nextObjectId = 1;
+  private int nextItemMakeIndex = 1;
 
   public WorldEngine(Config config, Collection<GameMap> maps) {
     this(config, maps, System::currentTimeMillis, new Random(), PlayerStateStore.none());
   }
 
   public WorldEngine(Config config, Collection<GameMap> maps, PlayerStateStore playerStateStore) {
-    this(config, maps, System::currentTimeMillis, new Random(), playerStateStore);
+    this(config, maps, System::currentTimeMillis, new Random(), playerStateStore, ItemDatabase.empty());
+  }
+
+  public WorldEngine(
+      Config config,
+      Collection<GameMap> maps,
+      PlayerStateStore playerStateStore,
+      ItemDatabase itemDatabase) {
+    this(config, maps, System::currentTimeMillis, new Random(), playerStateStore, itemDatabase);
   }
 
   public WorldEngine(Collection<GameMap> maps) {
@@ -100,7 +110,7 @@ public final class WorldEngine implements AutoCloseable {
 
   /** Deterministic constructor: tests inject a virtual clock and a seeded damage generator. */
   public WorldEngine(Config config, Collection<GameMap> maps, LongSupplier clock, Random random) {
-    this(config, maps, clock, random, PlayerStateStore.none());
+    this(config, maps, clock, random, PlayerStateStore.none(), ItemDatabase.empty());
   }
 
   /** Deterministic constructor with a durable player-state port. */
@@ -110,10 +120,23 @@ public final class WorldEngine implements AutoCloseable {
       LongSupplier clock,
       Random random,
       PlayerStateStore playerStateStore) {
+    this(config, maps, clock, random, playerStateStore, ItemDatabase.empty());
+  }
+
+  /** Deterministic constructor with a durable player-state port and the standard-item catalog. */
+  public WorldEngine(
+      Config config,
+      Collection<GameMap> maps,
+      LongSupplier clock,
+      Random random,
+      PlayerStateStore playerStateStore,
+      ItemDatabase itemDatabase) {
     this.config = Objects.requireNonNull(config);
     this.clock = Objects.requireNonNull(clock, "clock");
     this.random = Objects.requireNonNull(random, "random");
     this.playerStateStore = Objects.requireNonNull(playerStateStore, "playerStateStore");
+    this.itemDatabase = Objects.requireNonNull(itemDatabase, "itemDatabase");
+    this.nextItemMakeIndex = seedMakeIndex(playerStateStore.itemMakeIndexHighWater());
     if (maps.isEmpty()) throw new IllegalArgumentException("at least one map is required");
     for (GameMap map : maps) {
       Objects.requireNonNull(map, "map");
@@ -321,6 +344,8 @@ public final class WorldEngine implements AutoCloseable {
 
     PlayerState restored = playerStateStore.load(characterId)
         .orElseGet(() -> PlayerState.initial(characterId));
+    // W03 rows predate make indexes; stabilise them before the player becomes visible.
+    restored = withStableMakeIndexes(restored);
     // Materialise defaults for characters created by an older schema before exposing the player.
     playerStateStore.save(restored);
 
@@ -454,7 +479,9 @@ public final class WorldEngine implements AutoCloseable {
       return false;
     }
 
-    BackpackItem backpackItem = BackpackItem.from(item);
+    BackpackItem backpackItem = BackpackItem.of(
+        itemDatabase.find(item.name()).orElseGet(() -> StdItem.placeholder(item.name(), item.looks())),
+        allocateMakeIndex());
     player.backpack.add(backpackItem);
     try {
       persist(player);
@@ -464,7 +491,7 @@ public final class WorldEngine implements AutoCloseable {
     }
     groundItems.remove(item.id());
     itemDropTimes.remove(item.id());
-    emit(player, new WorldEvent.ItemPickedUp(player.id, item));
+    emit(player, new WorldEvent.ItemPickedUp(player.id, item, backpackItem));
     WorldEvent hidden = new WorldEvent.ItemDisappeared(item);
     for (int viewerId : visibleIds(player.map, item.position(), 0)) emit(players.get(viewerId), hidden);
     return true;
@@ -561,7 +588,10 @@ public final class WorldEngine implements AutoCloseable {
       if (!drop.always() && random.nextInt(drop.oneIn()) != 0) continue;
       Position cell = freeItemCell(monster.map, monster.position);
       if (cell == null) continue;
-      GroundItem item = new GroundItem(allocateObjectId(), drop.name(), drop.looks(), monster.map.id(), cell);
+      // The catalog Looks is canonical when a template exists; the drop entry keeps it
+      // for items the catalog does not know.
+      int looks = itemDatabase.find(drop.name()).map(StdItem::looks).orElse(drop.looks());
+      GroundItem item = new GroundItem(allocateObjectId(), drop.name(), looks, monster.map.id(), cell);
       groundItems.put(item.id(), item);
       itemDropTimes.put(item.id(), clock.getAsLong());
       monster.droppedItemIds.add(item.id());
@@ -700,6 +730,31 @@ public final class WorldEngine implements AutoCloseable {
 
   private void persist(Player player) {
     playerStateStore.save(player.state());
+  }
+
+  /** W03 rows were saved without make indexes; assign stable ones while restoring. */
+  private PlayerState withStableMakeIndexes(PlayerState state) {
+    boolean needsRenumber = state.backpack().stream().anyMatch(item -> item.makeIndex() <= 0);
+    if (!needsRenumber) return state;
+    List<BackpackItem> normalised = state.backpack().stream()
+        .map(item -> item.makeIndex() > 0 ? item : item.withMakeIndex(allocateMakeIndex()))
+        .toList();
+    return new PlayerState(state.characterId(), state.ability(), normalised);
+  }
+
+  /**
+   * Per-instance item id, mirroring M2Share {@code GetItemNumber}: increments and wraps
+   * back to 1 once it passes {@code High(Integer) / 2 - 1}. Seeded from the persisted
+   * high-water mark so ids stay unique across restarts.
+   */
+  private int allocateMakeIndex() {
+    if (nextItemMakeIndex > Integer.MAX_VALUE / 2 - 1) nextItemMakeIndex = 1;
+    return nextItemMakeIndex++;
+  }
+
+  private static int seedMakeIndex(long highWater) {
+    if (highWater < 0) throw new IllegalArgumentException("make-index high water must not be negative");
+    return (int) Math.min(Math.max(highWater + 1, 1), Integer.MAX_VALUE / 2 - 1);
   }
 
   private static UUID transientCharacterId(String name) {

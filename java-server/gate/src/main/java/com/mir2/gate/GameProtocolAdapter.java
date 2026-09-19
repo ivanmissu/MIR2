@@ -4,6 +4,7 @@ import com.mir2.protocol.DefaultMessage;
 import com.mir2.protocol.ProtocolConstants;
 import com.mir2.protocol.SixBitCodec;
 import com.mir2.world.AttackKind;
+import com.mir2.world.BackpackItem;
 import com.mir2.world.Direction;
 import com.mir2.world.GroundItem;
 import com.mir2.world.MovementKind;
@@ -15,6 +16,7 @@ import com.mir2.world.WorldObjectSnapshot;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
@@ -69,6 +71,11 @@ public final class GameProtocolAdapter implements WorldEventSink {
         // The client sends its own cell in param/tag, not a packed Recog (ClMain.pas:CM_PICKUP).
         case ProtocolConstants.CM_PICKUP -> reportExceptionalFailure(
             world.pickUp(boundPlayer, new Position(message.param(), message.tag())));
+        // Sent by the client right after SM_LOGON (ClMain.pas:3860) and whenever the bag
+        // window needs a refresh; no +GOOD/+FAIL ack is part of the Delphi exchange.
+        case ProtocolConstants.CM_QUERYBAGITEMS -> reportExceptionalFailure(
+            world.playerState(boundPlayer)
+                .thenAccept(state -> sendBagItems(state.backpack())));
         default -> throw new AssertionError("supported ident set changed after validation");
       }
       return true;
@@ -135,7 +142,8 @@ public final class GameProtocolAdapter implements WorldEventSink {
         || ident == ProtocolConstants.CM_HIT
         || ident == ProtocolConstants.CM_HEAVYHIT
         || ident == ProtocolConstants.CM_BIGHIT
-        || ident == ProtocolConstants.CM_PICKUP;
+        || ident == ProtocolConstants.CM_PICKUP
+        || ident == ProtocolConstants.CM_QUERYBAGITEMS;
   }
 
   private static AttackKind attackKind(int ident) {
@@ -241,10 +249,20 @@ public final class GameProtocolAdapter implements WorldEventSink {
   private void sendItemPickedUp(WorldEvent.ItemPickedUp pickedUp) {
     if (pickedUp.playerId() != playerId) return;
     sendStatus(true);
-    // The full TClientItem payload needs the item database; the name keeps the PoC bag usable.
+    // Full 76-byte TClientItem body, as SendAddItem does (ObjBase.pas:2145).
     output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_ADDITEM, pickedUp.playerId(),
-        0, 0, 1, WireMessageCodec.encodeBody(pickedUp.item().name()))));
+        0, 0, 1, ClientItemCodec.encode(pickedUp.backpackItem()))));
     sendItemHide(pickedUp.item());
+  }
+
+  /**
+   * {@code SM_BAGITEMS}: recog=player, series=item count, body = '/'-terminated encoded
+   * TClientItem blocks. ObjBase.pas:15952 stays silent for an empty bag, so we do too.
+   */
+  private void sendBagItems(List<BackpackItem> backpack) {
+    if (backpack.isEmpty()) return;
+    output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_BAGITEMS, requirePlayerId(),
+        0, 0, backpack.size(), ClientItemCodec.encodeBag(backpack))));
   }
 
   private void sendStatus(boolean accepted) {

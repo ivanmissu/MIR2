@@ -5,10 +5,14 @@ import com.mir2.protocol.ProtocolConstants;
 import com.mir2.protocol.SixBitCodec;
 import com.mir2.world.Ability;
 import com.mir2.world.AttackKind;
+import com.mir2.world.BackpackItem;
 import com.mir2.world.Direction;
 import com.mir2.world.GameMap;
 import com.mir2.world.GroundItem;
+import com.mir2.world.ItemDatabase;
 import com.mir2.world.MonsterTemplate;
+import com.mir2.world.PlayerStateStore;
+import com.mir2.world.StdItems;
 import com.mir2.world.Position;
 import com.mir2.world.WorldEngine;
 import com.mir2.world.WorldEvent;
@@ -168,10 +172,71 @@ class GameCombatProtocolTest {
       assertEquals(new GameOutbound.Status(true, 3), output.remove(0));
       WirePacket added = ((GameOutbound.Packet) output.remove(0)).packet();
       assertEquals(ProtocolConstants.SM_ADDITEM, added.message().ident());
-      assertEquals("鸡肉", WireMessageCodec.decodeBody(added.encodedBody()));
+      assertEquals(playerId, added.message().recog());
+      assertEquals(1, added.message().series(), "SM_ADDITEM carries one item");
+      // The body is the full 76-byte TClientItem, as SendAddItem sends it.
+      BackpackItem bagEntry = ClientItemCodec.decode(added.encodedBody());
+      assertEquals("鸡肉", bagEntry.name());
+      assertEquals(StdItems.chickenMeat(), bagEntry.item());
+      assertTrue(bagEntry.makeIndex() > 0);
+      assertEquals(bagEntry.dura(), bagEntry.duraMax());
       WirePacket hidden = ((GameOutbound.Packet) output.remove(0)).packet();
       assertEquals(ProtocolConstants.SM_ITEMHIDE, hidden.message().ident());
       assertEquals(itemId, hidden.message().recog());
+    }
+  }
+
+  @Test
+  void queryBagItemsRepliesWithSmBagItemsAndStaysSilentOnEmptyBags() {
+    try (WorldEngine world = engine(GameMap.empty("0", "PoC", 20, 20))) {
+      AtomicReference<WorldEventSink> sink = new AtomicReference<>(ignored -> {});
+      var entered = world.enterPlayer("战士", "0", new Position(5, 5), Direction.RIGHT,
+          event -> sink.get().send(event));
+      world.tickOnce();
+      int playerId = entered.join().id();
+      world.spawnMonster(MonsterTemplate.chicken(), "0", new Position(6, 5), Direction.LEFT);
+      world.tickOnce();
+
+      List<GameOutbound> output = new ArrayList<>();
+      GameProtocolAdapter adapter = new GameProtocolAdapter(world, playerId, output::add, () -> 3);
+      sink.set(adapter);
+
+      // An empty bag gets no SM_BAGITEMS at all, exactly like ObjBase.pas ClientQueryBagItems.
+      assertTrue(adapter.handle(new WirePacket(new DefaultMessage(
+          0, ProtocolConstants.CM_QUERYBAGITEMS, 0, 0, 0))));
+      world.tickOnce();
+      assertFalse(idents(output).contains(ProtocolConstants.SM_BAGITEMS));
+
+      // Kill the chicken, pick up the meat, then re-query the bag.
+      for (int swing = 0; swing < 20; swing++) {
+        now.addAndGet(1_000);
+        adapter.handle(action(ProtocolConstants.CM_HIT, 5, 5, Direction.RIGHT));
+        world.tickOnce();
+        if (idents(output).contains(ProtocolConstants.SM_ITEMSHOW)) break;
+      }
+      now.addAndGet(10_000);
+      world.tickOnce();
+      output.clear();
+      adapter.handle(action(ProtocolConstants.CM_WALK, 6, 5, Direction.RIGHT));
+      world.tickOnce();
+      output.clear();
+      adapter.handle(pickup(6, 5));
+      world.tickOnce();
+      BackpackItem pickedUp = ClientItemCodec.decode(
+          firstPacket(output, ProtocolConstants.SM_ADDITEM).encodedBody());
+
+      // The client sends CM_QUERYBAGITEMS right after SM_LOGON (ClMain.pas:3860).
+      output.clear();
+      assertTrue(adapter.handle(new WirePacket(new DefaultMessage(
+          0, ProtocolConstants.CM_QUERYBAGITEMS, 0, 0, 0))));
+      world.tickOnce();
+      WirePacket bag = firstPacket(output, ProtocolConstants.SM_BAGITEMS);
+      assertEquals(playerId, bag.message().recog());
+      assertEquals(0, bag.message().param());
+      assertEquals(0, bag.message().tag());
+      assertEquals(1, bag.message().series(), "the series field carries the bag size");
+      assertEquals(ClientItemCodec.encodeBag(List.of(pickedUp)), bag.encodedBody());
+      assertTrue(bag.encodedBody().endsWith("/"), "Delphi terminates every entry with '/'");
     }
   }
 
@@ -211,7 +276,8 @@ class GameCombatProtocolTest {
 
   private WorldEngine engine(GameMap map) {
     return new WorldEngine(new WorldEngine.Config(Duration.ofMillis(50), 12, 1_000, 900, 5_000, 180_000),
-        List.of(map), now::get, new Random(20020522L));
+        List.of(map), now::get, new Random(20020522L),
+        PlayerStateStore.none(), ItemDatabase.of(StdItems.defaults()));
   }
 
   private static WirePacket firstPacket(List<GameOutbound> output, int ident) {

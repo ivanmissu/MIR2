@@ -50,6 +50,9 @@ Java 服务端。
 - **近战怪物 AI**：鸡与半兽人两种模板，视野内索敌、追击、按自身间隔攻击、死亡后尸体定时清理
 - **掉落与拾取**：按 Delphi「N 分之一」概率的掉落表、`SM_ITEMSHOW / SM_ITEMHIDE`、`CM_PICKUP` 与 `SM_ADDITEM`
 - **战斗/背包存档**：HP、MP、等级、经验与 46 格背包通过 SQLite 事务保存，在角色进图前恢复；支持从旧 W02 schema 原位升级
+- **物品目录与背包同步（W04）**：最小标准物品库（`StdItem` 完整 `TStdItem` 字段 + SQLite `std_items` 表）、
+  复刻 `GetItemNumber` 的稳定 `MakeIndex`、耐久字段、76 字节 `TClientItem` 小端编解码，
+  以及 `CM_QUERYBAGITEMS → SM_BAGITEMS`（含空包静默）与 `SM_ADDITEM` 完整载荷
 - 可执行 shaded JAR 与 Docker Compose 打包
 
 ## 环境要求
@@ -167,9 +170,11 @@ docker compose -f java-server/compose.yml up --build
   进行中；
 - 7200 游戏网关已把 RunLogin、移动与战斗消息接入世界命令队列，并通过双会话 Socket 集成测试；
   但**尚未与真实 `mir2.exe` 对拍**，字段与消息顺序仍属待验证假设；
-- 近战战斗、近战怪物 AI、掉落/拾取及 HP/MP/等级/经验/背包重登存档已实现；但背包条目目前只有
-  名称和 `Looks`，完整物品数据库、68 字节 `TClientItem`、`SM_BAGITEMS` 真客户端同步、装备穿脱、
-  技能/魔法、远程攻击与 57 种怪物仍未实现；
+- 近战战斗、近战怪物 AI、掉落/拾取及 HP/MP/等级/经验/背包重登存档已实现；W04 起背包条目携带完整
+  `TStdItem` 模板、稳定 `MakeIndex` 与耐久，`SM_ADDITEM/SM_BAGITEMS` 输出 76 字节 `TClientItem`
+  载荷（`TStdItem` 为 66 字节：`String[20]` 占 21 字节，Delphi 源码 "60 bytes" 注释已过时）；
+  物品数值仍是最小占位目录，待导入真实 StdItems 数据后校正；装备穿脱、技能/魔法、远程攻击与
+  57 种怪物仍未实现；
 - DES 封装已按 Delphi 语义实现，但仍需 Delphi 端密文金样本做最终核对。
 
 ## 参与迁移

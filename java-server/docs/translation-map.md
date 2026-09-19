@@ -21,7 +21,12 @@
 | `M2Server/ObjBase.pas:DropItemDown` / `ClientPickUpItem` | `world/ItemDrop`, `GroundItem`, `WorldEngine.pickUp` | drop table, SM_ITEMSHOW/SM_ITEMHIDE, CM_PICKUP implemented |
 | `M2Server/ObjBase.pas:GetFeature` / `MakeHumanFeature` | `character/Character.feature`, GAME session | gender/hair/dress/weapon appearance persisted and packed into SM_LOGON Feature |
 | `DBServer` ability/bag character record | `world/PlayerStateStore`, `persistence/SqliteStore` | Ability and ordered 46-slot backpack transactionally saved/restored; W02 SQLite migration tested |
-| `TClientItem`, `CM_QUERYBAGITEMS` / `SM_BAGITEMS`, equipment, magic, NPC scripts | next/future slices | full item payload and client bag sync are next; equipment/magic/scripts not started |
+| `M2Server/ItmUnit.pas:TItem` / `UsrEngn.pas:StdItemList` | `world/StdItem`, `world/ItemDatabase`, `world/StdItems`, `persistence/SqliteStore.itemDatabase` | minimal item catalog implemented (鸡肉/鹿肉/木剑/金创药); SQLite `std_items` seeds at boot and resolves instances by name like `CopyToUserItemFromName` |
+| `M2Share.pas:GetItemNumber` / `UsrEngn.pas:CopyToUserItemFromName` | `world/WorldEngine.allocateMakeIndex`, `world/BackpackItem.of` | per-instance MakeIndex seeded from the persisted high-water mark; instances created at full durability (Dura=DuraMax=template word) |
+| `Common/Grobal2.pas:TStdItem` / `TClientItem` | `gate/ClientItemCodec` | 66-byte packed TStdItem + aligned MakeIndex → 76-byte little-endian TClientItem, 6-bit encoded; byte-offset unit tests; Delphi-captured golden still required |
+| `M2Server/ObjBase.pas:ClientQueryBagItems` / `SendAddItem` | `gate/GameProtocolAdapter` | `CM_QUERYBAGITEMS → SM_BAGITEMS` (series=count, '/'-terminated entries, silent on empty bag) and `SM_ADDITEM` full TClientItem body implemented |
+| `DBServer` inventory record with per-item MakeIndex/Dura | `persistence/SqliteStore` (character_inventory + std_items join) | make_index/dura/dura_max persisted per slot; W03 rows upgraded in place and renumbered by the engine on restore |
+| Equipment slots (`UseItems`), magic, NPC scripts | next/future slices | equipment/magic/scripts not started; deliberately outside the W04 bag-sync slice |
 
 ## G0 evidence status
 
@@ -34,5 +39,6 @@
 - [ ] Unmodified client movement broadcast
 - [x] One monster, kill, drop and pickup in deterministic unit/integration tests
 - [x] Local relog persistence of HP/MP/level/experience/bag across SQLite and World restart
+- [x] Full 76-byte TClientItem encoding plus `CM_QUERYBAGITEMS → SM_BAGITEMS` in deterministic tests (byte-offset layout derived from the Grobal2.pas field list)
 - [ ] Real-client TClientItem/SM_BAGITEMS relog validation
 - [ ] 50-bot one-hour stability run
