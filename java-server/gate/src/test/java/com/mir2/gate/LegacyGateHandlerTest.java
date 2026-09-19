@@ -49,6 +49,14 @@ class LegacyGateHandlerTest {
     assertEquals(ProtocolConstants.SM_STARTPLAY, start.message().ident());
     assertEquals("game.example/7200", WireMessageCodec.decodeBody(start.encodedBody()));
 
+    int certificationNumber = Integer.parseInt(certification);
+    GateSessionRegistry.Session gameSession = handler.authenticateGame(
+        new RunLogin("hero", "战士", certificationNumber, 120040918, 9));
+    assertEquals("hero", gameSession.account());
+    assertEquals("战士", gameSession.selectedCharacter().name());
+    assertThrows(SecurityException.class, () -> handler.authenticateGame(
+        new RunLogin("hero", "法师", certificationNumber, 120040918, 9)));
+
     WirePacket deleted = handler.dispatch(GateKind.SELECT, selectState,
         request(ProtocolConstants.CM_DELCHR, "战士"));
     assertEquals(ProtocolConstants.SM_DELCHR_SUCCESS, deleted.message().ident());

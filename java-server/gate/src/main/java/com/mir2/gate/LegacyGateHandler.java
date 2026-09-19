@@ -50,6 +50,8 @@ public final class LegacyGateHandler implements BiConsumer<ClientConnection, IOE
     }
     try (connection) {
       ConnectionState state = new ConnectionState();
+      if (connection.kind() == GateKind.GAME && !authenticateGameConnection(connection, state)) return;
+
       WirePacket packet;
       while ((packet = WireMessageCodec.readPacket(connection.input())) != null) {
         WirePacket response = dispatch(connection.kind(), state, packet);
@@ -60,10 +62,37 @@ public final class LegacyGateHandler implements BiConsumer<ClientConnection, IOE
     }
   }
 
+  private boolean authenticateGameConnection(ClientConnection connection, ConnectionState state) throws IOException {
+    final RunLogin login;
+    try {
+      login = WireMessageCodec.readRunLogin(connection.input());
+    } catch (IOException malformed) {
+      WireMessageCodec.writePacket(connection.output(), failure(ProtocolConstants.SM_STARTFAIL, 0));
+      errorHandler.accept(malformed);
+      return false;
+    }
+    if (login == null) return false;
+    try {
+      GateSessionRegistry.Session session = authenticateGame(login);
+      state.bindGame(login.account(), session.authToken(), login.certification(),
+          session.selectedCharacter(), login.clientVersion(), login.loginCode());
+      return true;
+    } catch (SecurityException error) {
+      WireMessageCodec.writePacket(connection.output(), failure(ProtocolConstants.SM_STARTFAIL, 0));
+      return false;
+    }
+  }
+
+  GateSessionRegistry.Session authenticateGame(RunLogin login) {
+    Objects.requireNonNull(login);
+    return sessions.requireGame(login.account(), login.characterName(), login.certification());
+  }
+
   WirePacket dispatch(GateKind kind, ConnectionState state, WirePacket packet) {
     return switch (kind) {
       case LOGIN -> dispatchLogin(state, packet);
       case SELECT -> dispatchSelect(state, packet);
+      // GAME messages are connected to WorldEngine by the next W03 protocol-adapter step.
       case GAME -> failure(ProtocolConstants.SM_STARTFAIL, 0);
     };
   }
@@ -142,8 +171,11 @@ public final class LegacyGateHandler implements BiConsumer<ClientConnection, IOE
   private WirePacket selectCharacter(ConnectionState state, WirePacket packet) {
     String[] fields = fields(packet, 2);
     requireAccount(state, fields[0]);
-    router.characters(state.authToken).stream().filter(character -> character.name().equals(fields[1]))
+    Character character = router.characters(state.authToken).stream()
+        .filter(candidate -> candidate.name().equals(fields[1]))
         .findFirst().orElseThrow(() -> new IllegalArgumentException("character not found"));
+    sessions.select(state.account, state.certification, character);
+    state.selectedCharacter = new GateSessionRegistry.SelectedCharacter(character.id(), character.name());
     return responseWithBody(ProtocolConstants.SM_STARTPLAY, 0, 0, 0, 0,
         config.advertisedHost() + "/" + config.gamePort());
   }
@@ -204,11 +236,22 @@ public final class LegacyGateHandler implements BiConsumer<ClientConnection, IOE
     private String account;
     private String authToken;
     private int certification;
+    private GateSessionRegistry.SelectedCharacter selectedCharacter;
+    private int clientVersion;
+    private int loginCode;
 
     private void bind(String account, String authToken, int certification) {
       this.account = account;
       this.authToken = authToken;
       this.certification = certification;
+    }
+
+    private void bindGame(String account, String authToken, int certification,
+        GateSessionRegistry.SelectedCharacter selectedCharacter, int clientVersion, int loginCode) {
+      bind(account, authToken, certification);
+      this.selectedCharacter = Objects.requireNonNull(selectedCharacter);
+      this.clientVersion = clientVersion;
+      this.loginCode = loginCode;
     }
   }
 }

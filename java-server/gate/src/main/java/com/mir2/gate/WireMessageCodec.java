@@ -37,26 +37,42 @@ public final class WireMessageCodec {
 
   /** Reads the next complete client packet, tolerating acknowledgements/noise before '#'. */
   public static WirePacket readPacket(InputStream in) throws IOException {
-    int value;
-    do {
-      value = in.read();
-      if (value < 0) return null;
-    } while (value != START);
-
-    ByteArrayOutputStream payload = new ByteArrayOutputStream();
-    while ((value = in.read()) >= 0 && value != END) {
-      if (payload.size() >= MAX_PACKET_BYTES) throw new IOException("MIR2 packet exceeds 8192 bytes");
-      payload.write(value);
-    }
-    if (value < 0) throw new EOFException("truncated MIR2 packet");
-
-    byte[] bytes = payload.toByteArray();
-    int offset = hasClientSequence(bytes) ? 1 : 0;
+    byte[] bytes = readFrame(in);
+    if (bytes == null) return null;
+    int offset = payloadOffset(bytes);
     if (bytes.length - offset < WIRE_BYTES) throw new IOException("MIR2 packet has no complete header");
     byte[] header = java.util.Arrays.copyOfRange(bytes, offset, offset + WIRE_BYTES);
     String body = new String(bytes, offset + WIRE_BYTES, bytes.length - offset - WIRE_BYTES,
         StandardCharsets.ISO_8859_1);
     return new WirePacket(decodeHeader(header), body);
+  }
+
+  /**
+   * Reads the GAME connection's headerless first packet. The Delphi client sends
+   * {@code #<sequence><EncodeString("**account/character/cert/version/code")>!}.
+   */
+  public static RunLogin readRunLogin(InputStream in) throws IOException {
+    byte[] frame = readFrame(in);
+    if (frame == null) return null;
+    int offset = payloadOffset(frame);
+    if (frame.length == offset) throw new IOException("empty RunLogin packet");
+
+    String encoded = new String(frame, offset, frame.length - offset, StandardCharsets.ISO_8859_1);
+    final String decoded;
+    try {
+      decoded = ByteStrings.fromGbk(SixBitCodec.decodeString(encoded));
+    } catch (RuntimeException error) {
+      throw new IOException("invalid RunLogin encoding", error);
+    }
+    if (!decoded.startsWith("**")) throw new IOException("invalid RunLogin prefix");
+    String[] fields = decoded.substring(2).split("/", -1);
+    if (fields.length != 5) throw new IOException("invalid RunLogin field count");
+    try {
+      return new RunLogin(fields[0], fields[1], parsePositive(fields[2], "certification"),
+          parsePositive(fields[3], "client version"), parseNonNegative(fields[4], "login code"));
+    } catch (IllegalArgumentException error) {
+      throw new IOException("invalid RunLogin fields", error);
+    }
   }
 
   /** Server responses do not need the client's rotating sequence digit. */
@@ -76,9 +92,49 @@ public final class WireMessageCodec {
     return ByteStrings.fromGbk(SixBitCodec.decodeString(encodedBody));
   }
 
+  private static byte[] readFrame(InputStream in) throws IOException {
+    int value;
+    do {
+      value = in.read();
+      if (value < 0) return null;
+    } while (value != START);
+
+    ByteArrayOutputStream payload = new ByteArrayOutputStream();
+    while ((value = in.read()) >= 0 && value != END) {
+      if (payload.size() >= MAX_PACKET_BYTES) throw new IOException("MIR2 packet exceeds 8192 bytes");
+      payload.write(value);
+    }
+    if (value < 0) throw new EOFException("truncated MIR2 packet");
+    return payload.toByteArray();
+  }
+
+  private static int payloadOffset(byte[] payload) {
+    return hasClientSequence(payload) ? 1 : 0;
+  }
+
   private static boolean hasClientSequence(byte[] payload) {
     // The Delphi client prefixes each request with a rotating ASCII digit 1..9.
-    return payload.length > WIRE_BYTES && payload[0] >= '1' && payload[0] <= '9';
+    return payload.length > 0 && payload[0] >= '1' && payload[0] <= '9';
+  }
+
+  private static int parsePositive(String value, String field) {
+    int parsed = parseInteger(value, field);
+    if (parsed <= 0) throw new IllegalArgumentException(field + " must be positive");
+    return parsed;
+  }
+
+  private static int parseNonNegative(String value, String field) {
+    int parsed = parseInteger(value, field);
+    if (parsed < 0) throw new IllegalArgumentException(field + " must not be negative");
+    return parsed;
+  }
+
+  private static int parseInteger(String value, String field) {
+    try {
+      return Integer.parseInt(value);
+    } catch (NumberFormatException error) {
+      throw new IllegalArgumentException("invalid " + field, error);
+    }
   }
 
   private static byte[] encodedHeader(DefaultMessage message) throws IOException {
