@@ -100,8 +100,9 @@ public final class LegacyGateHandler implements BiConsumer<ClientConnection, IOE
 
     int playerId = 0;
     try {
-      playerId = world.engine().enterPlayerNear(state.selectedCharacter.name(), world.mapId(), world.spawn(),
-          world.direction(), 0, 0, adapter).join().id();
+      playerId = world.engine().enterPlayerNear(
+          state.selectedCharacter.id(), state.selectedCharacter.name(), world.mapId(), world.spawn(),
+          world.direction(), state.selectedCharacter.feature(), 0, adapter).join().id();
       WirePacket packet;
       while ((packet = WireMessageCodec.readPacket(connection.input())) != null) {
         adapter.handle(packet);
@@ -199,8 +200,9 @@ public final class LegacyGateHandler implements BiConsumer<ClientConnection, IOE
     List<Character> characters = router.characters(state.authToken);
     StringBuilder body = new StringBuilder();
     for (Character character : characters.stream().limit(2).toList()) {
-      body.append(character.name()).append('/').append(character.job()).append("/0/")
-          .append(character.level()).append("/0/");
+      body.append(character.name()).append('/').append(character.job()).append('/')
+          .append(character.hair()).append('/').append(character.level()).append('/')
+          .append(character.gender()).append('/');
     }
     return responseWithBody(ProtocolConstants.SM_QUERYCHR, characters.size(), 0, 1, 0, body.toString());
   }
@@ -208,7 +210,8 @@ public final class LegacyGateHandler implements BiConsumer<ClientConnection, IOE
   private WirePacket createCharacter(ConnectionState state, WirePacket packet) {
     String[] fields = fields(packet, 5);
     requireAccount(state, fields[0]);
-    Character created = router.create(state.authToken, fields[1], parseSmallInt(fields[3]));
+    Character created = router.create(state.authToken, fields[1], parseSmallInt(fields[3]),
+        parseSmallInt(fields[2]), parseSmallInt(fields[4]));
     return response(ProtocolConstants.SM_NEWCHR_SUCCESS, created.level(), 0, 0, 0);
   }
 
@@ -228,8 +231,9 @@ public final class LegacyGateHandler implements BiConsumer<ClientConnection, IOE
     Character character = router.characters(state.authToken).stream()
         .filter(candidate -> candidate.name().equals(fields[1]))
         .findFirst().orElseThrow(() -> new IllegalArgumentException("character not found"));
-    sessions.select(state.account, state.certification, character);
-    state.selectedCharacter = new GateSessionRegistry.SelectedCharacter(character.id(), character.name());
+    GateSessionRegistry.Session selected =
+        sessions.select(state.account, state.certification, character);
+    state.selectedCharacter = selected.selectedCharacter();
     return responseWithBody(ProtocolConstants.SM_STARTPLAY, 0, 0, 0, 0,
         config.advertisedHost() + "/" + config.gamePort());
   }

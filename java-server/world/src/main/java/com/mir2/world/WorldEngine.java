@@ -12,6 +12,7 @@ import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.Random;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -82,10 +83,15 @@ public final class WorldEngine implements AutoCloseable {
   private final AtomicLong tickCount = new AtomicLong();
   private final LongSupplier clock;
   private final Random random;
+  private final PlayerStateStore playerStateStore;
   private int nextObjectId = 1;
 
   public WorldEngine(Config config, Collection<GameMap> maps) {
-    this(config, maps, System::currentTimeMillis, new Random());
+    this(config, maps, System::currentTimeMillis, new Random(), PlayerStateStore.none());
+  }
+
+  public WorldEngine(Config config, Collection<GameMap> maps, PlayerStateStore playerStateStore) {
+    this(config, maps, System::currentTimeMillis, new Random(), playerStateStore);
   }
 
   public WorldEngine(Collection<GameMap> maps) {
@@ -94,9 +100,20 @@ public final class WorldEngine implements AutoCloseable {
 
   /** Deterministic constructor: tests inject a virtual clock and a seeded damage generator. */
   public WorldEngine(Config config, Collection<GameMap> maps, LongSupplier clock, Random random) {
+    this(config, maps, clock, random, PlayerStateStore.none());
+  }
+
+  /** Deterministic constructor with a durable player-state port. */
+  public WorldEngine(
+      Config config,
+      Collection<GameMap> maps,
+      LongSupplier clock,
+      Random random,
+      PlayerStateStore playerStateStore) {
     this.config = Objects.requireNonNull(config);
     this.clock = Objects.requireNonNull(clock, "clock");
     this.random = Objects.requireNonNull(random, "random");
+    this.playerStateStore = Objects.requireNonNull(playerStateStore, "playerStateStore");
     if (maps.isEmpty()) throw new IllegalArgumentException("at least one map is required");
     for (GameMap map : maps) {
       Objects.requireNonNull(map, "map");
@@ -130,6 +147,7 @@ public final class WorldEngine implements AutoCloseable {
     return enterPlayer(name, mapId, position, direction, 0, 0, sink);
   }
 
+  /** Transient compatibility overload used by isolated world tests. */
   public CompletableFuture<WorldObjectSnapshot> enterPlayer(
       String name,
       String mapId,
@@ -138,12 +156,27 @@ public final class WorldEngine implements AutoCloseable {
       int feature,
       int status,
       WorldEventSink sink) {
+    return enterPlayer(transientCharacterId(name), name, mapId, position, direction, feature, status, sink);
+  }
+
+  /** Enters a durable character and restores its ability and backpack before MapEntered is emitted. */
+  public CompletableFuture<WorldObjectSnapshot> enterPlayer(
+      UUID characterId,
+      String name,
+      String mapId,
+      Position position,
+      Direction direction,
+      int feature,
+      int status,
+      WorldEventSink sink) {
+    Objects.requireNonNull(characterId, "characterId");
     Objects.requireNonNull(name, "name");
     Objects.requireNonNull(mapId, "mapId");
     Objects.requireNonNull(position, "position");
     Objects.requireNonNull(direction, "direction");
     Objects.requireNonNull(sink, "sink");
-    return submit(() -> enter(name, mapId, position, direction, feature, status, sink));
+    return submit(() -> enter(
+        characterId, name, mapId, position, direction, feature, status, sink));
   }
 
   /** Enters at the requested spawn or the nearest currently available cell. */
@@ -155,6 +188,21 @@ public final class WorldEngine implements AutoCloseable {
       int feature,
       int status,
       WorldEventSink sink) {
+    return enterPlayerNear(transientCharacterId(name), name, mapId, preferredPosition,
+        direction, feature, status, sink);
+  }
+
+  /** Durable-character variant of {@link #enterPlayerNear(String, String, Position, Direction, int, int, WorldEventSink)}. */
+  public CompletableFuture<WorldObjectSnapshot> enterPlayerNear(
+      UUID characterId,
+      String name,
+      String mapId,
+      Position preferredPosition,
+      Direction direction,
+      int feature,
+      int status,
+      WorldEventSink sink) {
+    Objects.requireNonNull(characterId, "characterId");
     Objects.requireNonNull(name, "name");
     Objects.requireNonNull(mapId, "mapId");
     Objects.requireNonNull(preferredPosition, "preferredPosition");
@@ -162,7 +210,8 @@ public final class WorldEngine implements AutoCloseable {
     Objects.requireNonNull(sink, "sink");
     return submit(() -> {
       GameMap map = requireMap(mapId);
-      return enter(name, mapId, nearestAvailable(map, preferredPosition), direction, feature, status, sink);
+      return enter(characterId, name, mapId, nearestAvailable(map, preferredPosition),
+          direction, feature, status, sink);
     });
   }
 
@@ -217,6 +266,11 @@ public final class WorldEngine implements AutoCloseable {
     return submit(() -> requireObject(objectId).snapshot());
   }
 
+  /** Returns the private durable state of an online player without exposing it to nearby observers. */
+  public CompletableFuture<PlayerState> playerState(int playerId) {
+    return submit(() -> requirePlayer(playerId).state());
+  }
+
   public CompletableFuture<Integer> onlinePlayers() {
     return submit(players::size);
   }
@@ -258,16 +312,22 @@ public final class WorldEngine implements AutoCloseable {
   }
 
   private WorldObjectSnapshot enter(
-      String name, String mapId, Position position, Direction direction,
+      UUID characterId, String name, String mapId, Position position, Direction direction,
       int feature, int status, WorldEventSink sink) {
     if (name.isBlank()) throw new IllegalArgumentException("player name must not be blank");
     if (playersByName.containsKey(name)) throw new IllegalStateException("player is already online: " + name);
     GameMap map = requireMap(mapId);
     if (!map.canWalk(position)) throw new IllegalStateException("spawn cell is not available: " + position);
 
+    PlayerState restored = playerStateStore.load(characterId)
+        .orElseGet(() -> PlayerState.initial(characterId));
+    // Materialise defaults for characters created by an older schema before exposing the player.
+    playerStateStore.save(restored);
+
     int id = allocateObjectId();
     List<Integer> visibleIds = visibleIds(map, position, 0);
-    Player player = new Player(id, name, map, position, direction, feature, status, sink);
+    Player player = new Player(id, characterId, name, map, position, direction, feature, status,
+        restored.ability(), restored.backpack(), sink);
     map.place(id, position);
     players.put(id, player);
     playersByName.put(name, id);
@@ -389,9 +449,21 @@ public final class WorldEngine implements AutoCloseable {
       emit(player, new WorldEvent.PickupRejected(player.id, WorldEvent.PickupRejection.NO_ITEM));
       return false;
     }
+    if (player.backpack.size() >= PlayerState.MAX_BACKPACK_ITEMS) {
+      emit(player, new WorldEvent.PickupRejected(player.id, WorldEvent.PickupRejection.BACKPACK_FULL));
+      return false;
+    }
+
+    BackpackItem backpackItem = BackpackItem.from(item);
+    player.backpack.add(backpackItem);
+    try {
+      persist(player);
+    } catch (RuntimeException failure) {
+      player.backpack.removeLast();
+      throw failure;
+    }
     groundItems.remove(item.id());
     itemDropTimes.remove(item.id());
-    player.backpack.add(item);
     emit(player, new WorldEvent.ItemPickedUp(player.id, item));
     WorldEvent hidden = new WorldEvent.ItemDisappeared(item);
     for (int viewerId : visibleIds(player.map, item.position(), 0)) emit(players.get(viewerId), hidden);
@@ -400,6 +472,7 @@ public final class WorldEngine implements AutoCloseable {
 
   private void leave(int playerId) {
     Player player = requirePlayer(playerId);
+    persist(player);
     List<Integer> visibleIds = visibleIds(player.map, player.position, player.id);
     player.map.remove(player.id, player.position);
     players.remove(player.id);
@@ -430,7 +503,16 @@ public final class WorldEngine implements AutoCloseable {
       broadcastStruck(victim, attacker.id(), 0);
       return;
     }
-    victim.setAbility(victim.ability().withHp(victim.ability().hp() - damage));
+    Ability previous = victim.ability();
+    victim.setAbility(previous.withHp(previous.hp() - damage));
+    if (victim instanceof Player player) {
+      try {
+        persist(player);
+      } catch (RuntimeException failure) {
+        victim.setAbility(previous);
+        throw failure;
+      }
+    }
     broadcastStruck(victim, attacker.id(), damage);
     if (victim.ability().alive()) return;
     handleDeath(victim, attacker);
@@ -463,7 +545,14 @@ public final class WorldEngine implements AutoCloseable {
 
   private void awardExperience(Player player, long experience) {
     if (experience <= 0) return;
-    player.ability = player.ability.addExperience(experience);
+    Ability previous = player.ability;
+    player.ability = previous.addExperience(experience);
+    try {
+      persist(player);
+    } catch (RuntimeException failure) {
+      player.ability = previous;
+      throw failure;
+    }
     emit(player, new WorldEvent.ExperienceGained(player.id, experience, player.ability.experience()));
   }
 
@@ -608,6 +697,15 @@ public final class WorldEngine implements AutoCloseable {
   }
 
   // ---------------------------------------------------------------- shared
+
+  private void persist(Player player) {
+    playerStateStore.save(player.state());
+  }
+
+  private static UUID transientCharacterId(String name) {
+    Objects.requireNonNull(name, "name");
+    return UUID.nameUUIDFromBytes(name.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+  }
 
   private MoveResult rejectMove(
       Player player, Position target, WorldEvent.MoveRejection reason) {
@@ -829,33 +927,40 @@ public final class WorldEngine implements AutoCloseable {
 
   private static final class Player implements WorldObject {
     private final int id;
+    private final UUID characterId;
     private final String name;
     private final GameMap map;
     private final int feature;
     private final int status;
     private final WorldEventSink sink;
-    private final List<GroundItem> backpack = new ArrayList<>();
+    private final List<BackpackItem> backpack;
     private Position position;
     private Direction direction;
-    private Ability ability = Ability.defaultPlayer();
+    private Ability ability;
     private long lastAttackAt = Long.MIN_VALUE / 4;
 
     private Player(
         int id,
+        UUID characterId,
         String name,
         GameMap map,
         Position position,
         Direction direction,
         int feature,
         int status,
+        Ability ability,
+        List<BackpackItem> backpack,
         WorldEventSink sink) {
       this.id = id;
+      this.characterId = characterId;
       this.name = name;
       this.map = map;
       this.position = position;
       this.direction = direction;
       this.feature = feature;
       this.status = status;
+      this.ability = ability;
+      this.backpack = new ArrayList<>(backpack);
       this.sink = sink;
     }
 
@@ -882,6 +987,10 @@ public final class WorldEngine implements AutoCloseable {
     @Override
     public void setAbility(Ability ability) {
       this.ability = ability;
+    }
+
+    private PlayerState state() {
+      return new PlayerState(characterId, ability, backpack);
     }
 
     @Override

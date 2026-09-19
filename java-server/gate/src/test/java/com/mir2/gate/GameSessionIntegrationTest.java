@@ -4,6 +4,7 @@ import com.mir2.auth.AuthService;
 import com.mir2.character.CharacterService;
 import com.mir2.protocol.DefaultMessage;
 import com.mir2.protocol.ProtocolConstants;
+import com.mir2.protocol.SixBitCodec;
 import com.mir2.world.Direction;
 import com.mir2.world.GameMap;
 import com.mir2.world.Position;
@@ -11,6 +12,8 @@ import com.mir2.world.WorldEngine;
 import java.io.ByteArrayOutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -40,6 +43,10 @@ class GameSessionIntegrationTest {
           List<WirePacket> oneEntry = readPackets(one, 3);
           assertEquals(List.of(ProtocolConstants.SM_NEWMAP, ProtocolConstants.SM_LOGON,
               ProtocolConstants.SM_MAPDESCRIPTION), idents(oneEntry));
+          byte[] logonBody = SixBitCodec.decodeString(oneEntry.get(1).encodedBody());
+          assertEquals(0x01050100,
+              ByteBuffer.wrap(logonBody).order(ByteOrder.LITTLE_ENDIAN).getInt(),
+              "CM_NEWCHR gender/hair must reach SM_LOGON Feature");
 
           Socket two = connectGame(ports.game(), "two", "乙", certificationTwo);
           try (two) {
@@ -100,7 +107,7 @@ class GameSessionIntegrationTest {
     handler.dispatch(GateKind.SELECT, selectState,
         request(ProtocolConstants.CM_QUERYCHR, account + "/" + certification));
     handler.dispatch(GateKind.SELECT, selectState,
-        request(ProtocolConstants.CM_NEWCHR, account + "/" + name + "/0/0/0"));
+        request(ProtocolConstants.CM_NEWCHR, account + "/" + name + "/2/0/1"));
     WirePacket selected = handler.dispatch(GateKind.SELECT, selectState,
         request(ProtocolConstants.CM_SELCHR, account + "/" + name));
     assertEquals(ProtocolConstants.SM_STARTPLAY, selected.message().ident());

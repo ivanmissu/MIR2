@@ -42,7 +42,7 @@ class LegacyGateHandlerTest {
     WirePacket characters = handler.dispatch(GateKind.SELECT, selectState,
         request(ProtocolConstants.CM_QUERYCHR, "hero/" + certification));
     assertEquals(1, characters.message().recog());
-    assertEquals("战士/0/0/1/0/", WireMessageCodec.decodeBody(characters.encodedBody()));
+    assertEquals("战士/0/2/1/0/", WireMessageCodec.decodeBody(characters.encodedBody()));
 
     WirePacket start = handler.dispatch(GateKind.SELECT, selectState,
         request(ProtocolConstants.CM_SELCHR, "hero/战士"));
@@ -54,6 +54,7 @@ class LegacyGateHandlerTest {
         new RunLogin("hero", "战士", certificationNumber, 120040918, 9));
     assertEquals("hero", gameSession.account());
     assertEquals("战士", gameSession.selectedCharacter().name());
+    assertEquals(0x00040000, gameSession.selectedCharacter().feature());
     assertThrows(SecurityException.class, () -> handler.authenticateGame(
         new RunLogin("hero", "法师", certificationNumber, 120040918, 9)));
 

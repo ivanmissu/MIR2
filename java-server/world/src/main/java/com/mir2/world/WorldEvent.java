@@ -209,6 +209,7 @@ public sealed interface WorldEvent
 
   enum PickupRejection {
     NO_ITEM,
-    ACTOR_DEAD
+    ACTOR_DEAD,
+    BACKPACK_FULL
   }
 }
