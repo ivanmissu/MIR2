@@ -122,9 +122,19 @@ class WorldEngineTest {
       assertEquals("ThreadCheck", player.name());
       assertTrue(callbackThread.get().startsWith("mir2-world"));
       assertFalse(events.isEmpty());
-      assertTrue(world.tickCount() > 0);
+      // The command future completes inside the tick, so the counter is bumped just afterwards.
+      assertTrue(awaitTicks(world), "the scheduled world thread must keep ticking");
       assertTrue(world.isRunning());
     }
+  }
+
+  private static boolean awaitTicks(WorldEngine world) throws InterruptedException {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+    while (System.nanoTime() < deadline) {
+      if (world.tickCount() > 0) return true;
+      Thread.sleep(5);
+    }
+    return false;
   }
 
   private static <T> T runTick(WorldEngine world, java.util.concurrent.CompletableFuture<T> future) {

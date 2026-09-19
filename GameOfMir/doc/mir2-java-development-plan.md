@@ -6,7 +6,7 @@
 
 本计划以《可行性评估报告》的 GO 结论为基线，将 8–12 人月的迁移工程拆解为 **1 个 PoC + 5 个阶段（P0–P4）+ 6 道决策门（G0–G5）**，覆盖团队分工、周级任务分解、工程规范、 CI/CD、发布回滚与预算，可直接作为项目执行与跟踪的依据。
 
-> **执行状态（截至 2026-09-19）**：S0/W01 协议基座已完成；W02 账号、角色、SQLite 持久化已完成；Gate 接入与会话路由已完成初版；可执行 JAR、环境配置、优雅停机及 Docker Compose 已交付。W03 的 **Tick、地图、碰撞、对象生命周期、12 格视野、RunLogin、移动协议及 GAME→World 接线** 已形成自动化闭环；认证后会发送 `SM_NEWMAP / SM_LOGON / SM_MAPDESCRIPTION`，支持出现、走跑、离开视野与断线清理。下一步是真实 `mir2.exe` 对拍并修正进图字段和顺序。
+> **执行状态（截至 2026-09-19）**：S0/W01 协议基座已完成；W02 账号、角色、SQLite 持久化已完成；Gate 接入与会话路由已完成初版；可执行 JAR、环境配置、优雅停机及 Docker Compose 已交付。W03 的 **Tick、地图、碰撞、对象生命周期、12 格视野、RunLogin、移动协议及 GAME→World 接线** 已形成自动化闭环。本次会话进一步完成 **W03 战斗切片**：近战攻击（`CM_HIT/HEAVYHIT/BIGHIT`）、伤害与 `SM_STRUCK/SM_HEALTHSPELLCHANGED/SM_DEATH/SM_WINEXP`、单种近战怪物 AI（索敌/追击/间隔攻击/尸体清理）、掉落表与 `SM_ITEMSHOW/SM_ITEMHIDE`、`CM_PICKUP` 拾取。下一步是**战斗与背包状态落库**以及真实 `mir2.exe` 对拍。
 
 ## ✅ 当前执行进度（Session Handoff）
 
@@ -22,18 +22,47 @@
 | ✅ 完成 | 可启动交付基座 | 增加 Main 入口、环境变量配置、首次测试账号、优雅停机、可执行 fat JAR、Dockerfile 与 Compose；JAR 三端口启动冒烟和镜像构建已进入 CI | `java-server/bootstrap`、`Dockerfile`、`compose.yml`；Actions run `35329322893` |
 | 🟡 部分完成 | W02：接入骨架（7000/7100/7200） | 已完成三监听器、`#序号+消息头+消息体!` 分帧、连接状态、整数认证码桥接和登录/选服/角色查询建删选字段映射；GAME 首包已按 `**账号/角色/认证码/版本/登录码` 独立解析，并校验认证码与已选角色；Netty 替换、限速及真客户端验证未完成 | `java-server/gate`；`LegacyGateHandlerTest`、`WireMessageCodecTest` |
 | 🟡 部分完成 | W03：tick、地图、移动广播 | 单 owner Tick、地图/碰撞、12 格视野、7200 RunLogin、GAME 会话进出、`SM_NEWMAP/LOGON/MAPDESCRIPTION`、`TCharDesc`、移动确认与观察者广播均已接通 | `GameProtocolAdapterTest`、`GameSessionIntegrationTest`；模拟双会话闭环已通过，尚缺真客户端对拍 |
-| ⬜ 未开始 | W03：近战怪、击杀、掉落、拾取 | 尚未实现 | 完成 7200 → world 接入后开始 |
+| 🟡 部分完成 | W03：近战怪、击杀、掉落、拾取 | 近战攻击判定与动作间隔、怪物模板/索敌/追击/攻击/尸体清理、掉落表、地面物品与拾取、经验结算均已实现并有确定性单测与网关协议测试；HP/经验/背包尚未落库，重登即丢失 | `WorldCombatTest`、`GameCombatProtocolTest` |
 
 ### 当前下一步（Next Session）
 
-> **下次开发起点：**从下面第 4 项开始，不需要重做 `world` 内核。第 1–3 项已于 2026-09-19 完成；当前分支固定为 `arena/01a0b7e9-mir2`。
+> **下次开发起点：**从下面第 6 项开始。第 1–3 项已于 2026-09-19 完成；第 5 项（近战怪 / 击杀 / 掉落 / 拾取）已于本次会话完成，只剩存档未做。第 4 项（真客户端对拍）需要 Windows 环境与抓包，属于并行任务。
 
 1. ✅ **接通 7200 首包认证：**已按 `Client/ClMain.pas:SendRunLogin` 的 `**账号/角色/认证码/客户端版本/RUNLOGINCODE` 格式增加独立 headerless 首包解析；`GateSessionRegistry` 会在 `CM_SELCHR` 时记录角色，并在 GAME 登录时联合校验认证码、账号和已选角色。非法首包返回 `SM_STARTFAIL` 并关闭连接。
 2. ✅ **实现移动协议适配器：**已将 `CM_TURN / CM_WALK / CM_RUN` 的 `Recog` 打包坐标与 `Tag` 方向转换为 `WorldEngine.turn/move`；成功/拒绝事件转换为 `+GOOD/<tick>` / `+FAIL/<tick>`，观察者事件转换为 `SM_WALK / SM_RUN / SM_TURN / SM_DISAPPEAR`。
 3. ✅ **补齐进图最小消息并接线会话：**`MapEntered` 已转换为 `SM_NEWMAP + SM_LOGON + SM_MAPDESCRIPTION`，实现 8 字节小端 `TCharDesc` 与 16 字节 `TMessageBodyWL`；认证 GAME socket 会加入/移出 `WorldEngine`，支持可配置出生点和邻近空位选择。双模拟会话已覆盖“进入→互相出现→走/跑→离开视野→断线清理”。
 4. **真实客户端对拍：**用真 `mir2.exe` 和 Delphi 抓包确认 RunLogin、`+GOOD/+FAIL`、`SM_*` 字段及应答顺序，重点核对日夜亮度、裸装 Feature、角色名/颜色附加体和完整 `SM_LOGON` 后续序列；差异补进 golden，同时保持 Maven/JDK 21、fat JAR 冒烟和 Docker 构建全绿。
-5. **移动闭环稳定后再做打怪：**新增一种近战怪的 Tick/寻敌/追击/攻击，然后实现击杀、掉落、拾取与重登存档；不要在 7200 适配完成前提前扩展 57 种怪物。
-6. 接入层的连接数限制、消息大小/频率限制、空闲超时和 Netty 替换仍需完成，但不阻塞上述 world 协议闭环的 PoC 顺序。
+5. ✅ **近战战斗切片：**已实现 `Ability`（HP/MP/DC/AC/等级/经验）、`AttackKind`、单格正面攻击与 Delphi 共用的 `CM_HIT` 动作间隔、伤害 = 攻击随机值 − 防御随机值；`MonsterTemplate`（鸡 / 半兽人）带视野索敌、追击、独立攻击间隔与尸体超时清理；`ItemDrop` / `GroundItem` 实现「N 分之一」掉落、地面物品视野同步与 `CM_PICKUP` 拾取；协议侧新增 `SM_HIT/HEAVYHIT/BIGHIT`、`SM_STRUCK`（TMessageBodyWL）、`SM_HEALTHSPELLCHANGED`、`SM_DEATH`（TCharDesc）、`SM_WINEXP`、`SM_ITEMSHOW/ITEMHIDE/ADDITEM`。
+6. **战斗与背包状态落库（下一步起点）：**把 `Ability`（HP/MP/经验/等级）与拾取到的背包条目写入 SQLite，进图时恢复，实现「打怪 → 捡装备 → 重登不丢」的 G0 判据；同时补角色表的性别/发型/装备字段，让 `Feature` 不再固定为裸装 0。
+7. **真实客户端对拍（可并行）：**用真 `mir2.exe` 和 Delphi 抓包确认 RunLogin、`+GOOD/+FAIL`、进图与战斗 `SM_*` 的字段及应答顺序，差异补进 golden。
+8. 接入层的连接数限制、消息大小/频率限制、空闲超时和 Netty 替换仍需完成，但不阻塞上述 world 协议闭环的 PoC 顺序。
+9. 57 种怪物、技能/魔法、远程与群攻仍不得提前扩展，等存档闭环与对拍完成后再按 P2 计划推进。
+
+### W03 战斗切片交接明细（2026-09-19）
+
+#### 已落地代码
+
+- `world/Ability`：HP/MaxHP、MP/MaxMP、DC/AC 上下限、等级与经验；Delphi 把攻防存成 `Word` 高低字节区间，Java 侧展开存储，仅在上线字节时再打包。
+- `world/AttackKind`：`HIT / HEAVY_HIT / BIG_HIT`，对应 `CM_HIT / CM_HEAVYHIT / CM_BIGHIT`；按 `ObjBase.pas:CheckActionInterval` 的语义共用同一个 `CM_HIT` 动作间隔（默认 900ms）。
+- `WorldEngine.attack`：校验坐标一致、存活、动作间隔，命中正前方单格；伤害 = `rand(minDC..maxDC) - rand(minAC..maxAC)`，下限 0。攻击动画对**攻击者本人不回发**（复刻 `ObjBase.pas:5324` 的 `RM_HIT` 抑制）。
+- `world/MonsterTemplate` + `ItemDrop`：鸡（6HP，必掉鸡肉）与半兽人（45HP，1/2 鹿肉、1/20 木剑）；`feature` 直接按 `MakeMonsterFeature(raceImg, weapon, appr)` 打包存储。
+- `WorldEngine.updateMonsters`：每 Tick 做索敌（视野内最近的存活玩家）、贴身则按怪物攻击间隔攻击、否则按行走间隔追击（正前方受阻时尝试左右相邻方向）；死亡后按 `corpseLingerMillis` 清理尸体并发 `SM_DISAPPEAR`。
+- `world/GroundItem` + `WorldEngine.pickUp`：死亡格优先掉落、被占则扫描周围 8 格；地面物品参与视野进出同步；拾取要求玩家站在同格，取该格最新一件。
+- `gate/GameProtocolAdapter`：新增 `CM_HIT/HEAVYHIT/BIGHIT`（Recog 打包坐标 + Tag 方向）与 `CM_PICKUP`（param/tag 为客户端自身坐标，与 `ClMain.pas:3050` 一致）入站；出站新增 `SM_HIT/HEAVYHIT/BIGHIT`、`SM_STRUCK`（param=HP、tag=MaxHP、series=伤害、body=16B `TMessageBodyWL`）、`SM_HEALTHSPELLCHANGED`、`SM_DEATH`（body=8B `TCharDesc`）、`SM_WINEXP`（recog=总经验、param/tag=本次经验高低字）、`SM_ITEMSHOW/SM_ITEMHIDE/SM_ADDITEM`。
+- `bootstrap`：新增 `MIR2_MONSTER_COUNT`（0–1000）与 `MIR2_MONSTER_KIND`（`chicken`/`orc`），启动时围绕出生点成环布怪，便于真客户端直接验证打怪闭环。
+
+#### 验收证据
+
+- `world/WorldCombatTest`：虚拟时钟 + 固定种子随机数，覆盖击杀与经验、掉落与拾取、怪物追击与反击、动作间隔与坐标不符拒绝、怪物进图可见与尸体超时消失。
+- `gate/GameCombatProtocolTest`：覆盖三种攻击 ident 的入站与观察者广播、击杀链路的 `SM_STRUCK/HEALTHSPELLCHANGED/DEATH/WINEXP/ITEMSHOW` 字段、拾取的 `+GOOD` → `SM_ADDITEM` → `SM_ITEMHIDE` 顺序，以及纯出站事件映射。
+
+#### 明确未实现 / 注意事项
+
+- **战斗状态不落库**：HP、MP、经验、等级与拾取到的背包条目都只在内存中，断线重连后会重置为 `Ability.defaultPlayer()`，因此 G0 的「重登不丢档」仍未达成。
+- 伤害公式是 Delphi 基础攻防区间的简化版，未包含幸运/诅咒、命中闪避、护身与麻痹等修正；等级提升、`SM_LEVELUP` 与属性成长也未实现。
+- 玩家死亡后仅广播 `SM_DEATH` 并禁止移动/攻击，尚无复活、掉落惩罚与 `SM_ALIVE`。
+- 掉落只有物品名与 `Looks`，没有完整 `TClientItem`（60 字节 `TStdItem` + 耐久），因此 `SM_ADDITEM` 目前只带名字，接入真实客户端前必须补物品数据库。
+- 怪物刷新点、刷怪计时、`MonGen` 配置文件解析均未实现，当前只能靠环境变量在启动时一次性布怪。
 
 ### W03 本次交接明细（2026-09-18）
 
@@ -69,7 +98,7 @@
 - ⬜ Delphi 实际 traffic recorder 与 20 组字节级 golden 对拍
 - ⬜ 真 `mir2.exe` 登录、选区、角色列表、建删角色、进入世界
 - 🟡 Tick/地图/碰撞/视野、7200 认证、进图与移动 socket 闭环已完成并有双会话集成测试；真 `mir2.exe` 广播验证未完成
-- ⬜ 近战怪、击杀、掉落、拾取、重登不丢档
+- 🟡 近战怪、击杀、掉落、拾取已实现并有确定性测试；**重登不丢档（HP/经验/背包落库）未实现**
 - ⬜ 50 机器人 × 1 小时稳定性验证
 - ⬜ G0 决策门评审与 v0.1 基线 tag
 
@@ -473,6 +502,7 @@ staging 从 P1 起常驻（对拍需要）；prod 在 W28 预备。**所有环�
 | `v1.0.6` | `2026-09-19` | 完成 7200 headerless RunLogin 首包解析、认证码/账号/已选角色联合校验及非法登录拒绝；下一步调整为 GAME→World 移动协议适配 |
 | `v1.0.7` | `2026-09-19` | 完成移动协议适配器：`CM_TURN/WALK/RUN` 入站转换、`+GOOD/+FAIL` 动作确认及 `SM_TURN/WALK/RUN/DISAPPEAR` 观察者事件；下一步为进图消息与 GAME 会话生命周期接线 |
 | `v1.0.8` | `2026-09-19` | 完成 GAME→World 生命周期接线、最小进图消息、`TCharDesc/TMessageBodyWL`、可配置出生点及双 socket 进入/出现/走跑/离视野/断线集成测试；下一步为真客户端对拍 |
+| `v1.0.9` | `2026-09-19` | W03 战斗切片交接：近战攻击与动作间隔、伤害/击退消息、单种近战怪 AI、掉落表与拾取、经验结算全部落地；新增 `MIR2_MONSTER_COUNT/KIND` 配置与 `WorldCombatTest`、`GameCombatProtocolTest`；下一步固定为战斗与背包状态落库 |
 
 > [!WARNING]
 > **合规声明：**本计划仅用于技术学习与私密社区研究。传奇 IP 与美术资源版权归盛趣游戏 / Wemade 所有； 禁止商业运营、公开拉新与客户端资源分发。上线运营前请再次确认法律边界（详见评估报告第 09 节 R8）。

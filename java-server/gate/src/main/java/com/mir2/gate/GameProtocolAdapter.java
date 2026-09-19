@@ -3,7 +3,9 @@ package com.mir2.gate;
 import com.mir2.protocol.DefaultMessage;
 import com.mir2.protocol.ProtocolConstants;
 import com.mir2.protocol.SixBitCodec;
+import com.mir2.world.AttackKind;
 import com.mir2.world.Direction;
+import com.mir2.world.GroundItem;
 import com.mir2.world.MovementKind;
 import com.mir2.world.Position;
 import com.mir2.world.WorldEngine;
@@ -18,7 +20,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 import java.util.function.LongSupplier;
 
-/** Converts the W03 movement and minimum map-entry subset between legacy packets and the world. */
+/** Converts the W03 movement, melee combat and map-entry subset between legacy packets and the world. */
 public final class GameProtocolAdapter implements WorldEventSink {
   private final WorldEngine world;
   private final Consumer<GameOutbound> output;
@@ -34,6 +36,10 @@ public final class GameProtocolAdapter implements WorldEventSink {
     this(world, playerId, output, () -> System.nanoTime() / 1_000_000L);
   }
 
+  GameProtocolAdapter(WorldEngine world, Consumer<GameOutbound> output, LongSupplier serverTick) {
+    this(world, 0, output, serverTick);
+  }
+
   GameProtocolAdapter(
       WorldEngine world, int playerId, Consumer<GameOutbound> output, LongSupplier serverTick) {
     this.world = Objects.requireNonNull(world, "world");
@@ -43,25 +49,27 @@ public final class GameProtocolAdapter implements WorldEventSink {
     this.serverTick = Objects.requireNonNull(serverTick, "serverTick");
   }
 
-  /** Returns false for messages outside the movement subset. */
+  /** Returns false for messages outside the movement, melee and pickup subset. */
   public boolean handle(WirePacket packet) {
     Objects.requireNonNull(packet, "packet");
     DefaultMessage message = packet.message();
-    if (message.ident() != ProtocolConstants.CM_TURN
-        && message.ident() != ProtocolConstants.CM_WALK
-        && message.ident() != ProtocolConstants.CM_RUN) return false;
+    if (!isSupported(message.ident())) return false;
     try {
       int boundPlayer = requirePlayerId();
-      Direction direction = Direction.fromCode(message.tag());
-      Position position = unpackPosition(message.recog());
       switch (message.ident()) {
         case ProtocolConstants.CM_TURN -> reportExceptionalFailure(
-            world.turn(boundPlayer, position, direction));
-        case ProtocolConstants.CM_WALK -> reportExceptionalFailure(
-            world.move(boundPlayer, position, direction, MovementKind.WALK));
-        case ProtocolConstants.CM_RUN -> reportExceptionalFailure(
-            world.move(boundPlayer, position, direction, MovementKind.RUN));
-        default -> throw new AssertionError("movement ident changed after validation");
+            world.turn(boundPlayer, unpackPosition(message.recog()), Direction.fromCode(message.tag())));
+        case ProtocolConstants.CM_WALK -> reportExceptionalFailure(world.move(boundPlayer,
+            unpackPosition(message.recog()), Direction.fromCode(message.tag()), MovementKind.WALK));
+        case ProtocolConstants.CM_RUN -> reportExceptionalFailure(world.move(boundPlayer,
+            unpackPosition(message.recog()), Direction.fromCode(message.tag()), MovementKind.RUN));
+        case ProtocolConstants.CM_HIT, ProtocolConstants.CM_HEAVYHIT, ProtocolConstants.CM_BIGHIT ->
+            reportExceptionalFailure(world.attack(boundPlayer, unpackPosition(message.recog()),
+                Direction.fromCode(message.tag()), attackKind(message.ident())));
+        // The client sends its own cell in param/tag, not a packed Recog (ClMain.pas:CM_PICKUP).
+        case ProtocolConstants.CM_PICKUP -> reportExceptionalFailure(
+            world.pickUp(boundPlayer, new Position(message.param(), message.tag())));
+        default -> throw new AssertionError("supported ident set changed after validation");
       }
       return true;
     } catch (IllegalArgumentException | IllegalStateException error) {
@@ -87,10 +95,27 @@ public final class GameProtocolAdapter implements WorldEventSink {
       case WorldEvent.TurnRejected rejected -> {
         if (rejected.playerId() == playerId) sendStatus(false);
       }
+      case WorldEvent.AttackAccepted accepted -> {
+        if (accepted.attacker().id() == playerId) sendStatus(true);
+      }
+      case WorldEvent.AttackRejected rejected -> {
+        if (rejected.playerId() == playerId) sendStatus(false);
+      }
+      case WorldEvent.PickupRejected rejected -> {
+        if (rejected.playerId() == playerId) sendStatus(false);
+      }
       case WorldEvent.ObjectAppeared appeared -> sendObjectAction(
           ProtocolConstants.SM_TURN, appeared.object());
       case WorldEvent.ObjectMoved moved -> sendMovement(moved.object(), moved.movement());
       case WorldEvent.ObjectTurned turned -> sendObjectAction(ProtocolConstants.SM_TURN, turned.object());
+      case WorldEvent.ObjectAttacked attacked -> sendAttack(attacked);
+      case WorldEvent.ObjectStruck struck -> sendStruck(struck);
+      case WorldEvent.ObjectDied died -> sendDeath(died);
+      case WorldEvent.HealthChanged changed -> sendHealth(changed.object());
+      case WorldEvent.ExperienceGained gained -> sendExperience(gained);
+      case WorldEvent.ItemAppeared appeared -> sendItemShow(appeared.item());
+      case WorldEvent.ItemDisappeared disappeared -> sendItemHide(disappeared.item());
+      case WorldEvent.ItemPickedUp pickedUp -> sendItemPickedUp(pickedUp);
       case WorldEvent.ObjectDisappeared disappeared -> output.accept(new GameOutbound.Packet(
           packet(ProtocolConstants.SM_DISAPPEAR, disappeared.objectId(), 0, 0, 0, "")));
       default -> {
@@ -101,6 +126,32 @@ public final class GameProtocolAdapter implements WorldEventSink {
 
   static Position unpackPosition(int packed) {
     return new Position(packed & 0xffff, (packed >>> 16) & 0xffff);
+  }
+
+  private static boolean isSupported(int ident) {
+    return ident == ProtocolConstants.CM_TURN
+        || ident == ProtocolConstants.CM_WALK
+        || ident == ProtocolConstants.CM_RUN
+        || ident == ProtocolConstants.CM_HIT
+        || ident == ProtocolConstants.CM_HEAVYHIT
+        || ident == ProtocolConstants.CM_BIGHIT
+        || ident == ProtocolConstants.CM_PICKUP;
+  }
+
+  private static AttackKind attackKind(int ident) {
+    return switch (ident) {
+      case ProtocolConstants.CM_HEAVYHIT -> AttackKind.HEAVY_HIT;
+      case ProtocolConstants.CM_BIGHIT -> AttackKind.BIG_HIT;
+      default -> AttackKind.HIT;
+    };
+  }
+
+  private static int attackIdent(AttackKind attack) {
+    return switch (attack) {
+      case HEAVY_HIT -> ProtocolConstants.SM_HEAVYHIT;
+      case BIG_HIT -> ProtocolConstants.SM_BIGHIT;
+      case HIT -> ProtocolConstants.SM_HIT;
+    };
   }
 
   private void sendMapEntered(WorldEvent.MapEntered entered) {
@@ -118,6 +169,9 @@ public final class GameProtocolAdapter implements WorldEventSink {
     for (WorldObjectSnapshot visible : entered.visibleObjects()) {
       sendObjectAction(ProtocolConstants.SM_TURN, visible);
     }
+    for (GroundItem item : entered.visibleItems()) {
+      sendItemShow(item);
+    }
   }
 
   private void sendMovement(WorldObjectSnapshot object, MovementKind movement) {
@@ -130,6 +184,67 @@ public final class GameProtocolAdapter implements WorldEventSink {
     String body = new CharacterDescription(object.feature(), object.status()).encode();
     output.accept(new GameOutbound.Packet(packet(
         ident, object.id(), position.x(), position.y(), object.direction().code(), body)));
+  }
+
+  /** {@code RM_HIT} carries only the attacker id, cell and direction; the body stays empty. */
+  private void sendAttack(WorldEvent.ObjectAttacked attacked) {
+    WorldObjectSnapshot attacker = attacked.attacker();
+    Position position = attacker.position();
+    output.accept(new GameOutbound.Packet(packet(attackIdent(attacked.attack()), attacker.id(),
+        position.x(), position.y(), attacker.direction().code(), "")));
+  }
+
+  /** {@code SM_STRUCK}: recog=victim, param=HP, tag=MaxHP, series=damage, body=TMessageBodyWL. */
+  private void sendStruck(WorldEvent.ObjectStruck struck) {
+    WorldObjectSnapshot victim = struck.victim();
+    String body = messageBodyWl(victim.feature(), victim.status(), struck.attackerId(), 0);
+    output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_STRUCK, victim.id(),
+        victim.ability().hp(), victim.ability().maxHp(), struck.damage(), body)));
+  }
+
+  /** {@code SM_DEATH}: recog=victim, param/tag=cell, series=damage, body=TCharDesc. */
+  private void sendDeath(WorldEvent.ObjectDied died) {
+    WorldObjectSnapshot victim = died.victim();
+    Position position = victim.position();
+    String body = new CharacterDescription(victim.feature(), victim.status()).encode();
+    output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_DEATH, victim.id(),
+        position.x(), position.y(), victim.direction().code(), body)));
+  }
+
+  /** {@code SM_HEALTHSPELLCHANGED}: recog=object, param=HP, tag=MP, series=MaxHP, empty body. */
+  private void sendHealth(WorldObjectSnapshot object) {
+    output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_HEALTHSPELLCHANGED, object.id(),
+        object.ability().hp(), object.ability().mp(), object.ability().maxHp(), "")));
+  }
+
+  /** {@code SM_WINEXP}: recog=total experience, param/tag=low/high word of the gained amount. */
+  private void sendExperience(WorldEvent.ExperienceGained gained) {
+    if (gained.playerId() != playerId) return;
+    int total = (int) Math.min(gained.total(), Integer.MAX_VALUE);
+    int amount = (int) Math.min(gained.gained(), Integer.MAX_VALUE);
+    output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_WINEXP, total,
+        amount & 0xffff, (amount >>> 16) & 0xffff, 0, "")));
+  }
+
+  /** {@code SM_ITEMSHOW}: recog=item, param/tag=cell, series=looks, body=item name. */
+  private void sendItemShow(GroundItem item) {
+    output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_ITEMSHOW, item.id(),
+        item.position().x(), item.position().y(), item.looks(),
+        WireMessageCodec.encodeBody(item.name()))));
+  }
+
+  private void sendItemHide(GroundItem item) {
+    output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_ITEMHIDE, item.id(),
+        item.position().x(), item.position().y(), 0, "")));
+  }
+
+  private void sendItemPickedUp(WorldEvent.ItemPickedUp pickedUp) {
+    if (pickedUp.playerId() != playerId) return;
+    sendStatus(true);
+    // The full TClientItem payload needs the item database; the name keeps the PoC bag usable.
+    output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_ADDITEM, pickedUp.playerId(),
+        0, 0, 1, WireMessageCodec.encodeBody(pickedUp.item().name()))));
+    sendItemHide(pickedUp.item());
   }
 
   private void sendStatus(boolean accepted) {
@@ -151,8 +266,12 @@ public final class GameProtocolAdapter implements WorldEventSink {
 
   private static String logonBody(WorldObjectSnapshot player) {
     // TMessageBodyWL: feature, status, group/featureEx, reserved.
+    return messageBodyWl(player.feature(), player.status(), 0, 0);
+  }
+
+  private static String messageBodyWl(int param1, int param2, int tag1, int tag2) {
     byte[] bytes = ByteBuffer.allocate(16).order(ByteOrder.LITTLE_ENDIAN)
-        .putInt(player.feature()).putInt(player.status()).putInt(0).putInt(0).array();
+        .putInt(param1).putInt(param2).putInt(tag1).putInt(tag2).array();
     return new String(SixBitCodec.encode(bytes), StandardCharsets.ISO_8859_1);
   }
 
