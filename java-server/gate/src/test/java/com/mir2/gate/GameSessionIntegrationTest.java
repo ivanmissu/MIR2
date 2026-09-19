@@ -25,11 +25,11 @@ class GameSessionIntegrationTest {
     CharacterService characters = new CharacterService();
     GateSessionRegistry sessions = new GateSessionRegistry();
 
-    try (WorldEngine world = new WorldEngine(List.of(GameMap.empty("0", "比奇", 32, 32)))) {
+    try (WorldEngine world = new WorldEngine(List.of(GameMap.empty("0", "比奇", 40, 40)))) {
       world.start();
       LegacyGateHandler handler = new LegacyGateHandler(new SessionRouter(auth, characters), sessions,
           LegacyGateHandler.Config.defaults(), error -> {},
-          new LegacyGateHandler.WorldConfig(world, "0", new Position(10, 10), Direction.DOWN));
+          new LegacyGateHandler.WorldConfig(world, "0", new Position(16, 16), Direction.DOWN));
       GatePorts ports = distinctPorts();
       try (GateServer gates = new GateServer(ports, handler)) {
         gates.start();
@@ -60,16 +60,29 @@ class GameSessionIntegrationTest {
             assertEquals(ProtocolConstants.SM_WALK, walked.message().ident());
             assertEquals(twoId, walked.message().recog());
 
+            int currentX = twoPosition.x() - 3;
             sendAction(two, ProtocolConstants.CM_RUN,
-                new Position(twoPosition.x() - 3, twoPosition.y()), Direction.LEFT);
+                new Position(currentX, twoPosition.y()), Direction.LEFT);
             assertTrue(readRawFrame(two).startsWith("#+GOOD/"));
             WirePacket ran = WireMessageCodec.readPacket(one.getInputStream());
             assertEquals(ProtocolConstants.SM_RUN, ran.message().ident());
             assertEquals(twoId, ran.message().recog());
+
+            boolean leftView = false;
+            while (currentX >= 2 && !leftView) {
+              currentX -= 2;
+              sendAction(two, ProtocolConstants.CM_RUN,
+                  new Position(currentX, twoPosition.y()), Direction.LEFT);
+              assertTrue(readRawFrame(two).startsWith("#+GOOD/"));
+              WirePacket observed = WireMessageCodec.readPacket(one.getInputStream());
+              leftView = observed.message().ident() == ProtocolConstants.SM_DISAPPEAR;
+              assertTrue(leftView || observed.message().ident() == ProtocolConstants.SM_RUN);
+              assertEquals(twoId, observed.message().recog());
+            }
+            assertTrue(leftView, "observer should receive SM_DISAPPEAR after the runner leaves view");
           }
 
-          WirePacket disappeared = WireMessageCodec.readPacket(one.getInputStream());
-          assertEquals(ProtocolConstants.SM_DISAPPEAR, disappeared.message().ident());
+          assertEquals(1, awaitOnlinePlayers(world, 1));
         }
       }
     }
@@ -133,6 +146,17 @@ class GameSessionIntegrationTest {
 
   private static List<Integer> idents(List<WirePacket> packets) {
     return packets.stream().map(packet -> packet.message().ident()).toList();
+  }
+
+  private static int awaitOnlinePlayers(WorldEngine world, int expected) throws Exception {
+    long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(2);
+    int actual;
+    do {
+      actual = world.onlinePlayers().get(1, java.util.concurrent.TimeUnit.SECONDS);
+      if (actual == expected) return actual;
+      Thread.sleep(10);
+    } while (System.nanoTime() < deadline);
+    return actual;
   }
 
   private static WirePacket request(int ident, String body) {
