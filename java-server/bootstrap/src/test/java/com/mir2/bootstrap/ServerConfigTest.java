@@ -19,6 +19,8 @@ class ServerConfigTest {
     assertEquals(10, config.spawnX());
     assertEquals(10, config.spawnY());
     assertEquals(50, config.worldTickMillis());
+    assertEquals(0, config.monsterCount());
+    assertEquals("鸡", config.monsterTemplate().name());
     assertNull(config.bootstrapUser());
   }
 
@@ -36,6 +38,8 @@ class ServerConfigTest {
         Map.entry("MIR2_SPAWN_X", "100"),
         Map.entry("MIR2_SPAWN_Y", "200"),
         Map.entry("MIR2_WORLD_TICK_MS", "25"),
+        Map.entry("MIR2_MONSTER_COUNT", "8"),
+        Map.entry("MIR2_MONSTER_KIND", "orc"),
         Map.entry("MIR2_BOOTSTRAP_USER", "admin"),
         Map.entry("MIR2_BOOTSTRAP_PASSWORD", "secret")));
     assertEquals(17000, config.ports().login());
@@ -45,6 +49,8 @@ class ServerConfigTest {
     assertEquals(100, config.spawnX());
     assertEquals(200, config.spawnY());
     assertEquals(25, config.worldTickMillis());
+    assertEquals(8, config.monsterCount());
+    assertEquals("半兽人", config.monsterTemplate().name());
     assertEquals("admin", config.bootstrapUser());
   }
 
@@ -58,5 +64,9 @@ class ServerConfigTest {
         () -> ServerConfig.from(Map.of("MIR2_WORLD_TICK_MS", "0")));
     assertThrows(IllegalArgumentException.class,
         () -> ServerConfig.from(Map.of("MIR2_SPAWN_X", "-1")));
+    assertThrows(IllegalArgumentException.class,
+        () -> ServerConfig.from(Map.of("MIR2_MONSTER_KIND", "dragon")));
+    assertThrows(IllegalArgumentException.class,
+        () -> ServerConfig.from(Map.of("MIR2_MONSTER_COUNT", "5000")));
   }
 }

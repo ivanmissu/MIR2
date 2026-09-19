@@ -17,6 +17,8 @@ public record ServerConfig(
     int spawnX,
     int spawnY,
     int worldTickMillis,
+    int monsterCount,
+    String monsterKind,
     String bootstrapUser,
     String bootstrapPassword) {
 
@@ -31,6 +33,11 @@ public record ServerConfig(
       throw new IllegalArgumentException("spawn coordinates must be unsigned 16-bit values");
     if (worldTickMillis < 1 || worldTickMillis > 10_000)
       throw new IllegalArgumentException("world tick interval must be between 1 and 10000 milliseconds");
+    if (monsterCount < 0 || monsterCount > 1_000)
+      throw new IllegalArgumentException("monster count must be between 0 and 1000");
+    monsterKind = requireText(monsterKind, "monster kind");
+    if (!monsterKind.equals("chicken") && !monsterKind.equals("orc"))
+      throw new IllegalArgumentException("monster kind must be 'chicken' or 'orc'");
     if ((bootstrapUser == null) != (bootstrapPassword == null))
       throw new IllegalArgumentException("bootstrap user and password must be configured together");
     if (bootstrapUser != null && (bootstrapUser.isBlank() || bootstrapPassword.isEmpty()))
@@ -55,8 +62,17 @@ public record ServerConfig(
         nonNegativeInt(environment, "MIR2_SPAWN_X", 10),
         nonNegativeInt(environment, "MIR2_SPAWN_Y", 10),
         positiveInt(environment, "MIR2_WORLD_TICK_MS", 50),
+        nonNegativeInt(environment, "MIR2_MONSTER_COUNT", 0),
+        value(environment, "MIR2_MONSTER_KIND", "chicken"),
         nullable(environment.get("MIR2_BOOTSTRAP_USER")),
         nullable(environment.get("MIR2_BOOTSTRAP_PASSWORD")));
+  }
+
+  /** Resolves the configured melee monster used to populate the PoC map. */
+  public com.mir2.world.MonsterTemplate monsterTemplate() {
+    return monsterKind.equals("orc")
+        ? com.mir2.world.MonsterTemplate.orc()
+        : com.mir2.world.MonsterTemplate.chicken();
   }
 
   public LegacyGateHandler.Config gateConfig() {

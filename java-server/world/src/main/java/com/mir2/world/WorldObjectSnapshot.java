@@ -11,11 +11,24 @@ public record WorldObjectSnapshot(
     Position position,
     Direction direction,
     int feature,
-    int status) {
+    int status,
+    Ability ability) {
 
   public WorldObjectSnapshot(
       int id, String name, WorldObjectType type, String mapId, Position position, Direction direction) {
-    this(id, name, type, mapId, position, direction, 0, 0);
+    this(id, name, type, mapId, position, direction, 0, 0, Ability.defaultPlayer());
+  }
+
+  public WorldObjectSnapshot(
+      int id,
+      String name,
+      WorldObjectType type,
+      String mapId,
+      Position position,
+      Direction direction,
+      int feature,
+      int status) {
+    this(id, name, type, mapId, position, direction, feature, status, Ability.defaultPlayer());
   }
 
   public WorldObjectSnapshot {
@@ -25,5 +38,10 @@ public record WorldObjectSnapshot(
     if (mapId == null || mapId.isBlank()) throw new IllegalArgumentException("map id must not be blank");
     Objects.requireNonNull(position, "position");
     Objects.requireNonNull(direction, "direction");
+    Objects.requireNonNull(ability, "ability");
+  }
+
+  public boolean alive() {
+    return ability.alive();
   }
 }

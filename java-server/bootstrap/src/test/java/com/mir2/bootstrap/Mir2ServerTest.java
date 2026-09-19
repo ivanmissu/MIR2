@@ -19,7 +19,7 @@ class Mir2ServerTest {
     Path directory = Files.createTempDirectory("mir2-bootstrap-");
     Path database = directory.resolve("server.db");
     ServerConfig config = new ServerConfig(database, new GatePorts(login, select, game),
-        "127.0.0.1", "MIR2", null, "0", 10, 10, 10, "hero", "pw");
+        "127.0.0.1", "MIR2", null, "0", 10, 10, 10, 2, "chicken", "hero", "pw");
 
     try (Mir2Server server = new Mir2Server(config)) {
       server.start();

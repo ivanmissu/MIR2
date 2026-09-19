@@ -44,6 +44,11 @@ Java 服务端。
 - W03 世界核心：50ms 单逻辑线程 Tick、命令队列、对象进入/离开与确定性生命周期
 - Delphi `.map` 文件加载（52 字节头、12 字节列优先单元）及背景/前景碰撞标志
 - 八方向走路/跑步、动态占位碰撞、12 格方形视野与出现/移动/消失事件广播
+- 7200 游戏网关已接通世界：RunLogin 首包认证、`CM_TURN/WALK/RUN` 进队列、`SM_NEWMAP/LOGON/MAPDESCRIPTION` 进图
+- **近战战斗闭环**：`CM_HIT / CM_HEAVYHIT / CM_BIGHIT` 攻击判定（共用 Delphi 的 CM_HIT 动作间隔）、
+  `SM_STRUCK / SM_HEALTHSPELLCHANGED / SM_DEATH / SM_WINEXP` 广播
+- **近战怪物 AI**：鸡与半兽人两种模板，视野内索敌、追击、按自身间隔攻击、死亡后尸体定时清理
+- **掉落与拾取**：按 Delphi「N 分之一」概率的掉落表、`SM_ITEMSHOW / SM_ITEMHIDE`、`CM_PICKUP` 与 `SM_ADDITEM`
 - 可执行 shaded JAR 与 Docker Compose 打包
 
 ## 环境要求
@@ -102,6 +107,8 @@ java -jar java-server/bootstrap/target/mir2-server.jar
 | `MIR2_MAP_ID` | `0` | 首张地图 ID（对应客户端地图文件名） |
 | `MIR2_SPAWN_X` / `MIR2_SPAWN_Y` | `10` / `10` | GAME 首次进图坐标；占用时自动选择邻近可行走格 |
 | `MIR2_WORLD_TICK_MS` | `50` | 世界逻辑 Tick 间隔（毫秒） |
+| `MIR2_MONSTER_COUNT` | `0` | 启动时在出生点四周生成的怪物数量（0 表示不生成） |
+| `MIR2_MONSTER_KIND` | `chicken` | 怪物种类：`chicken`（鸡）或 `orc`（半兽人） |
 | `MIR2_BOOTSTRAP_USER` | 未设置 | 可选：初始测试账号名 |
 | `MIR2_BOOTSTRAP_PASSWORD` | 未设置 | 与初始账号配套的密码 |
 
@@ -157,9 +164,10 @@ docker compose -f java-server/compose.yml up --build
 
 - 编译与启动冒烟测试**尚不能**证明与真实 `mir2.exe` 完全兼容，真实客户端联调验证仍在
   进行中；
-- W03 的世界内核、地图碰撞和移动视野事件已经实现，但 **7200 游戏网关尚未把真实客户端
-  的 RunLogin / CM_WALK / CM_RUN 消息接入世界命令队列**，因此客户端当前仍不能实际进图行走；
-- 战斗、怪物 AI、掉落、拾取和背包尚未实现；
+- 7200 游戏网关已把 RunLogin、移动与战斗消息接入世界命令队列，并通过双会话 Socket 集成测试；
+  但**尚未与真实 `mir2.exe` 对拍**，字段与消息顺序仍属待验证假设；
+- 近战战斗、单种怪物 AI、掉落与拾取已实现；技能/魔法、远程攻击、57 种怪物、背包与装备体系、
+  以及 HP/经验/背包的落库持久化（重登即丢失）仍未实现；
 - DES 封装已按 Delphi 语义实现，但仍需 Delphi 端密文金样本做最终核对。
 
 ## 参与迁移
