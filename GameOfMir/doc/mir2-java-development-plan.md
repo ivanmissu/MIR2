@@ -22,7 +22,7 @@
 | ✅ 完成 | 可启动交付基座 | 增加 Main 入口、环境变量配置、首次测试账号、优雅停机、可执行 fat JAR、Dockerfile 与 Compose；JAR 三端口启动冒烟和镜像构建已进入 CI | `java-server/bootstrap`、`Dockerfile`、`compose.yml`；Actions run `35329322893` |
 | 🟡 部分完成 | W02：接入骨架（7000/7100/7200） | 已完成三监听器、`#序号+消息头+消息体!` 分帧、连接状态、整数认证码桥接和登录/选服/角色查询建删选字段映射；GAME 首包已按 `**账号/角色/认证码/版本/登录码` 独立解析，并校验认证码与已选角色；Netty 替换、限速及真客户端验证未完成 | `java-server/gate`；`LegacyGateHandlerTest`、`WireMessageCodecTest` |
 | 🟡 部分完成 | W03：tick、地图、移动广播 | 单 owner Tick、地图/碰撞、12 格视野、7200 RunLogin、GAME 会话进出、`SM_NEWMAP/LOGON/MAPDESCRIPTION`、`TCharDesc`、移动确认与观察者广播均已接通 | `GameProtocolAdapterTest`、`GameSessionIntegrationTest`；模拟双会话闭环已通过，尚缺真客户端对拍 |
-| ✅ 完成（本地闭环） | W03：近战怪、击杀、掉落、拾取与重登存档 | 近战攻击、怪物 AI、经验、掉落/拾取已实现；HP/MP/等级/经验与 46 格背包由 SQLite 原子保存并进图恢复，角色外观字段已落库。真实客户端 `TClientItem` 与对拍仍归并行兼容任务 | `WorldCombatTest`、`GameCombatProtocolTest`、`WorldPersistenceIntegrationTest`；CI run `35426815961` |
+| ✅ 完成（本地闭环） | W03：近战怪、击杀、掉落、拾取与重登存档 | 近战攻击、怪物 AI、经验、掉落/拾取已实现；HP/MP/等级/经验与 46 格背包由 SQLite 原子保存并进图恢复，角色外观字段已落库。真实客户端 `TClientItem` 与对拍仍归并行兼容任务 | `WorldCombatTest`、`GameCombatProtocolTest`、`WorldPersistenceIntegrationTest`；CI run `35427011522` |
 
 ### 当前下一步（Next Session）
 
@@ -53,7 +53,7 @@
 - `SqliteStoreTest`：覆盖外观、HP/MP/等级/经验、背包重开恢复，角色删除级联，以及 W02 旧表自动升级/状态回填。
 - `WorldPersistenceIntegrationTest`：确定性执行「杀鸡得经验 → 拾取鸡肉 → 半兽人造成 HP 损失 → 关闭并重开 Store/World → 同 UUID 进图」，逐项断言 Ability 与背包不丢。
 - `GameSessionIntegrationTest`：从 `CM_NEWCHR hair/sex` 一直断言到 `SM_LOGON` 的 packed Feature。
-- GitHub Actions run `35426815961` 全绿：Maven/JDK 21 全量测试、fat JAR 上传与三端口冒烟、Compose 校验、Docker 镜像构建。
+- GitHub Actions run `35427011522` 全绿：Maven/JDK 21 全量测试、fat JAR 上传与三端口冒烟、Compose 校验、Docker 镜像构建。
 
 #### 下一步边界
 
@@ -526,7 +526,7 @@ staging 从 P1 起常驻（对拍需要）；prod 在 W28 预备。**所有环�
 | `v1.0.7` | `2026-09-19` | 完成移动协议适配器：`CM_TURN/WALK/RUN` 入站转换、`+GOOD/+FAIL` 动作确认及 `SM_TURN/WALK/RUN/DISAPPEAR` 观察者事件；下一步为进图消息与 GAME 会话生命周期接线 |
 | `v1.0.8` | `2026-09-19` | 完成 GAME→World 生命周期接线、最小进图消息、`TCharDesc/TMessageBodyWL`、可配置出生点及双 socket 进入/出现/走跑/离视野/断线集成测试；下一步为真客户端对拍 |
 | `v1.0.9` | `2026-09-19` | W03 战斗切片交接：近战攻击与动作间隔、伤害/击退消息、单种近战怪 AI、掉落表与拾取、经验结算全部落地；新增 `MIR2_MONSTER_COUNT/KIND` 配置与 `WorldCombatTest`、`GameCombatProtocolTest`；下一步固定为战斗与背包状态落库 |
-| `v1.0.10` | `2026-09-19` | 完成 Ability/46 格背包 SQLite 事务存档、进图恢复、W02 schema 原位升级及角色性别/发型/装备外观 Feature；新增跨 Store/World 重启闭环测试，CI run `35426815961` 全绿；下一步为完整 `TClientItem/SM_BAGITEMS` 与真客户端对拍 |
+| `v1.0.10` | `2026-09-19` | 完成 Ability/46 格背包 SQLite 事务存档、进图恢复、W02 schema 原位升级及角色性别/发型/装备外观 Feature；新增跨 Store/World 重启闭环测试，CI run `35427011522` 全绿；下一步为完整 `TClientItem/SM_BAGITEMS` 与真客户端对拍 |
 
 > [!WARNING]
 > **合规声明：**本计划仅用于技术学习与私密社区研究。传奇 IP 与美术资源版权归盛趣游戏 / Wemade 所有； 禁止商业运营、公开拉新与客户端资源分发。上线运营前请再次确认法律边界（详见评估报告第 09 节 R8）。
