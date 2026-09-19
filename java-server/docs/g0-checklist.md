@@ -9,8 +9,8 @@ This checklist deliberately distinguishes local deterministic checks from claims
 | 6-bit codec | Partial | OLD mode round trips; verify against captured `EDcode.pas` output |
 | GBK byte limits | Pass | boundary unit test, including incomplete multibyte prefix |
 | Real client login | Partial | socket framing and login/selection handler implemented; validate against mir2.exe and captured traffic |
-| Walk/kill/pickup/relogin | Partial | world tick/map/collision/visibility, 7200 adapter, melee combat, one monster AI, drop and pickup are unit and integration tested; relog persistence of HP/exp/bag and real-client validation remain |
+| Walk/kill/pickup/relogin | Partial | Local tests cover world/7200 combat and SQLite + World restart restoration of HP/MP/level/experience/bag; full TClientItem/SM_BAGITEMS and real mir2.exe validation remain |
 | 50 bots × 1 hour | Not started | implement bot harness |
-| Linux/JDK build | Pass | Maven verify, executable JAR three-port startup smoke test, and container image build passed on GitHub Actions run `35329322893` |
+| Linux/JDK build | Pass | Maven verify, executable JAR three-port startup smoke test, and container image build passed on GitHub Actions run `35426815961` |
 
 No G0 decision should be marked Go until the partial and not-started rows have external Delphi/client evidence.

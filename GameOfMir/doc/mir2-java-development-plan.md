@@ -1,12 +1,12 @@
 # MIR2 服务端 Java 化迁移 开发计划书
 
-*Development Plan · v1.0.8 · 2026-09-19*
+*Development Plan · v1.0.10 · 2026-09-19*
 
 **30 周日历（约 7 个月）** · **2 人团队 · 240 人日** · **6 道决策门 G0–G5** · **上线目标：2027 年 5 月** · **全程 Linux/Docker 交付**
 
 本计划以《可行性评估报告》的 GO 结论为基线，将 8–12 人月的迁移工程拆解为 **1 个 PoC + 5 个阶段（P0–P4）+ 6 道决策门（G0–G5）**，覆盖团队分工、周级任务分解、工程规范、 CI/CD、发布回滚与预算，可直接作为项目执行与跟踪的依据。
 
-> **执行状态（截至 2026-09-19）**：S0/W01 协议基座已完成；W02 账号、角色、SQLite 持久化已完成；Gate 接入与会话路由已完成初版；可执行 JAR、环境配置、优雅停机及 Docker Compose 已交付。W03 的 **Tick、地图、碰撞、对象生命周期、12 格视野、RunLogin、移动协议及 GAME→World 接线** 已形成自动化闭环。本次会话进一步完成 **W03 战斗切片**：近战攻击（`CM_HIT/HEAVYHIT/BIGHIT`）、伤害与 `SM_STRUCK/SM_HEALTHSPELLCHANGED/SM_DEATH/SM_WINEXP`、单种近战怪物 AI（索敌/追击/间隔攻击/尸体清理）、掉落表与 `SM_ITEMSHOW/SM_ITEMHIDE`、`CM_PICKUP` 拾取。下一步是**战斗与背包状态落库**以及真实 `mir2.exe` 对拍。
+> **执行状态（截至 2026-09-19）**：S0/W01 协议基座已完成；W02 账号、角色、SQLite 持久化已完成；Gate 接入与会话路由已完成初版；可执行 JAR、环境配置、优雅停机及 Docker Compose 已交付。W03 的 **Tick、地图、碰撞、对象生命周期、12 格视野、RunLogin、移动协议及 GAME→World 接线** 已形成自动化闭环；近战攻击、单种怪物 AI、击杀/经验、掉落/拾取也已实现。本次会话完成 **战斗与背包状态落库**：`Ability` 与 46 格背包通过 SQLite 原子保存并在进图前恢复，旧 W02 数据库可原位升级，角色性别/发型/衣服/武器外观参与 `Feature`。自动化已覆盖「打怪 → 捡装备 → 重启 Store/World → 重登不丢」。下一步是真实 `mir2.exe` 对拍，并补齐真实客户端需要的完整 `TClientItem/SM_BAGITEMS` 载荷。
 
 ## ✅ 当前执行进度（Session Handoff）
 
@@ -22,21 +22,44 @@
 | ✅ 完成 | 可启动交付基座 | 增加 Main 入口、环境变量配置、首次测试账号、优雅停机、可执行 fat JAR、Dockerfile 与 Compose；JAR 三端口启动冒烟和镜像构建已进入 CI | `java-server/bootstrap`、`Dockerfile`、`compose.yml`；Actions run `35329322893` |
 | 🟡 部分完成 | W02：接入骨架（7000/7100/7200） | 已完成三监听器、`#序号+消息头+消息体!` 分帧、连接状态、整数认证码桥接和登录/选服/角色查询建删选字段映射；GAME 首包已按 `**账号/角色/认证码/版本/登录码` 独立解析，并校验认证码与已选角色；Netty 替换、限速及真客户端验证未完成 | `java-server/gate`；`LegacyGateHandlerTest`、`WireMessageCodecTest` |
 | 🟡 部分完成 | W03：tick、地图、移动广播 | 单 owner Tick、地图/碰撞、12 格视野、7200 RunLogin、GAME 会话进出、`SM_NEWMAP/LOGON/MAPDESCRIPTION`、`TCharDesc`、移动确认与观察者广播均已接通 | `GameProtocolAdapterTest`、`GameSessionIntegrationTest`；模拟双会话闭环已通过，尚缺真客户端对拍 |
-| 🟡 部分完成 | W03：近战怪、击杀、掉落、拾取 | 近战攻击判定与动作间隔、怪物模板/索敌/追击/攻击/尸体清理、掉落表、地面物品与拾取、经验结算均已实现并有确定性单测与网关协议测试；HP/经验/背包尚未落库，重登即丢失 | `WorldCombatTest`、`GameCombatProtocolTest` |
+| ✅ 完成（本地闭环） | W03：近战怪、击杀、掉落、拾取与重登存档 | 近战攻击、怪物 AI、经验、掉落/拾取已实现；HP/MP/等级/经验与 46 格背包由 SQLite 原子保存并进图恢复，角色外观字段已落库。真实客户端 `TClientItem` 与对拍仍归并行兼容任务 | `WorldCombatTest`、`GameCombatProtocolTest`、`WorldPersistenceIntegrationTest`；CI run `35426815961` |
 
 ### 当前下一步（Next Session）
 
-> **下次开发起点：**从下面第 6 项开始。第 1–3 项已于 2026-09-19 完成；第 5 项（近战怪 / 击杀 / 掉落 / 拾取）已于本次会话完成，只剩存档未做。第 4 项（真客户端对拍）需要 Windows 环境与抓包，属于并行任务。
+> **下次开发起点：**第 1–3、5–6 项已完成。主线转到第 4/7 项的真实客户端对拍；在验证真客户端拾取与重登背包前，应先实现最小物品目录与完整 `TClientItem`、`CM_QUERYBAGITEMS → SM_BAGITEMS` 载荷。该工作不得扩展成完整装备/交易系统。
 
 1. ✅ **接通 7200 首包认证：**已按 `Client/ClMain.pas:SendRunLogin` 的 `**账号/角色/认证码/客户端版本/RUNLOGINCODE` 格式增加独立 headerless 首包解析；`GateSessionRegistry` 会在 `CM_SELCHR` 时记录角色，并在 GAME 登录时联合校验认证码、账号和已选角色。非法首包返回 `SM_STARTFAIL` 并关闭连接。
 2. ✅ **实现移动协议适配器：**已将 `CM_TURN / CM_WALK / CM_RUN` 的 `Recog` 打包坐标与 `Tag` 方向转换为 `WorldEngine.turn/move`；成功/拒绝事件转换为 `+GOOD/<tick>` / `+FAIL/<tick>`，观察者事件转换为 `SM_WALK / SM_RUN / SM_TURN / SM_DISAPPEAR`。
 3. ✅ **补齐进图最小消息并接线会话：**`MapEntered` 已转换为 `SM_NEWMAP + SM_LOGON + SM_MAPDESCRIPTION`，实现 8 字节小端 `TCharDesc` 与 16 字节 `TMessageBodyWL`；认证 GAME socket 会加入/移出 `WorldEngine`，支持可配置出生点和邻近空位选择。双模拟会话已覆盖“进入→互相出现→走/跑→离开视野→断线清理”。
 4. **真实客户端对拍：**用真 `mir2.exe` 和 Delphi 抓包确认 RunLogin、`+GOOD/+FAIL`、`SM_*` 字段及应答顺序，重点核对日夜亮度、裸装 Feature、角色名/颜色附加体和完整 `SM_LOGON` 后续序列；差异补进 golden，同时保持 Maven/JDK 21、fat JAR 冒烟和 Docker 构建全绿。
 5. ✅ **近战战斗切片：**已实现 `Ability`（HP/MP/DC/AC/等级/经验）、`AttackKind`、单格正面攻击与 Delphi 共用的 `CM_HIT` 动作间隔、伤害 = 攻击随机值 − 防御随机值；`MonsterTemplate`（鸡 / 半兽人）带视野索敌、追击、独立攻击间隔与尸体超时清理；`ItemDrop` / `GroundItem` 实现「N 分之一」掉落、地面物品视野同步与 `CM_PICKUP` 拾取；协议侧新增 `SM_HIT/HEAVYHIT/BIGHIT`、`SM_STRUCK`（TMessageBodyWL）、`SM_HEALTHSPELLCHANGED`、`SM_DEATH`（TCharDesc）、`SM_WINEXP`、`SM_ITEMSHOW/ITEMHIDE/ADDITEM`。
-6. **战斗与背包状态落库（下一步起点）：**把 `Ability`（HP/MP/经验/等级）与拾取到的背包条目写入 SQLite，进图时恢复，实现「打怪 → 捡装备 → 重登不丢」的 G0 判据；同时补角色表的性别/发型/装备字段，让 `Feature` 不再固定为裸装 0。
+6. ✅ **战斗与背包状态落库：**新增 `PlayerStateStore` 端口及 SQLite 实现，将完整 `Ability` 与最多 46 个 `BackpackItem` 在伤害、经验、拾取和离场时保存；进图在 `MapEntered` 前按角色 UUID 恢复。`character_state` 与 `character_inventory` 事务更新，角色删除级联清理；旧 W02 `characters` 表自动增加性别/发型/衣服/武器外观列并回填默认状态。`CM_NEWCHR` 的 hair/sex 已贯通到 `SM_LOGON Feature`。`WorldPersistenceIntegrationTest` 覆盖 Store/World 双重启后的 HP、经验、背包恢复。
 7. **真实客户端对拍（可并行）：**用真 `mir2.exe` 和 Delphi 抓包确认 RunLogin、`+GOOD/+FAIL`、进图与战斗 `SM_*` 的字段及应答顺序，差异补进 golden。
 8. 接入层的连接数限制、消息大小/频率限制、空闲超时和 Netty 替换仍需完成，但不阻塞上述 world 协议闭环的 PoC 顺序。
 9. 57 种怪物、技能/魔法、远程与群攻仍不得提前扩展，等存档闭环与对拍完成后再按 P2 计划推进。
+
+### W03 存档闭环交接明细（2026-09-19）
+
+#### 已落地代码
+
+- `world/PlayerStateStore` 是 world→持久化端口；`PlayerState` 以角色 UUID 绑定完整 `Ability` 与有序 `BackpackItem`，背包上限固定为 Delphi `MAXBAGITEM=46`。无 JDBC 的 world 单测继续使用 transient no-op 实现。
+- `persistence/SqliteStore` 新增 `character_state` 与 `character_inventory`；能力和完整背包在同一事务中 upsert/替换，角色删除通过外键级联。状态保存会同步 `characters.level`，保证选人界面的等级不滞后。
+- 旧 W02 数据库启动时原位迁移：`characters` 自动增加 `gender/hair/dress_shape/weapon_shape`，既有角色回填默认 `Ability`，无需删库。
+- `WorldEngine` 以角色 UUID 进图，在 `MapEntered` 前恢复状态；玩家受伤、获得经验、拾取和离场均触发保存。拾取先落库再移除地面物品，保存失败会回滚内存背包且不会吞掉掉落。
+- `Character.feature()` 复刻 `MakeHumanFeature(0, dress*2+gender, weapon*2+gender, hair*2+gender)`；`CM_NEWCHR` 的 hair/sex 已进入角色表、选人列表和 GAME 会话，最终用于 `SM_LOGON/TCharDesc`。
+
+#### 验收证据
+
+- `SqliteStoreTest`：覆盖外观、HP/MP/等级/经验、背包重开恢复，角色删除级联，以及 W02 旧表自动升级/状态回填。
+- `WorldPersistenceIntegrationTest`：确定性执行「杀鸡得经验 → 拾取鸡肉 → 半兽人造成 HP 损失 → 关闭并重开 Store/World → 同 UUID 进图」，逐项断言 Ability 与背包不丢。
+- `GameSessionIntegrationTest`：从 `CM_NEWCHR hair/sex` 一直断言到 `SM_LOGON` 的 packed Feature。
+- GitHub Actions run `35426815961` 全绿：Maven/JDK 21 全量测试、fat JAR 上传与三端口冒烟、Compose 校验、Docker 镜像构建。
+
+#### 下一步边界
+
+- 当前持久化条目只有名称和 `Looks`；下一步先做最小物品目录、稳定 `MakeIndex`、耐久字段、68 字节 `TClientItem` 编码以及 `CM_QUERYBAGITEMS → SM_BAGITEMS`，随后才能用真客户端验收重登背包。
+- SQLite 当前按每次战斗状态变化同步写入，满足 PoC 一致性但不代表最终吞吐方案；P2 压测后再决定脏标记/周期批量保存，不得在 G0 对拍前提前复杂化。
+- 角色表已有衣服/武器 shape，但尚无穿脱命令、装备槽和属性重算；这些属于后续物品/装备切片。
 
 ### W03 战斗切片交接明细（2026-09-19）
 
@@ -58,7 +81,7 @@
 
 #### 明确未实现 / 注意事项
 
-- **战斗状态不落库**：HP、MP、经验、等级与拾取到的背包条目都只在内存中，断线重连后会重置为 `Ability.defaultPlayer()`，因此 G0 的「重登不丢档」仍未达成。
+- **完整背包线上载荷仍未实现**：服务端已持久化并恢复背包，但 `BackpackItem` 暂只有名称与 `Looks`；缺少物品数据库、`MakeIndex`、耐久及 68 字节 `TClientItem`，所以真客户端的 `SM_ADDITEM/SM_BAGITEMS` 仍不能视为完成。
 - 伤害公式是 Delphi 基础攻防区间的简化版，未包含幸运/诅咒、命中闪避、护身与麻痹等修正；等级提升、`SM_LEVELUP` 与属性成长也未实现。
 - 玩家死亡后仅广播 `SM_DEATH` 并禁止移动/攻击，尚无复活、掉落惩罚与 `SM_ALIVE`。
 - 掉落只有物品名与 `Looks`，没有完整 `TClientItem`（60 字节 `TStdItem` + 耐久），因此 `SM_ADDITEM` 目前只带名字，接入真实客户端前必须补物品数据库。
@@ -87,8 +110,8 @@
 
 - 7200 GAME 已接入 `WorldEngine` 并通过模拟 socket 验证进图和移动闭环；尚未获得真客户端抓包，因此亮度、外观、消息顺序等字段仍必须视为待对拍假设。
 - 仓库没有随附可加载的 `.map` 资源，运行默认使用空白 PoC 地图；真实地图需通过 `MIR2_MAP_FILE` 指定。出生点由 `MIR2_SPAWN_X/Y` 配置，占用时选择邻近空位。
-- `TCharDesc` 和 `TMessageBodyWL` 的结构及字节序已实现；当前角色模型尚未持久化性别、发型和装备，因此生产接线暂发裸装 Feature/零 Status，后续需随角色与物品域补全。
-- 动作时间间隔、防加速、门/传送点、怪物、战斗、经验、物品、背包和世界存档均未实现。
+- `TCharDesc` 和 `TMessageBodyWL` 的结构及字节序已实现；角色性别、发型和衣服/武器外观现已持久化并生成 `Feature`。装备穿脱与状态效果未实现，因此 `Status` 仍为零。
+- 动作间隔、基础近战、怪物、经验、掉落、背包及世界存档已实现；防加速细化、门/传送点、完整物品/装备和技能仍未实现。
 - 当前跑步会严格检查两格路径上的地形和动态占位；与 Delphi `CanWalkEx/MoveToMovingObject` 的特殊放行语义仍需真实 golden 对拍，发现差异时先记录兼容 quirks，不要直接“优化”。
 
 ### 未完成清单（明确边界）
@@ -98,7 +121,7 @@
 - ⬜ Delphi 实际 traffic recorder 与 20 组字节级 golden 对拍
 - ⬜ 真 `mir2.exe` 登录、选区、角色列表、建删角色、进入世界
 - 🟡 Tick/地图/碰撞/视野、7200 认证、进图与移动 socket 闭环已完成并有双会话集成测试；真 `mir2.exe` 广播验证未完成
-- 🟡 近战怪、击杀、掉落、拾取已实现并有确定性测试；**重登不丢档（HP/经验/背包落库）未实现**
+- ✅ 近战怪、击杀、掉落、拾取与 **HP/MP/等级/经验/背包重登存档** 已有确定性及 SQLite 重启集成测试；真客户端完整物品载荷与对拍仍未完成
 - ⬜ 50 机器人 × 1 小时稳定性验证
 - ⬜ G0 决策门评审与 v0.1 基线 tag
 
@@ -113,13 +136,13 @@
 
 #### P2–P4
 
-- 🟡 地图碰撞、玩家对象生命周期和 12 格方形视野事件内核已完成；门/传送、非玩家对象、协议实发、战斗和经验未完成
-- ⬜ 物品、背包、装备、存档周期保存
+- 🟡 地图碰撞、玩家/近战怪生命周期、12 格视野、基础战斗/经验及协议实发已完成；门/传送和其他非玩家对象未完成
+- 🟡 掉落、拾取、46 格背包及状态存档已完成；完整物品数据库、`TClientItem`、装备穿脱与周期批量存档未完成
 - ⬜ 57 种怪物 AI、59 个技能、NPC 脚本
 - ⬜ 交易、组队、PK、红名、行会、攻城
 - ⬜ 500 机器人 × 4 小时压测、灰度、Docker 双架构、上线回滚演练
 
-> **当前已完成范围包括协议/账号/角色/SQLite/接入层 PoC 以及独立 world 内核；7200 客户端协议尚未与 world 接通，以上未完成项不得视为已支持。**
+> **当前已完成范围包括协议/账号/角色/SQLite、7200→World 的移动/近战/拾取闭环及重登存档；尚未经过真实 `mir2.exe` 对拍，完整物品与装备系统等未完成项不得视为已支持。**
 
 ## 📑 目录
 
@@ -149,7 +172,7 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 计划版本 | v1.0.8（2026-09-19），基线：可行性评估报告 v1.1 |
+| 计划版本 | v1.0.10（2026-09-19），基线：可行性评估报告 v1.1 |
 | 交付物 | `mir2-server`：单 JVM 模块化单体（Netty + 单逻辑线程引擎 + SQLite + Web 控制台），Docker 镜像，旧档迁移工具，运维手册 |
 | 硬性约束 | mir2.exe 客户端**零改动**直连（12B 帧 / 6-bit 编码 / DES / GBK 逐字节兼容）；部署平台 Linux；非商业用途 |
 | 总体节奏 | 准备期 3 周（培训/环境）→ PoC 3 周 → P0–P4 共 27 周 → 上线 2027-05（目标，整体可平移） |
@@ -503,13 +526,14 @@ staging 从 P1 起常驻（对拍需要）；prod 在 W28 预备。**所有环�
 | `v1.0.7` | `2026-09-19` | 完成移动协议适配器：`CM_TURN/WALK/RUN` 入站转换、`+GOOD/+FAIL` 动作确认及 `SM_TURN/WALK/RUN/DISAPPEAR` 观察者事件；下一步为进图消息与 GAME 会话生命周期接线 |
 | `v1.0.8` | `2026-09-19` | 完成 GAME→World 生命周期接线、最小进图消息、`TCharDesc/TMessageBodyWL`、可配置出生点及双 socket 进入/出现/走跑/离视野/断线集成测试；下一步为真客户端对拍 |
 | `v1.0.9` | `2026-09-19` | W03 战斗切片交接：近战攻击与动作间隔、伤害/击退消息、单种近战怪 AI、掉落表与拾取、经验结算全部落地；新增 `MIR2_MONSTER_COUNT/KIND` 配置与 `WorldCombatTest`、`GameCombatProtocolTest`；下一步固定为战斗与背包状态落库 |
+| `v1.0.10` | `2026-09-19` | 完成 Ability/46 格背包 SQLite 事务存档、进图恢复、W02 schema 原位升级及角色性别/发型/装备外观 Feature；新增跨 Store/World 重启闭环测试，CI run `35426815961` 全绿；下一步为完整 `TClientItem/SM_BAGITEMS` 与真客户端对拍 |
 
 > [!WARNING]
 > **合规声明：**本计划仅用于技术学习与私密社区研究。传奇 IP 与美术资源版权归盛趣游戏 / Wemade 所有； 禁止商业运营、公开拉新与客户端资源分发。上线运营前请再次确认法律边界（详见评估报告第 09 节 R8）。
 
 ---
 
-*📋 MIR2 → JAVA · DEVELOPMENT PLAN v1.0.8*
+*📋 MIR2 → JAVA · DEVELOPMENT PLAN v1.0.10*
 
 基线：ivanmissu/MIR2 · 9 程序 / 142,007 行 Pascal → 单 JVM / Linux·Docker · 兼容 mir2.exe 零改动
 

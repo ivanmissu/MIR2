@@ -19,7 +19,9 @@
 | `M2Server/ObjBase.pas:RM_STRUCK/RM_DEATH/RM_HEALTHSPELLCHANGED/RM_WINEXP` | `gate/GameProtocolAdapter` | SM_STRUCK/SM_DEATH/SM_HEALTHSPELLCHANGED/SM_WINEXP mapped with TMessageBodyWL/TCharDesc |
 | `M2Server/ObjMon*.pas` melee monster tick | `world/MonsterTemplate`, `WorldEngine.updateMonsters` | target acquisition, chase, attack intervals, corpse timeout implemented |
 | `M2Server/ObjBase.pas:DropItemDown` / `ClientPickUpItem` | `world/ItemDrop`, `GroundItem`, `WorldEngine.pickUp` | drop table, SM_ITEMSHOW/SM_ITEMHIDE, CM_PICKUP implemented |
-| `M2Server` items, bag, magic, NPC scripts, persistence of combat state | future packages | not started |
+| `M2Server/ObjBase.pas:GetFeature` / `MakeHumanFeature` | `character/Character.feature`, GAME session | gender/hair/dress/weapon appearance persisted and packed into SM_LOGON Feature |
+| `DBServer` ability/bag character record | `world/PlayerStateStore`, `persistence/SqliteStore` | Ability and ordered 46-slot backpack transactionally saved/restored; W02 SQLite migration tested |
+| `TClientItem`, `CM_QUERYBAGITEMS` / `SM_BAGITEMS`, equipment, magic, NPC scripts | next/future slices | full item payload and client bag sync are next; equipment/magic/scripts not started |
 
 ## G0 evidence status
 
@@ -31,5 +33,6 @@
 - [ ] Unmodified client login and RunLogin
 - [ ] Unmodified client movement broadcast
 - [x] One monster, kill, drop and pickup in deterministic unit/integration tests
-- [ ] Relog persistence of HP/experience/bag (still in-memory only)
+- [x] Local relog persistence of HP/MP/level/experience/bag across SQLite and World restart
+- [ ] Real-client TClientItem/SM_BAGITEMS relog validation
 - [ ] 50-bot one-hour stability run
