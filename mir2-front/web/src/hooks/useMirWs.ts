@@ -11,6 +11,10 @@ import { GameState, initialGameState, LogEntry, DamageNumber } from '../store/ga
 export function useMirWs() {
   const [state, setState] = useState<GameState>(initialGameState);
   const wsRef = useRef<WebSocket | null>(null);
+  // Commands issued before the socket finishes its handshake are queued here and
+  // flushed on 'open'. The WS handshake latency is unbounded (remote preview
+  // proxies / slow networks), so it must never be guessed with a fixed timeout.
+  const pendingCommandsRef = useRef<ClientCommand[]>([]);
 
   const addLog = useCallback((entry: Omit<LogEntry, 'id'>) => {
     setState(prev => {
@@ -26,15 +30,21 @@ export function useMirWs() {
   }, []);
 
   const sendCommand = useCallback((cmd: ClientCommand) => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify(cmd));
-    } else {
-      addLog({
-        level: 'warn',
-        message: 'WebSocket 尚未连接，无法发送指令',
-        timestamp: Date.now()
-      });
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify(cmd));
+      return;
     }
+    if (ws && ws.readyState === WebSocket.CONNECTING) {
+      // Still handshaking: queue and let onopen flush it.
+      pendingCommandsRef.current.push(cmd);
+      return;
+    }
+    addLog({
+      level: 'warn',
+      message: 'WebSocket 尚未连接，无法发送指令',
+      timestamp: Date.now()
+    });
   }, [addLog]);
 
   const handleBridgeEvent = useCallback((event: BridgeEvent) => {
@@ -346,6 +356,12 @@ export function useMirWs() {
           message: 'Bridge 网关代理连接成功！',
           timestamp: Date.now()
         });
+        // Flush any commands queued while the handshake was in flight.
+        const queued = pendingCommandsRef.current;
+        pendingCommandsRef.current = [];
+        for (const cmd of queued) {
+          ws.send(JSON.stringify(cmd));
+        }
       };
 
       ws.onmessage = (event) => {
@@ -358,6 +374,8 @@ export function useMirWs() {
       };
 
       ws.onclose = () => {
+        // Drop queued commands so they can't leak into a future session.
+        pendingCommandsRef.current = [];
         addLog({
           level: 'warn',
           message: 'Bridge 网关代理连接断开',
@@ -403,14 +421,13 @@ export function useMirWs() {
 
   // Action methods
   const login = useCallback((account: string, pass: string, host?: string, port?: number) => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+    const cmd: ClientCommand = { type: 'login', account, password: pass, targetHost: host, targetPort: port };
+    if (!wsRef.current || (wsRef.current.readyState !== WebSocket.OPEN && wsRef.current.readyState !== WebSocket.CONNECTING)) {
+      // Queue first, then connect: onopen flushes it regardless of handshake duration.
+      pendingCommandsRef.current.push(cmd);
       connect();
-      // Retry after connection opens
-      setTimeout(() => {
-        sendCommand({ type: 'login', account, password: pass, targetHost: host, targetPort: port });
-      }, 500);
     } else {
-      sendCommand({ type: 'login', account, password: pass, targetHost: host, targetPort: port });
+      sendCommand(cmd);
     }
     setState(prev => ({ ...prev, phase: 'LOGGING_IN', account }));
   }, [connect, sendCommand]);
