@@ -48,8 +48,8 @@ class MapInfoLoaderTest {
   void loadmapinfoIncludesAreExpandedFromTheMapInfoSubdirectory() throws Exception {
     Path subdirectory = directory.resolve("MapInfo");
     Files.createDirectory(subdirectory);
-    Files.writeString(subdirectory.resolve("field-maps.txt",
-        "[D013\t半兽古墓一层\t0]\nD013 10 10 -> 0 20 20\n0 20 20 -> D013 5 5\n"), GBK);
+    Files.writeString(subdirectory.resolve("field-maps.txt"),
+        "[D013\t半兽古墓一层\t0]\nD013 10 10 -> 0 20 20\n0 20 20 -> D013 5 5\n", GBK);
     Path mapInfo = directory.resolve("MapInfo.txt");
     Files.writeString(mapInfo, "loadmapinfo field-maps.txt\n[0\t比奇省\t0]\n", GBK);
 
