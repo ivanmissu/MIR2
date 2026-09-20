@@ -21,7 +21,20 @@ class ServerConfigTest {
     assertEquals(50, config.worldTickMillis());
     assertEquals(0, config.monsterCount());
     assertEquals("鸡", config.monsterTemplate().name());
+    assertEquals(600, config.saveIntervalSeconds());
     assertNull(config.bootstrapUser());
+  }
+
+  @Test
+  void firstTenMonsterKindsAndSaveIntervalAreConfigurable() {
+    ServerConfig config = ServerConfig.from(Map.of(
+        "MIR2_MONSTER_KIND", "scarecrow",
+        "MIR2_SAVE_INTERVAL_SECONDS", "60"));
+    assertEquals("稻草人", config.monsterTemplate().name());
+    assertEquals(60, config.saveIntervalSeconds());
+    assertEquals("鹿", ServerConfig.from(Map.of("MIR2_MONSTER_KIND", "鹿")).monsterTemplate().name());
+    assertThrows(IllegalArgumentException.class,
+        () -> ServerConfig.from(Map.of("MIR2_SAVE_INTERVAL_SECONDS", "0")));
   }
 
   @Test

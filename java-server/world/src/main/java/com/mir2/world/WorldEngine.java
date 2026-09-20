@@ -43,7 +43,9 @@ public final class WorldEngine implements AutoCloseable {
       int maxCommandsPerTick,
       long hitIntervalMillis,
       long corpseLingerMillis,
-      long itemLingerMillis) {
+      long itemLingerMillis,
+      long regenIntervalMillis,
+      long saveIntervalMillis) {
 
     public Config {
       Objects.requireNonNull(tickInterval, "tickInterval");
@@ -54,6 +56,18 @@ public final class WorldEngine implements AutoCloseable {
       if (hitIntervalMillis < 0) throw new IllegalArgumentException("hit interval must not be negative");
       if (corpseLingerMillis < 0 || itemLingerMillis < 0)
         throw new IllegalArgumentException("linger durations must not be negative");
+      if (regenIntervalMillis < 1)
+        throw new IllegalArgumentException("regen interval must be at least one millisecond");
+      if (saveIntervalMillis < 1)
+        throw new IllegalArgumentException("save interval must be at least one millisecond");
+    }
+
+    public Config(Duration tickInterval, int viewRange, int maxCommandsPerTick,
+        long hitIntervalMillis, long corpseLingerMillis, long itemLingerMillis) {
+      // g_Config.dwRegenMonstersTime defaults to 200ms and dwSaveHumanRcdTime to 10 minutes
+      // (M2Share.pas defaults).
+      this(tickInterval, viewRange, maxCommandsPerTick, hitIntervalMillis, corpseLingerMillis,
+          itemLingerMillis, 200, 10 * 60 * 1000);
     }
 
     public Config(Duration tickInterval, int viewRange, int maxCommandsPerTick) {
@@ -72,6 +86,7 @@ public final class WorldEngine implements AutoCloseable {
   private final Map<Integer, Player> players = new HashMap<>();
   private final Map<String, Integer> playersByName = new HashMap<>();
   private final Map<Integer, Monster> monsters = new LinkedHashMap<>();
+  private final List<Spawner> spawners = new ArrayList<>();
   private final Map<Integer, GroundItem> groundItems = new LinkedHashMap<>();
   private final Map<Integer, Long> itemDropTimes = new HashMap<>();
   private final ConcurrentLinkedQueue<Pending<?>> commands = new ConcurrentLinkedQueue<>();
@@ -248,6 +263,25 @@ public final class WorldEngine implements AutoCloseable {
     return submit(() -> spawn(template, mapId, position, direction));
   }
 
+  /**
+   * Registers a self-replenishing spawn area, mirroring one {@code TMonGenInfo} row: the world
+   * keeps {@code count} monsters of the template alive inside the square around
+   * ({@code x},{@code y}), re-rolling random cells like {@code TUserEngine.RegenMonsters}, and
+   * refills losses once {@code respawnMillis} has elapsed since the previous regeneration.
+   * The initial population is materialised on the next tick.
+   */
+  public CompletableFuture<Void> addSpawner(MonsterTemplate template, String mapId,
+      MonsterSpawnDefinition definition) {
+    Objects.requireNonNull(template, "template");
+    Objects.requireNonNull(mapId, "mapId");
+    Objects.requireNonNull(definition, "definition");
+    return submit(() -> {
+      requireMap(mapId);
+      spawners.add(new Spawner(template, mapId, definition));
+      return null;
+    });
+  }
+
   public CompletableFuture<MoveResult> move(
       int playerId, Position target, Direction direction, MovementKind movement) {
     Objects.requireNonNull(target, "target");
@@ -320,8 +354,10 @@ public final class WorldEngine implements AutoCloseable {
       if (pending == null) break;
       pending.execute();
     }
+    regenSpawners();
     updateMonsters();
     expireGroundItems();
+    savePlayersPeriodically();
     tickCount.incrementAndGet();
   }
 
@@ -353,6 +389,8 @@ public final class WorldEngine implements AutoCloseable {
     List<Integer> visibleIds = visibleIds(map, position, 0);
     Player player = new Player(id, characterId, name, map, position, direction, feature, status,
         restored.ability(), restored.backpack(), sink);
+    // The enter itself just saved; the periodic pass starts counting from now.
+    player.lastSavedAt = clock.getAsLong();
     map.place(id, position);
     players.put(id, player);
     playersByName.put(name, id);
@@ -612,6 +650,88 @@ public final class WorldEngine implements AutoCloseable {
 
   // ------------------------------------------------------------ monster AI
 
+  /**
+   * One {@code TMonGenInfo} equivalent. {@code spawnedIds} mirrors the Delphi {@code CertList}:
+   * {@code GetGenMonCount} counts its non-dead members to decide how many to regenerate.
+   */
+  private static final class Spawner {
+    private final MonsterTemplate template;
+    private final String mapId;
+    private final MonsterSpawnDefinition definition;
+    private final List<Integer> spawnedIds = new ArrayList<>();
+    private long startTick;
+
+    private Spawner(MonsterTemplate template, String mapId, MonsterSpawnDefinition definition) {
+      this.template = template;
+      this.mapId = mapId;
+      this.definition = definition;
+    }
+  }
+
+  /** Delphi paces one MonGen per {@code dwRegenMonstersTime} (200ms) pass; we do the same. */
+  private long lastRegenAt = Long.MIN_VALUE / 4;
+  private int currentSpawner;
+
+  private void regenSpawners() {
+    if (spawners.isEmpty()) return;
+    long now = clock.getAsLong();
+    if (now - lastRegenAt < config.regenIntervalMillis()) return;
+    lastRegenAt = now;
+    Spawner spawner = spawners.get(currentSpawner);
+    currentSpawner = (currentSpawner + 1) % spawners.size();
+    if (spawner.startTick != 0 && now - spawner.startTick <= spawner.definition.respawnMillis()) return;
+
+    spawner.spawnedIds.removeIf(id -> {
+      Monster monster = monsters.get(id);
+      return monster == null || !monster.ability.alive();
+    });
+    int missing = spawner.definition.count() - spawner.spawnedIds.size();
+    if (missing <= 0) {
+      spawner.startTick = now;
+      return;
+    }
+    GameMap map = maps.get(spawner.mapId);
+    if (map == null) return;
+    int range = spawner.definition.range();
+    boolean regenerated = false;
+    for (int i = 0; i < missing; i++) {
+      // RegenMonsters rolls a random cell inside the square and simply skips blocked ones.
+      Position candidate = null;
+      for (int attempt = 0; attempt < 10 && candidate == null; attempt++) {
+        Position roll = new Position(
+            spawner.definition.x() - range + random.nextInt(range * 2 + 1),
+            spawner.definition.y() - range + random.nextInt(range * 2 + 1));
+        if (map.canWalk(roll)) candidate = roll;
+      }
+      if (candidate == null) continue;
+      WorldObjectSnapshot spawned = spawn(spawner.template, spawner.mapId, candidate,
+          Direction.fromCode(random.nextInt(8)));
+      spawner.spawnedIds.add(spawned.id());
+      regenerated = true;
+    }
+    if (regenerated || missing <= 0) spawner.startTick = now;
+  }
+
+  /**
+   * Periodic online save, mirroring the {@code ProcessHumans} branch that calls
+   * {@code SaveHumanRcd} once {@code dwSaveHumanRcdTime} has elapsed per player. Event-driven
+   * saves (damage, pickup, leave) already persist eagerly; this catches slow-changing state.
+   */
+  private void savePlayersPeriodically() {
+    if (players.isEmpty()) return;
+    long now = clock.getAsLong();
+    for (Player player : players.values()) {
+      if (now - player.lastSavedAt < config.saveIntervalMillis()) continue;
+      try {
+        persist(player);
+        player.lastSavedAt = now;
+      } catch (RuntimeException failure) {
+        // Never let a storage hiccup kill the tick loop; the next interval retries.
+        LOG.log(Level.WARNING, "periodic save failed for " + player.name, failure);
+      }
+    }
+  }
+
   private void updateMonsters() {
     if (monsters.isEmpty()) return;
     long now = clock.getAsLong();
@@ -623,7 +743,9 @@ public final class WorldEngine implements AutoCloseable {
       }
       Player target = acquireTarget(monster);
       if (target == null) continue;
-      if (monster.position.distanceTo(target.position) <= 1) {
+      if (monster.template.behavior() == MonsterBehavior.PASSIVE_FLEE) {
+        monsterFlee(monster, target, now);
+      } else if (monster.position.distanceTo(target.position) <= 1) {
         monsterAttack(monster, target, now);
       } else {
         monsterChase(monster, target, now);
@@ -661,6 +783,36 @@ public final class WorldEngine implements AutoCloseable {
     WorldEvent swing = new WorldEvent.ObjectAttacked(attacker, AttackKind.HIT);
     for (int viewerId : visibleIds(monster.map, monster.position, monster.id)) emit(players.get(viewerId), swing);
     applyDamage(target, monster, rollDamage(monster.ability, target.ability));
+  }
+
+  /**
+   * TChickenDeer run-away mode: walk in the direction opposite to the nearest player, falling
+   * back to the neighbouring directions when the straight line is blocked. Fleeing animals
+   * never attack.
+   */
+  private void monsterFlee(Monster monster, Player target, long now) {
+    if (now - monster.lastWalkAt < monster.template.walkIntervalMillis()) return;
+    if (monster.position.equals(target.position)) return;
+    Direction away = Direction.toward(target.position, monster.position);
+    Direction chosen = null;
+    Position next = null;
+    for (Direction candidateDirection : new Direction[] {away, rotate(away, 1), rotate(away, -1)}) {
+      Position candidate = monster.position.translate(candidateDirection, 1);
+      if (monster.map.canWalk(candidate)) {
+        chosen = candidateDirection;
+        next = candidate;
+        break;
+      }
+    }
+    if (chosen == null) return;
+    monster.lastWalkAt = now;
+    Position source = monster.position;
+    Set<Integer> visibleBefore = new LinkedHashSet<>(visibleIds(monster.map, source, monster.id));
+    monster.map.move(monster.id, source, next);
+    monster.position = next;
+    monster.direction = chosen;
+    Set<Integer> visibleAfter = new LinkedHashSet<>(visibleIds(monster.map, next, monster.id));
+    emitMovementToObservers(monster.snapshot(), source, MovementKind.WALK, visibleBefore, visibleAfter);
   }
 
   private void monsterChase(Monster monster, Player target, long now) {
@@ -993,6 +1145,7 @@ public final class WorldEngine implements AutoCloseable {
     private Direction direction;
     private Ability ability;
     private long lastAttackAt = Long.MIN_VALUE / 4;
+    private long lastSavedAt;
 
     private Player(
         int id,
