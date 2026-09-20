@@ -67,7 +67,15 @@ public final class GateSessionRegistry {
     });
   }
 
-  /** Validates all three values carried across LOGIN, SELECT, and GAME connections. */
+  /**
+   * Validates all three values carried across LOGIN, SELECT, and GAME connections. This does
+   * <b>not</b> consume the certification: a fast relog can leave the previous player object
+   * mid-teardown in {@link com.mir2.world.WorldEngine}, so {@code LegacyGateHandler} retries a
+   * fresh GAME connection with the very same certification until the world actually admits it
+   * (see {@code Mir2Bot#openGameSession}'s {@code ENTER_ATTEMPTS} loop). Consuming the
+   * certification is {@link #remove} instead, called once by the caller only after a retry
+   * has actually succeeded.
+   */
   public Session requireGame(String account, String characterName, int certification) {
     Session session = require(account, certification);
     if (session.selectedCharacter() == null
@@ -77,6 +85,15 @@ public final class GateSessionRegistry {
     return session;
   }
 
+  /**
+   * Drops a certification so it can never be validated again, whether by {@link #require},
+   * {@link #select}, or {@link #requireGame}. Callers invoke this once a certification has
+   * been spent on a successful GAME entry (the Delphi certification/session ticket in
+   * {@code M2Server/IdSrvClient.pas} is likewise single-admission: {@code DelSession} tears
+   * it down once its purpose is served) and also from connection-teardown paths so an
+   * authenticated-but-abandoned certification cannot be replayed later. Idempotent: removing
+   * an already-removed or unknown certification is a silent no-op.
+   */
   public void remove(int certification) {
     sessions.remove(certification);
   }

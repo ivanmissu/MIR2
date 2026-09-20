@@ -103,6 +103,13 @@ public final class LegacyGateHandler implements BiConsumer<ClientConnection, IOE
       playerId = world.engine().enterPlayerNear(
           state.selectedCharacter.id(), state.selectedCharacter.name(), world.mapId(), world.spawn(),
           world.direction(), state.selectedCharacter.feature(), 0, adapter).join().id();
+      // The certification is a one-time admission ticket, mirroring the Delphi id-server's
+      // single-use session id (M2Server/IdSrvClient.pas:DelSession). It is consumed only once
+      // the world has actually admitted the player, not merely once RunLogin authenticated:
+      // a transient world rejection (e.g. the previous session's leavePlayer race, "player is
+      // already online") must leave the certification intact so LoadtestMain/Mir2Bot's
+      // ENTER_ATTEMPTS retry can open a fresh GAME connection with the same certification.
+      sessions.remove(state.certification);
       WirePacket packet;
       while ((packet = WireMessageCodec.readPacket(connection.input())) != null) {
         adapter.handle(packet);
@@ -113,7 +120,18 @@ public final class LegacyGateHandler implements BiConsumer<ClientConnection, IOE
       }
       throw error;
     } finally {
-      if (playerId > 0) world.engine().leavePlayer(playerId);
+      // Disconnect cleanup mirrors the entry guard above: only a connection that actually
+      // entered the world (playerId > 0) may have consumed the certification, so only that
+      // case needs the idempotent safety-net removal here. A failed entry attempt (playerId
+      // stays 0, e.g. the previous session's leavePlayer race reported "player is already
+      // online") must leave the certification untouched — the retry loop in
+      // Mir2Bot#openGameSession opens a brand new GAME connection with the very same
+      // certification, and unconditionally removing it here would make every retry fail
+      // authentication instead of eventually succeeding.
+      if (playerId > 0) {
+        world.engine().leavePlayer(playerId);
+        sessions.remove(state.certification);
+      }
     }
   }
 

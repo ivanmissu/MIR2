@@ -1,12 +1,12 @@
 # MIR2 服务端 Java 化迁移 开发计划书
 
-*Development Plan · v1.0.14 · 2026-09-20*
+*Development Plan · v1.0.15 · 2026-09-20*
 
 **30 周日历（约 7 个月）** · **2 人团队 · 240 人日** · **6 道决策门 G0–G5** · **上线目标：2027 年 5 月** · **全程 Linux/Docker 交付**
 
 本计划以《可行性评估报告》的 GO 结论为基线，将 8–12 人月的迁移工程拆解为 **1 个 PoC + 5 个阶段（P0–P4）+ 6 道决策门（G0–G5）**，覆盖团队分工、周级任务分解、工程规范、 CI/CD、发布回滚与预算，可直接作为项目执行与跟踪的依据。
 
-> **执行状态（截至 2026-09-20）**：S0/W01 协议基座已完成；W02 账号、角色、SQLite 持久化已完成；Gate 接入与会话路由已完成初版；可执行 JAR、环境配置、优雅停机及 Docker Compose 已交付。W03 的 **Tick、地图、碰撞、对象生命周期、12 格视野、RunLogin、移动协议及 GAME→World 接线** 已形成自动化闭环；近战攻击、单种怪物 AI、击杀/经验、掉落/拾取与战斗/背包状态落库已完成。W04 **物品目录与背包同步**已交付：完整 `StdItem` 模板与 SQLite `std_items` 目录、复刻 `GetItemNumber` 的稳定 `MakeIndex`、耐久字段、**76 字节 `TClientItem`** 小端编解码，以及 `CM_QUERYBAGITEMS → SM_BAGITEMS`（空包静默）与 `SM_ADDITEM` 完整载荷。W05 交付 **bot 压测军团**：50 机器人 × 5 分钟在 embedded 与 remote-fatjar 双模式均 PASS（0 错误），CI 每个 PR 增跑 50×2 分钟回归。本次会话（W06）交付 **traffic recorder / replayer 骨架**（P0 三件套至此齐活）：新增 `java-server/wiretool` 模块，`record` 透明代理把 `mir2.exe ↔ 服务端（Delphi 或 Java）`双向流量按 `#…!` 帧无损落盘 `.mrec`，`replay` 把录到的客户端帧按原节奏回放到目标服务端并与录制应答**逐字节对拍**（缺失/多余/首差异偏移分类，支持易变帧跳过清单与 `--structural-only` 结构级判定），`inspect` 输出逐帧注解（ident 名反查、GBK 正文、RunLogin 识别、cert 打码）；CI 新增 wiretool 门禁（代理实捕 bot 登录 → inspect 校验 → 结构级回放 PASS / 字节级回放因认证码易变而如期 FAIL）；dist 通道现同时发布 server/loadtest/wiretool 三个 fat JAR。真实 `mir2.exe` 对拍与 Delphi 实捕 golden 仍是最大缺口，待 Windows 客户端环境——届时直接用 wiretool 录 Delphi 链路并按字节级 golden 入库。
+> **执行状态（截至 2026-09-20）**：S0/W01 协议基座已完成；W02 账号、角色、SQLite 持久化已完成；Gate 接入与会话路由已完成初版；可执行 JAR、环境配置、优雅停机及 Docker Compose 已交付。W03 的 **Tick、地图、碰撞、对象生命周期、12 格视野、RunLogin、移动协议及 GAME→World 接线** 已形成自动化闭环；近战攻击、单种怪物 AI、击杀/经验、掉落/拾取与战斗/背包状态落库已完成。W04 **物品目录与背包同步**已交付：完整 `StdItem` 模板与 SQLite `std_items` 目录、复刻 `GetItemNumber` 的稳定 `MakeIndex`、耐久字段、**76 字节 `TClientItem`** 小端编解码，以及 `CM_QUERYBAGITEMS → SM_BAGITEMS`（空包静默）与 `SM_ADDITEM` 完整载荷。W05 交付 **bot 压测军团**：50 机器人 × 5 分钟在 embedded 与 remote-fatjar 双模式均 PASS（0 错误），CI 每个 PR 增跑 50×2 分钟回归。本次会话（W06）交付 **traffic recorder / replayer 骨架**（P0 三件套至此齐活）：新增 `java-server/wiretool` 模块，`record` 透明代理把 `mir2.exe ↔ 服务端（Delphi 或 Java）`双向流量按 `#…!` 帧无损落盘 `.mrec`，`replay` 把录到的客户端帧按原节奏回放到目标服务端并与录制应答**逐字节对拍**（缺失/多余/首差异偏移分类，支持易变帧跳过清单与 `--structural-only` 结构级判定），`inspect` 输出逐帧注解（ident 名反查、GBK 正文、RunLogin 识别、cert 打码）；CI 新增 wiretool 门禁（代理实捕 bot 登录 → inspect 校验 → 结构级回放 PASS / 字节级回放因认证码易变而如期 FAIL）；dist 通道现同时发布 server/loadtest/wiretool 三个 fat JAR。本次会话（W07）交付**接入层加固第一项**：修复 W06 冒烟暴露的 `GateSessionRegistry.remove` 无调用点缺口——认证码在 GAME 登录真正进图成功后立即消费失效，GAME 连接断线（正常/异常）时同步清理 World 侧玩家对象与网关侧认证码；进图失败重试（如快速重登的 `leavePlayer` 竞态）仍可复用同一认证码直至真正进图成功，不影响 bot-swarm 既有的重登语义。真实 `mir2.exe` 对拍与 Delphi 实捕 golden 仍是最大缺口，待 Windows 客户端环境——届时直接用 wiretool 录 Delphi 链路并按字节级 golden 入库；连接数/频率限制与空闲超时仍是接入层加固的下一步候选。
 
 ## ✅ 当前执行进度（Session Handoff）
 
@@ -26,10 +26,11 @@
 | ✅ 完成（本地闭环） | W04：最小物品目录 + `TClientItem` + 背包同步 | 完整 `StdItem`（66 字节 `TStdItem` 全字段）+ `ItemDatabase` 端口 + SQLite `std_items` 启动种子；`MakeIndex` 复刻 `GetItemNumber` 并按持久化高水位接续；拾取满耐久；76 字节 `TClientItem` 编解码；`CM_QUERYBAGITEMS → SM_BAGITEMS`、`SM_ADDITEM` 完整载荷；W03 背包原位升级 | `ClientItemCodecTest`、`GameCombatProtocolTest`（新增 bag-items 用例）、`SqliteStoreTest`（目录种子 + W03 升级）、`WorldPersistenceIntegrationTest`；CI run `35433957340` 全绿（Maven 全量测试、fat JAR 三端口冒烟、Compose 校验、Docker 镜像构建） |
 | ✅ 完成 | W05：bot 压测军团（P0 三件套之一 + G0「50 bots」项） | 新增 `java-server/loadtest` Maven 模块：`BotWireClient`（复用 gate 公有 `WireMessageCodec`，`#…!` 帧 + 前缀轮转 + 12B 小端头 + 6bit 体 + GBK）、`Mir2Bot`（登录→建号→进图→走/打/捡/查包→周期重登状态机，`+GOOD/+FAIL` 应答计时）、`BotSwarm`（斜坡启动、实时监测行、PASS/FAIL 判定）、`BotMetrics/BotReport`（计数/分位延迟/错误分类 + 中文 Markdown/CSV）、`LoadtestMain`（embedded 进程内起服 + JVM 堆采样 / remote 对独立进程 / `--prepare-db` 批量建号）；8 个新单测（3 个测试类）；CI 新增 `bot-swarm` job（每 PR 跑 50×2 分钟 embedded） | `BotSwarmEmbeddedTest` 等（本地 70/70）；`java-server/docs/g0-evidence/`（50×5 分钟 embedded + remote-fatjar 双报告，均 0 错误）；`.github/workflows/java-server.yml` |
 | ✅ 完成 | W06：traffic recorder / replayer 骨架（**P0 三件套齐活**） | 新增 `java-server/wiretool` 模块（shaded `mir2-wiretool.jar`）：`record` 透明代理（字节透传 + `#…!` 帧/流外噪声分类落盘 `.mrec`，每条连接一个文件，半关闭语义保持一致）、`replay`（客户端帧按录制节奏重发，应答逐字节对拍，差异四分类 + 跳过清单 + `--structural-only`，中文 Markdown/CSV 报告，退出码即结论）、`inspect`（逐帧注解：ident 名反射反查 `ProtocolConstants`、6-bit+GBK 正文、RunLogin 识别且 cert 打码、`--verify` 统计不可解析帧）；dist 通道同步发布三 JAR | 7 个新测试类（录制编解码/分帧/代理/回放/对拍/注解/CLI）；沙箱实跑证据 `java-server/docs/g0-evidence/2026-09-20-wiretool-record-replay-smoke.md`；CI `wiretool-smoke` 门禁 |
+| ✅ 完成 | W07：接入层加固——认证码一次性消费 + 断线清理 | `GateSessionRegistry.requireGame` 保持纯校验语义（供进图重试复用同一认证码）；`LegacyGateHandler.serveGame` 在世界真正接纳玩家（`enterPlayerNear` 成功返回）后立即调用 `sessions.remove` 消费认证码，`finally` 块中做幂等兜底清理（覆盖异常路径与正常断线）；同一认证码在被消费或移除后无法再通过 `require`/`select`/`requireGame` 校验，堵住 W06 冒烟暴露的"断线后认证码终身有效、可重放进图"缺口 | `GateSessionRegistry.java`、`LegacyGateHandler.java`；新增 `GateSessionRegistryTest`（4 用例）与 `GameSessionIntegrationTest#certificationIsConsumedOnEntryAndCannotBeReplayedAfterDisconnect`；连接数/频率限制与空闲超时未覆盖，留作下一步 |
 
 ### 当前下一步（Next Session）
 
-> **下次开发起点：**第 1–3、5–7 项已完成；P0 三件套（recorder / replayer / bot-swarm）已由 W05/W06 全部交付并入了 CI 门禁。主线缺口仍是第 4/8 项的**真实客户端对拍**：需要 Windows + `mir2.exe` 环境，用真客户端验证拾取、`SM_ADDITEM` 载荷与重登 `SM_BAGITEMS`，重点核对 `TClientItem` 76 字节布局推导（`String[20]`=21 字节 → `TStdItem`=66 字节，`MakeIndex` 4 字节对齐至偏移 68）与真客户端 `sizeof(TClientItem)` 是否一致；环境就绪第一时间用 **wiretool `record`** 录下 Delphi 全链路（登录 5000/选人 5100/游戏 7200 各挂一个代理），拿到的 `.mrec` 用 `inspect --verify` 校验后入库为字节级 golden，之后 Java 侧每个协议切片以 `replay`（字节级模式）回归。在对拍环境就绪前，可并行推进：接入层加固（**认证码 GAME 登录消费即失效 + 断线清理**（W06 冒烟暴露：`GateSessionRegistry.remove` 无调用点）、连接数/频率限制、空闲超时）、bot-swarm 的加压扩展（更高并发、orc 怪物、负载混合）、Delphi `.map` 真实地图加载与 MonGen 配置解析。装备穿脱、使用物品（`CM_EAT`）、丢弃（`CM_DROPITEM`）属于后续物品切片，不得在对拍前提前扩展。
+> **下次开发起点：**第 1–3、5–7 项已完成；P0 三件套（recorder / replayer / bot-swarm）已由 W05/W06 全部交付并入了 CI 门禁；W07 已堵住认证码断线后可重放进图的缺口。主线缺口仍是第 4/8 项的**真实客户端对拍**：需要 Windows + `mir2.exe` 环境，用真客户端验证拾取、`SM_ADDITEM` 载荷与重登 `SM_BAGITEMS`，重点核对 `TClientItem` 76 字节布局推导（`String[20]`=21 字节 → `TStdItem`=66 字节，`MakeIndex` 4 字节对齐至偏移 68）与真客户端 `sizeof(TClientItem)` 是否一致；环境就绪第一时间用 **wiretool `record`** 录下 Delphi 全链路（登录 5000/选人 5100/游戏 7200 各挂一个代理），拿到的 `.mrec` 用 `inspect --verify` 校验后入库为字节级 golden，之后 Java 侧每个协议切片以 `replay`（字节级模式）回归。在对拍环境就绪前，可并行推进：接入层加固的剩余项（**连接数/频率限制、空闲超时**——参考 Delphi `RunGate/SelGate/LoginGate Main.pas` 三网关共用的 `IsConnLimited`：按 IP 统计活跃连接数与滑动窗口频率，超过 `nMaxConnOfIPaddr`/`nIPCountLimit1` 阈值拒绝或拉黑）、bot-swarm 的加压扩展（更高并发、orc 怪物、负载混合）、Delphi `.map` 真实地图加载与 MonGen 配置解析。装备穿脱、使用物品（`CM_EAT`）、丢弃（`CM_DROPITEM`）属于后续物品切片，不得在对拍前提前扩展。
 
 1. ✅ **接通 7200 首包认证：**已按 `Client/ClMain.pas:SendRunLogin` 的 `**账号/角色/认证码/客户端版本/RUNLOGINCODE` 格式增加独立 headerless 首包解析；`GateSessionRegistry` 会在 `CM_SELCHR` 时记录角色，并在 GAME 登录时联合校验认证码、账号和已选角色。非法首包返回 `SM_STARTFAIL` 并关闭连接。
 2. ✅ **实现移动协议适配器：**已将 `CM_TURN / CM_WALK / CM_RUN` 的 `Recog` 打包坐标与 `Tag` 方向转换为 `WorldEngine.turn/move`；成功/拒绝事件转换为 `+GOOD/<tick>` / `+FAIL/<tick>`，观察者事件转换为 `SM_WALK / SM_RUN / SM_TURN / SM_DISAPPEAR`。
@@ -39,7 +40,7 @@
 6. ✅ **战斗与背包状态落库：**新增 `PlayerStateStore` 端口及 SQLite 实现，将完整 `Ability` 与最多 46 个 `BackpackItem` 在伤害、经验、拾取和离场时保存；进图在 `MapEntered` 前按角色 UUID 恢复。`character_state` 与 `character_inventory` 事务更新，角色删除级联清理；旧 W02 `characters` 表自动增加性别/发型/衣服/武器外观列并回填默认状态。`CM_NEWCHR` 的 hair/sex 已贯通到 `SM_LOGON Feature`。`WorldPersistenceIntegrationTest` 覆盖 Store/World 双重启后的 HP、经验、背包恢复。
 7. ✅ **最小物品目录与背包同步（W04）：**`StdItem`/`ItemDatabase`/`StdItems` 落地最小目录（鸡肉/鹿肉/木剑/金创药(小量)）并以 SQLite `std_items` 持久化；`MakeIndex` 复刻 `GetItemNumber` 语义并从持久化高水位接续；`ClientItemCodec` 输出 76 字节小端 `TClientItem`；`CM_QUERYBAGITEMS → SM_BAGITEMS` 与 `SM_ADDITEM` 完整载荷接通；W03 背包行原位升级并在进图时重编号。物品数值仍为 TODO(verify) 占位，待真实 StdItems 数据导入。
 8. **真实客户端对拍（可并行）：**用真 `mir2.exe` 和 Delphi 抓包确认 RunLogin、`+GOOD/+FAIL`、进图与战斗 `SM_*` 的字段及应答顺序，差异补进 golden。
-9. 接入层的连接数限制、消息大小/频率限制、空闲超时和 Netty 替换仍需完成，但不阻塞上述 world 协议闭环的 PoC 顺序。
+9. ✅ **认证码 GAME 登录消费即失效 + 断线清理（W07）：**`GateSessionRegistry` 的认证码在世界真正接纳玩家后立即被 `LegacyGateHandler.serveGame` 消费，断线（正常或异常）时同步幂等清理；进图失败重试（快速重登的 `leavePlayer` 竞态）仍可复用同一认证码。接入层剩余的连接数限制、消息大小/频率限制、空闲超时和 Netty 替换仍需完成，但不阻塞上述 world 协议闭环的 PoC 顺序。
 10. 57 种怪物、技能/魔法、远程与群攻仍不得提前扩展，等存档闭环与对拍完成后再按 P2 计划推进。
 
 ### 工具链 Runbook：GitHub Actions 编译打包 → fetch 产物 → jdk4py 启动（Agent 备忘，2026-09-20 实测）
@@ -702,13 +703,14 @@ staging 从 P1 起常驻（对拍需要）；prod 在 W28 预备。**所有环�
 | `v1.0.12` | `2026-09-19` | W05 bot 压测军团：新增 `loadtest` 模块（真实线上协议全链路 bot、embedded/remote 双模式、Markdown/CSV 报告、`--prepare-db`）；50 bots × 5 分钟双模式 PASS（0 错误），CI 每 PR 增跑 50×2 分钟；G0「50 机器人」本地项完成；recorder/replayer 仍待做 |
 | `v1.0.13` | `2026-09-20` | 固化受限沙箱工具链 Runbook：新增 `.github/workflows/java-server-dist.yml`（CI 编译 fat JAR 并 force-push 到 `dist` 孤儿分支，绕开被阻断的 Actions artifact 存储/Maven Central）；本 session 实测 run `35480880626` → git fetch → PyPI `jdk4py==21.0.8.2`（Temurin 21）→ `java -jar` 三端口启动全通；记录网络可达性矩阵与单分支克隆的显式 refspec 注意点 |
 | `v1.0.14` | `2026-09-20` | W06 交付 traffic recorder / replayer 骨架，**P0 三件套齐活**：新增 `java-server/wiretool` 模块（`.mrec` v1 录制格式、字节透传代理、节奏回放 + 五分类对拍、结构级/字节级双判定、`inspect` 逐帧注解 + `--verify`、中文 Markdown/CSV 报告）；7 个新测试类；CI 新增 `wiretool-smoke` 门禁（实捕 bot 登录 → 结构级 PASS / 字节级因认证码如期 FAIL）；dist 通道同时发布 server/loadtest/wiretool 三 JAR；补写 Windows+Delphi 侧 golden 实捕操作指引 |
+| `v1.0.15` | `2026-09-20` | W07 交付接入层加固第一项：**认证码 GAME 登录消费即失效 + 断线清理**（修复 W06 冒烟暴露的 `GateSessionRegistry.remove` 无调用点缺口）——`LegacyGateHandler.serveGame` 在世界真正接纳玩家后立即消费认证码，并在 `finally` 中做幂等兜底清理；先前"进图失败即重试"的语义（如快速重登留下的 `leavePlayer` 竞态）保持不变，因为消费只发生在真正进图成功之后，重试仍可复用同一认证码。新增 `GateSessionRegistryTest`（4 个用例：非消费性校验、移除后各校验路径均失败、幂等移除、未选角色/角色不匹配拒绝）及 `GameSessionIntegrationTest#certificationIsConsumedOnEntryAndCannotBeReplayedAfterDisconnect`（端到端证明断线后旧认证码无法重放进图）；连接数/频率限制、空闲超时仍是下一步候选（参考 Delphi 三网关共用的 `IsConnLimited`） |
 
 > [!WARNING]
 > **合规声明：**本计划仅用于技术学习与私密社区研究。传奇 IP 与美术资源版权归盛趣游戏 / Wemade 所有； 禁止商业运营、公开拉新与客户端资源分发。上线运营前请再次确认法律边界（详见评估报告第 09 节 R8）。
 
 ---
 
-*📋 MIR2 → JAVA · DEVELOPMENT PLAN v1.0.14*
+*📋 MIR2 → JAVA · DEVELOPMENT PLAN v1.0.15*
 
 基线：ivanmissu/MIR2 · 9 程序 / 142,007 行 Pascal → 单 JVM / Linux·Docker · 兼容 mir2.exe 零改动
 

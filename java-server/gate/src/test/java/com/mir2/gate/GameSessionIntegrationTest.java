@@ -95,6 +95,43 @@ class GameSessionIntegrationTest {
     }
   }
 
+  @Test
+  void certificationIsConsumedOnEntryAndCannotBeReplayedAfterDisconnect() throws Exception {
+    AuthService auth = new AuthService();
+    auth.register("solo", "pw");
+    CharacterService characters = new CharacterService();
+    GateSessionRegistry sessions = new GateSessionRegistry();
+
+    try (WorldEngine world = new WorldEngine(List.of(GameMap.empty("0", "比奇", 40, 40)))) {
+      world.start();
+      LegacyGateHandler handler = new LegacyGateHandler(new SessionRouter(auth, characters), sessions,
+          LegacyGateHandler.Config.defaults(), error -> {},
+          new LegacyGateHandler.WorldConfig(world, "0", new Position(16, 16), Direction.DOWN));
+      GatePorts ports = distinctPorts();
+      try (GateServer gates = new GateServer(ports, handler)) {
+        gates.start();
+        int certification = prepareCharacter(handler, "solo", "甲");
+
+        try (Socket first = connectGame(ports.game(), "solo", "甲", certification)) {
+          readPackets(first, 3);
+        }
+        assertEquals(0, awaitOnlinePlayers(world, 0), "first session must leave the world on disconnect");
+
+        // Same certification, second GAME connection: mir2.exe never resubmits a spent
+        // certification, but a replay attempt (or a stale retry after the world already
+        // admitted the player) must now be rejected with SM_STARTFAIL instead of quietly
+        // re-entering the world (matching the RunLogin rejection path for any other invalid
+        // certification, see authenticateGameConnection's SecurityException branch).
+        try (Socket replayed = connectGame(ports.game(), "solo", "甲", certification)) {
+          WirePacket rejected = WireMessageCodec.readPacket(replayed.getInputStream());
+          assertEquals(ProtocolConstants.SM_STARTFAIL, rejected.message().ident(),
+              "a spent certification must be rejected, not silently re-admitted");
+        }
+        assertEquals(0, awaitOnlinePlayers(world, 0), "the replayed certification must not re-enter the world");
+      }
+    }
+  }
+
   private static int prepareCharacter(LegacyGateHandler handler, String account, String name) {
     LegacyGateHandler.ConnectionState loginState = new LegacyGateHandler.ConnectionState();
     handler.dispatch(GateKind.LOGIN, loginState, request(ProtocolConstants.CM_IDPASSWORD, account + "/pw"));
