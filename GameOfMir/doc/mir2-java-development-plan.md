@@ -1,6 +1,6 @@
 # MIR2 服务端 Java 化迁移 开发计划书
 
-*Development Plan · v1.0.12 · 2026-09-19*
+*Development Plan · v1.0.13 · 2026-09-20*
 
 **30 周日历（约 7 个月）** · **2 人团队 · 240 人日** · **6 道决策门 G0–G5** · **上线目标：2027 年 5 月** · **全程 Linux/Docker 交付**
 
@@ -40,6 +40,70 @@
 8. **真实客户端对拍（可并行）：**用真 `mir2.exe` 和 Delphi 抓包确认 RunLogin、`+GOOD/+FAIL`、进图与战斗 `SM_*` 的字段及应答顺序，差异补进 golden。
 9. 接入层的连接数限制、消息大小/频率限制、空闲超时和 Netty 替换仍需完成，但不阻塞上述 world 协议闭环的 PoC 顺序。
 10. 57 种怪物、技能/魔法、远程与群攻仍不得提前扩展，等存档闭环与对拍完成后再按 P2 计划推进。
+
+### 工具链 Runbook：GitHub Actions 编译打包 → fetch 产物 → jdk4py 启动（Agent 备忘，2026-09-20 实测）
+
+> **场景**：受限沙箱（Arena）内无 `java`/`mvn`，需要拿到可运行的服务端 fat JAR 并启动。**全程实测通过**（CI run `35480880626` → dist 分支 `47b1f8b` → jdk4py Temurin 21.0.8 → 三端口 17000/17100/17200 全部 UP）。
+
+#### 网络事实（决定路径选择）
+
+| 目的地 | 可达性 | 影响 |
+| --- | --- | --- |
+| `github.com`（git push/fetch、gh api、api.github.com）、PyPI、`codeload.github.com` | ✅ 可达 | CI 触发、git 拉产物、装 jdk4py 都可行 |
+| `repo.maven.apache.org`（Maven Central）、`dlcdn.apache.org` | ❌ TLS 握手即断 | **沙箱本地编译不可行**（依赖拉不下来） |
+| `productionresultssa*.blob.core.windows.net`（Actions artifact 存储）、`objects.githubusercontent.com`（Release 资产）、`raw.githubusercontent.com` | ❌ TLS 握手即断 | **`gh run download` / Release 下载在沙箱内不可用**，产物必须走 git 通道（`dist` 分支） |
+
+#### Step 1 · 让 GitHub Actions 编译打包（两条通道）
+
+- **主流水线** `.github/workflows/java-server.yml`：push/PR 触发 `mvn verify` 全量测试，并上传 artifact `mir2-server-jar`（即 `java-server/bootstrap/target/mir2-server.jar`，保留 7 天）。**仅在 artifact 存储可达的环境**（如本地开发机）可直接下载：
+  ```bash
+  gh run list --branch <branch> --limit 3            # 找到成功的 run id
+  gh run download <run-id> -n mir2-server-jar -D /tmp/mir2-dist
+  ```
+- **沙箱通道** `.github/workflows/java-server-dist.yml`（本 session 新增）：`java-server/**` 或该文件变更时 push 自动触发（`workflow_dispatch` 需文件先合入默认分支 master 才可用，功能分支上走 push 触发即可）。job 执行 `mvn -pl bootstrap -am -DskipTests package`，随后把 fat JAR + sha256 + manifest **force-push 到 `dist` 孤儿分支**（每次全量覆盖，无历史膨胀）。产物清单：`mir2-server.jar`、`mir2-server.jar.sha256`、`dist-manifest.txt`（记录源提交/分支/构建 run）。
+
+#### Step 2 · fetch 打好的包（沙箱实测命令）
+
+```bash
+cd /home/user/MIR2
+# 本仓库为单分支克隆（remote.origin.fetch 仅 master），必须用显式 refspec 才会建 origin/dist 跟踪引用
+git fetch origin +refs/heads/dist:refs/remotes/origin/dist --depth=1
+mkdir -p /tmp/mir2-dist
+git show origin/dist:mir2-server.jar        > /tmp/mir2-dist/mir2-server.jar
+git show origin/dist:mir2-server.jar.sha256 > /tmp/mir2-dist/mir2-server.jar.sha256
+git show origin/dist:dist-manifest.txt       # 校对源提交 / 构建 run
+echo "$(cat /tmp/mir2-dist/mir2-server.jar.sha256)  mir2-server.jar" \
+  | (cd /tmp/mir2-dist && sha256sum -c -)
+```
+
+#### Step 3 · PyPI 安装 jdk4py 取得 JDK 21
+
+```bash
+python3 -m venv /tmp/jdk4py-venv                    # 系统 Python 受 PEP 668 限制，直接 pip install 会被拒
+/tmp/jdk4py-venv/bin/pip install jdk4py==21.0.8.2   # Temurin 21.0.8 LTS，匹配 maven.compiler.release=21
+JAVA=$(/tmp/jdk4py-venv/bin/python -c 'import jdk4py; print(jdk4py.JAVA)')
+# jdk4py.JAVA     → <venv>/lib/python3.x/site-packages/jdk4py/java-runtime/bin/java
+# jdk4py.JAVA_HOME → 对应 JAVA_HOME（需要 javac/jar 等全套工具时用）
+```
+
+#### Step 4 · java 命令启动 + 三端口冒烟
+
+```bash
+cd /tmp/mir2-dist
+MIR2_DATABASE=/tmp/mir2-dist/mir2.db \
+MIR2_LOGIN_PORT=17000 MIR2_SELECT_PORT=17100 MIR2_GAME_PORT=17200 \
+MIR2_BOOTSTRAP_USER=smoke MIR2_BOOTSTRAP_PASSWORD=smoke-password \
+"$JAVA" -jar mir2-server.jar &
+for i in $(seq 1 30); do
+  (echo >/dev/tcp/127.0.0.1/17000) 2>/dev/null && (echo >/dev/tcp/127.0.0.1/17100) 2>/dev/null \
+    && (echo >/dev/tcp/127.0.0.1/17200) 2>/dev/null && { echo "ALL 3 PORTS UP"; break; }
+  sleep 1
+done
+```
+
+- 端口默认值 7000/7100/7200（`GatePorts.DEFAULT_*`），上例显式改为 17xxx 避免与本地其它服务冲突；启动成功日志为 `MIR2 Java server started: login=…, select=…, game=…`，并自动创建 `MIR2_BOOTSTRAP_USER` 测试账号。
+- 其余可用环境变量：`MIR2_MAP_FILE/MIR2_MAP_ID`、`MIR2_MONSTER_COUNT/MIR2_MONSTER_KIND`、`MIR2_SPAWN_X/Y`、`MIR2_WORLD_TICK_MS`、`MIR2_SERVER_NAME`、`MIR2_ADVERTISED_HOST`（见 `bootstrap/ServerConfig.java`）。
+- **长驻注意**：Arena 会话内要让服务器持续运行请用 start_process 工具；普通 bash 调用超时会连同后台子进程一起被杀（本 session 实测）。
 
 ### W05 bot 压测军团交接明细（2026-09-19）
 
@@ -599,13 +663,19 @@ staging 从 P1 起常驻（对拍需要）；prod 在 W28 预备。**所有环�
 | `v1.0.10` | `2026-09-19` | 完成 Ability/46 格背包 SQLite 事务存档、进图恢复、W02 schema 原位升级及角色性别/发型/装备外观 Feature；新增跨 Store/World 重启闭环测试，CI run `35427011522` 全绿；下一步为完整 `TClientItem/SM_BAGITEMS` 与真客户端对拍 |
 | `v1.0.11` | `2026-09-19` | W04 物品目录与背包同步：完整 `StdItem`/`ItemDatabase`/SQLite `std_items`、`GetItemNumber` 语义的稳定 `MakeIndex`、耐久字段、76 字节 `TClientItem` 小端编解码（更正旧 "68 字节" 推导）、`CM_QUERYBAGITEMS → SM_BAGITEMS` 与 `SM_ADDITEM` 完整载荷、W03 背包原位升级；下一步为真客户端对拍 |
 | `v1.0.12` | `2026-09-19` | W05 bot 压测军团：新增 `loadtest` 模块（真实线上协议全链路 bot、embedded/remote 双模式、Markdown/CSV 报告、`--prepare-db`）；50 bots × 5 分钟双模式 PASS（0 错误），CI 每 PR 增跑 50×2 分钟；G0「50 机器人」本地项完成；recorder/replayer 仍待做 |
+| `v1.0.13` | `2026-09-20` | 固化受限沙箱工具链 Runbook：新增 `.github/workflows/java-server-dist.yml`（CI 编译 fat JAR 并 force-push 到 `dist` 孤儿分支，绕开被阻断的 Actions artifact 存储/Maven Central）；本 session 实测 run `35480880626` → git fetch → PyPI `jdk4py==21.0.8.2`（Temurin 21）→ `java -jar` 三端口启动全通；记录网络可达性矩阵与单分支克隆的显式 refspec 注意点 |
 
 > [!WARNING]
 > **合规声明：**本计划仅用于技术学习与私密社区研究。传奇 IP 与美术资源版权归盛趣游戏 / Wemade 所有； 禁止商业运营、公开拉新与客户端资源分发。上线运营前请再次确认法律边界（详见评估报告第 09 节 R8）。
 
 ---
 
-*📋 MIR2 → JAVA · DEVELOPMENT PLAN v1.0.12*
+*📋 MIR2 → JAVA · DEVELOPMENT PLAN v1.0.13*
+
+基线：ivanmissu/MIR2 · 9 程序 / 142,007 行 Pascal → 单 JVM / Linux·Docker · 兼容 mir2.exe 零改动
+
+2026-09-18 编制 · 计划假设 2026-10-12 启动（可整体平移） · 前置阅读：项目分析报告 / 可行性评估报告
+A · DEVELOPMENT PLAN v1.0.12*
 
 基线：ivanmissu/MIR2 · 9 程序 / 142,007 行 Pascal → 单 JVM / Linux·Docker · 兼容 mir2.exe 零改动
 
