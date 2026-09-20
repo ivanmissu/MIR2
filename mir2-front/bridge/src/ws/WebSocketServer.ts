@@ -136,6 +136,12 @@ export class BridgeWebSocketServer {
       case 'queryBagItems':
         await session.queryBagItems();
         break;
+      case 'say':
+        await session.say(cmd.message);
+        break;
+      case 'openDoor':
+        await session.openDoor(cmd.x, cmd.y);
+        break;
       case 'disconnect':
         session.disconnect();
         break;

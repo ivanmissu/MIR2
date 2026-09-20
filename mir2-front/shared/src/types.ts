@@ -42,6 +42,8 @@ export interface WorldObjectSnapshot {
   status: number;
   hp: number;
   maxHp: number;
+  saying?: string;
+  sayingUntil?: number;
 }
 
 export interface StdItemData {
@@ -80,6 +82,14 @@ export interface GroundItem {
   y: number;
 }
 
+export interface ChatMessage {
+  speakerId: number;
+  speakerName: string;
+  message: string;
+  scope: 'normal' | 'whisper' | 'shout' | 'system';
+  timestamp: number;
+}
+
 // ----------------------------------------------------
 // WebSocket Client -> Bridge Commands
 // ----------------------------------------------------
@@ -94,6 +104,8 @@ export type ClientCommand =
   | { type: 'turn'; direction: Direction }
   | { type: 'attack'; kind?: 'HIT' | 'HEAVY_HIT' | 'BIG_HIT'; direction?: Direction }
   | { type: 'pickup' }
+  | { type: 'openDoor'; x: number; y: number }
+  | { type: 'say'; message: string }
   | { type: 'queryBagItems' }
   | { type: 'disconnect' };
 
@@ -119,9 +131,15 @@ export type BridgeEvent =
       mp: number;
       maxMp: number;
       feature: number;
+      dayBright?: number;
       visibleObjects: WorldObjectSnapshot[];
       visibleItems: GroundItem[];
     }
+  | { type: 'mapChanged'; mapId: string; mapTitle: string; x: number; y: number; dayBright?: number }
+  | { type: 'dayChanging'; gameTime: number; dayBright: number }
+  | { type: 'chat'; speakerId: number; speakerName: string; message: string; scope: 'normal' | 'whisper' | 'shout' | 'system'; timestamp: number }
+  | { type: 'doorOpened'; mapId?: string; x: number; y: number }
+  | { type: 'doorClosed'; mapId?: string; x: number; y: number }
   | { type: 'objectAppeared'; object: WorldObjectSnapshot }
   | { type: 'objectMoved'; objectId: number; x: number; y: number; direction: Direction; movement: 'walk' | 'run' }
   | { type: 'objectTurned'; objectId: number; x: number; y: number; direction: Direction }

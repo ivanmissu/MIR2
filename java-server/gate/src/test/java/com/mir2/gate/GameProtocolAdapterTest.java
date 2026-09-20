@@ -74,7 +74,7 @@ class GameProtocolAdapterTest {
       assertTrue(adapter.handle(invalidDirection));
       assertEquals(new GameOutbound.Status(false, 99), output.removeFirst());
 
-      assertFalse(adapter.handle(new WirePacket(new DefaultMessage(0, ProtocolConstants.CM_SAY, 0, 0, 0))));
+      assertFalse(adapter.handle(new WirePacket(new DefaultMessage(0, 99999, 0, 0, 0))));
       assertTrue(output.isEmpty());
     }
   }
@@ -216,6 +216,65 @@ class GameProtocolAdapterTest {
       WirePacket description = ((GameOutbound.Packet) output.removeFirst()).packet();
       assertEquals(ProtocolConstants.SM_MAPDESCRIPTION, description.message().ident());
       assertEquals("盟重省", WireMessageCodec.decodeBody(description.encodedBody()));
+      assertTrue(output.isEmpty());
+    }
+  }
+
+  @Test
+  void sayAndDayChangingTranslateToProtocolPackets() {
+    GameMap map = GameMap.empty("0", "比奇省", 40, 40);
+    try (WorldEngine world = new WorldEngine(List.of(map))) {
+      List<GameOutbound> output = new ArrayList<>();
+      GameProtocolAdapter adapter = new GameProtocolAdapter(world, output::add, () -> 88);
+      var entered = world.enterPlayer("诗人", "0", new Position(10, 10), Direction.DOWN, adapter);
+      world.tickOnce();
+      int playerId = entered.join().id();
+      output.clear();
+
+      // CM_SAY handling
+      WirePacket sayPacket = new WirePacket(
+          new DefaultMessage(0, ProtocolConstants.CM_SAY, 0, 0, 0),
+          WireMessageCodec.encodeBody("你好世界"));
+      assertTrue(adapter.handle(sayPacket));
+      world.tickOnce();
+
+      // Adapter receives ChatHeard as SM_HEAR
+      assertFalse(output.isEmpty());
+      WirePacket hear = ((GameOutbound.Packet) output.removeFirst()).packet();
+      assertEquals(ProtocolConstants.SM_HEAR, hear.message().ident());
+      assertEquals(playerId, hear.message().recog());
+      assertEquals("诗人:你好世界", WireMessageCodec.decodeBody(hear.encodedBody()));
+
+      // Direct WorldEvent -> Packet translation
+      adapter.send(new WorldEvent.Whisper(playerId, "诗人", 2, "Bob", "密语"));
+      WirePacket whisper = ((GameOutbound.Packet) output.removeFirst()).packet();
+      assertEquals(ProtocolConstants.SM_WHISPER, whisper.message().ident());
+      assertEquals(playerId, whisper.message().recog());
+      assertEquals("诗人=> 密语", WireMessageCodec.decodeBody(whisper.encodedBody()));
+
+      adapter.send(new WorldEvent.Shout(playerId, "诗人", "千里传音"));
+      WirePacket shout = ((GameOutbound.Packet) output.removeFirst()).packet();
+      assertEquals(ProtocolConstants.SM_HEAR, shout.message().ident());
+      assertEquals(playerId, shout.message().recog());
+      assertEquals("(!)诗人: 千里传音", WireMessageCodec.decodeBody(shout.encodedBody()));
+
+      adapter.send(new WorldEvent.SystemMessage(playerId, "系统通知"));
+      WirePacket sysMsg = ((GameOutbound.Packet) output.removeFirst()).packet();
+      assertEquals(ProtocolConstants.SM_SYSMESSAGE, sysMsg.message().ident());
+      assertEquals("系统通知", WireMessageCodec.decodeBody(sysMsg.encodedBody()));
+
+      adapter.send(new WorldEvent.DayChanging(playerId, 3, 1));
+      WirePacket dayChanging = ((GameOutbound.Packet) output.removeFirst()).packet();
+      assertEquals(ProtocolConstants.SM_DAYCHANGING, dayChanging.message().ident());
+      assertEquals(3, dayChanging.message().param());
+      assertEquals(1, dayChanging.message().tag());
+
+      adapter.send(new WorldEvent.DoorClosed(new Position(12, 12)));
+      WirePacket doorClosed = ((GameOutbound.Packet) output.removeFirst()).packet();
+      assertEquals(ProtocolConstants.SM_CLOSEDOOR, doorClosed.message().ident());
+      assertEquals(12, doorClosed.message().param());
+      assertEquals(12, doorClosed.message().tag());
+
       assertTrue(output.isEmpty());
     }
   }

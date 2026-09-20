@@ -139,6 +139,24 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ state, onCanvasClick }) 
         const currentHp = Math.max(0, Math.min(obj.hp, maxHp));
         const hpPercent = currentHp / maxHp;
         drawHpBar(ctx, screenX - 16, screenY - 13, 32, 4, hpPercent);
+
+        // Speech Bubble
+        if (obj.saying && obj.sayingUntil && obj.sayingUntil > Date.now()) {
+          ctx.save();
+          ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
+          ctx.strokeStyle = '#38bdf8';
+          ctx.lineWidth = 1;
+          const textWidth = ctx.measureText(obj.saying).width;
+          const pad = 6;
+          ctx.beginPath();
+          ctx.roundRect(screenX - textWidth / 2 - pad, screenY - 42, textWidth + pad * 2, 16, 4);
+          ctx.fill();
+          ctx.stroke();
+          ctx.fillStyle = '#f8fafc';
+          ctx.font = '10px sans-serif';
+          ctx.fillText(obj.saying, screenX, screenY - 34);
+          ctx.restore();
+        }
       }
 
       // 4. Render Local Player (Self)
@@ -213,17 +231,37 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ state, onCanvasClick }) 
         ctx.restore();
       }
 
-      // 7. HUD Coordinates Overlay (Top-Left)
+      // 7. Ambient Night / Day Lighting Filter
+      if (state.dayBright === 1) {
+        // Darkness / Night: radial torch light around self
+        ctx.save();
+        const radGrad = ctx.createRadialGradient(centerX, centerY, 40, centerX, centerY, 220);
+        radGrad.addColorStop(0, 'rgba(0, 5, 20, 0)');
+        radGrad.addColorStop(0.5, 'rgba(0, 5, 20, 0.45)');
+        radGrad.addColorStop(1, 'rgba(0, 5, 20, 0.85)');
+        ctx.fillStyle = radGrad;
+        ctx.fillRect(0, 0, width, height);
+        ctx.restore();
+      } else if (state.dayBright === 2) {
+        // Twilight
+        ctx.save();
+        ctx.fillStyle = 'rgba(20, 25, 45, 0.3)';
+        ctx.fillRect(0, 0, width, height);
+        ctx.restore();
+      }
+
+      // 8. HUD Coordinates Overlay (Top-Left)
       ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
-      ctx.fillRect(10, 10, 150, 48);
+      ctx.fillRect(10, 10, 160, 52);
       ctx.strokeStyle = '#334155';
       ctx.lineWidth = 1;
-      ctx.strokeRect(10, 10, 150, 48);
+      ctx.strokeRect(10, 10, 160, 52);
 
       ctx.fillStyle = '#94a3b8';
       ctx.font = '10px sans-serif';
       ctx.textAlign = 'left';
-      ctx.fillText(`地图: ${state.mapTitle || '比奇省'} [${state.mapId}]`, 18, 26);
+      const lightLabel = state.dayBright === 0 ? '明亮' : state.dayBright === 1 ? '黑暗' : '黄昏';
+      ctx.fillText(`地图: ${state.mapTitle || '比奇省'} [${state.mapId}] (${lightLabel})`, 18, 26);
       ctx.fillText(`坐标: (${state.x}, ${state.y})  朝向: ${getDirectionName(state.direction)}`, 18, 44);
 
       animationFrameId = requestAnimationFrame(render);

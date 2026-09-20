@@ -27,15 +27,17 @@ public final class GameMap {
   private final int height;
   private final byte[] collisionFlags;
   private final int[] occupants;
+  private final MapFlags flags;
   // OS_DOOR / OS_GATEOBJECT equivalents: anchors indexed by their own cell (Envir.pas GetDoor
   // only matches the exact anchor) and gate routes indexed by their source cell.
   private final Map<Position, DoorInfo> doorAnchors = new LinkedHashMap<>();
   private final List<DoorInfo> doorList = new ArrayList<>();
   private final Map<Position, TeleportRoute> gates = new HashMap<>();
 
-  private GameMap(String id, String title, int width, int height, byte[] collisionFlags) {
+  private GameMap(String id, String title, int width, int height, byte[] collisionFlags, MapFlags flags) {
     if (id == null || id.isBlank()) throw new IllegalArgumentException("map id must not be blank");
     Objects.requireNonNull(title, "title");
+    Objects.requireNonNull(flags, "flags");
     long cells = (long) width * height;
     if (width <= 1 || height <= 1 || cells > MAX_CELLS)
       throw new IllegalArgumentException("map dimensions must be greater than one and at most 1,000,000 cells");
@@ -50,31 +52,49 @@ public final class GameMap {
     this.height = height;
     this.collisionFlags = collisionFlags.clone();
     this.occupants = new int[collisionFlags.length];
+    this.flags = flags;
+  }
+
+  private GameMap(String id, String title, int width, int height, byte[] collisionFlags) {
+    this(id, title, width, height, collisionFlags, MapFlags.DEFAULT);
   }
 
   public static GameMap empty(String id, String title, int width, int height) {
-    return new GameMap(id, title, width, height, new byte[Math.multiplyExact(width, height)]);
+    return new GameMap(id, title, width, height, new byte[Math.multiplyExact(width, height)], MapFlags.DEFAULT);
+  }
+
+  public static GameMap empty(String id, String title, int width, int height, MapFlags flags) {
+    return new GameMap(id, title, width, height, new byte[Math.multiplyExact(width, height)], flags);
   }
 
   /** Convenient constructor for tests and generated PoC maps. */
   public static GameMap withBlockedCells(
       String id, String title, int width, int height, Collection<Position> blockedCells) {
-    byte[] flags = new byte[Math.multiplyExact(width, height)];
+    return withBlockedCells(id, title, width, height, blockedCells, MapFlags.DEFAULT);
+  }
+
+  public static GameMap withBlockedCells(
+      String id, String title, int width, int height, Collection<Position> blockedCells, MapFlags flags) {
+    byte[] collision = new byte[Math.multiplyExact(width, height)];
     for (Position position : blockedCells) {
       if (position.x() < 0 || position.x() >= width || position.y() < 0 || position.y() >= height)
         throw new IllegalArgumentException("blocked cell lies outside map: " + position);
-      flags[position.x() * height + position.y()] = BACKGROUND_BLOCKED;
+      collision[position.x() * height + position.y()] = BACKGROUND_BLOCKED;
     }
-    return new GameMap(id, title, width, height, flags);
+    return new GameMap(id, title, width, height, collision, flags);
   }
 
   static GameMap fromCollisionFlags(String id, String title, int width, int height, byte[] flags) {
-    return new GameMap(id, title, width, height, flags);
+    return new GameMap(id, title, width, height, flags, MapFlags.DEFAULT);
+  }
+
+  static GameMap fromCollisionFlags(String id, String title, int width, int height, byte[] flags, MapFlags mapFlags) {
+    return new GameMap(id, title, width, height, flags, mapFlags);
   }
 
   /** Copy constructor that preserves decoded doors and installed gates but not occupants. */
-  private GameMap(GameMap source, String title) {
-    this(source.id, title, source.width, source.height, source.collisionFlags);
+  private GameMap(GameMap source, String title, MapFlags flags) {
+    this(source.id, title, source.width, source.height, source.collisionFlags, flags);
     doorAnchors.putAll(source.doorAnchors);
     doorList.addAll(source.doorList);
     gates.putAll(source.gates);
@@ -91,7 +111,15 @@ public final class GameMap {
     for (int occupant : occupants) {
       if (occupant != 0) throw new IllegalStateException("cannot retitle a map with occupants on it");
     }
-    return new GameMap(this, newTitle);
+    return new GameMap(this, newTitle, this.flags);
+  }
+
+  public GameMap withFlags(MapFlags newFlags) {
+    Objects.requireNonNull(newFlags, "newFlags");
+    for (int occupant : occupants) {
+      if (occupant != 0) throw new IllegalStateException("cannot reflag a map with occupants on it");
+    }
+    return new GameMap(this, this.title, newFlags);
   }
 
   public String id() {
@@ -110,8 +138,40 @@ public final class GameMap {
     return height;
   }
 
+  public MapFlags flags() {
+    return flags;
+  }
+
+  public boolean isSafeZone() {
+    return flags.safeZone();
+  }
+
+  public boolean isDarkness() {
+    return flags.darkness();
+  }
+
+  public boolean isDayLight() {
+    return flags.dayLight();
+  }
+
+  public boolean isFightZone() {
+    return flags.isFightZone();
+  }
+
+  public boolean isNoChat() {
+    return flags.noChat();
+  }
+
+  public boolean isQuiz() {
+    return flags.quiz();
+  }
+
+  public String noReconnectMap() {
+    return flags.noReconnectMap();
+  }
+
   public MapInfo info() {
-    return new MapInfo(id, title, width, height);
+    return new MapInfo(id, title, width, height, flags);
   }
 
   public boolean contains(Position position) {
@@ -238,11 +298,16 @@ public final class GameMap {
     return position.x() * height + position.y();
   }
 
-  public record MapInfo(String id, String title, int width, int height) {
+  public record MapInfo(String id, String title, int width, int height, MapFlags flags) {
     public MapInfo {
       Objects.requireNonNull(id, "id");
       Objects.requireNonNull(title, "title");
+      Objects.requireNonNull(flags, "flags");
       if (width <= 1 || height <= 1) throw new IllegalArgumentException("invalid map dimensions");
+    }
+
+    public MapInfo(String id, String title, int width, int height) {
+      this(id, title, width, height, MapFlags.DEFAULT);
     }
   }
 }
