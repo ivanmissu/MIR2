@@ -55,7 +55,7 @@ public final class Inspector {
     if (verify) {
       out.println();
       out.println(unparseable == 0
-          ? "verify：全部帧均可按包头/RunLogin 解析 ✅"
+          ? "verify：全部帧均可按包头/RunLogin/动作应答解析 ✅"
           : "verify：" + unparseable + " 帧无法解析 ⚠");
     }
     return new Summary(recording.count(Recording.Kind.CLIENT_FRAME),

@@ -29,7 +29,7 @@
 
 ### 当前下一步（Next Session）
 
-> **下次开发起点：**第 1–3、5–7 项已完成；P0 三件套（recorder / replayer / bot-swarm）已由 W05/W06 全部交付并入了 CI 门禁。主线缺口仍是第 4/8 项的**真实客户端对拍**：需要 Windows + `mir2.exe` 环境，用真客户端验证拾取、`SM_ADDITEM` 载荷与重登 `SM_BAGITEMS`，重点核对 `TClientItem` 76 字节布局推导（`String[20]`=21 字节 → `TStdItem`=66 字节，`MakeIndex` 4 字节对齐至偏移 68）与真客户端 `sizeof(TClientItem)` 是否一致；环境就绪第一时间用 **wiretool `record`** 录下 Delphi 全链路（登录 5000/选人 5100/游戏 7200 各挂一个代理），拿到的 `.mrec` 用 `inspect --verify` 校验后入库为字节级 golden，之后 Java 侧每个协议切片以 `replay`（字节级模式）回归。在对拍环境就绪前，可并行推进：接入层加固（连接数/频率限制、空闲超时）、bot-swarm 的加压扩展（更高并发、orc 怪物、负载混合）、Delphi `.map` 真实地图加载与 MonGen 配置解析。装备穿脱、使用物品（`CM_EAT`）、丢弃（`CM_DROPITEM`）属于后续物品切片，不得在对拍前提前扩展。
+> **下次开发起点：**第 1–3、5–7 项已完成；P0 三件套（recorder / replayer / bot-swarm）已由 W05/W06 全部交付并入了 CI 门禁。主线缺口仍是第 4/8 项的**真实客户端对拍**：需要 Windows + `mir2.exe` 环境，用真客户端验证拾取、`SM_ADDITEM` 载荷与重登 `SM_BAGITEMS`，重点核对 `TClientItem` 76 字节布局推导（`String[20]`=21 字节 → `TStdItem`=66 字节，`MakeIndex` 4 字节对齐至偏移 68）与真客户端 `sizeof(TClientItem)` 是否一致；环境就绪第一时间用 **wiretool `record`** 录下 Delphi 全链路（登录 5000/选人 5100/游戏 7200 各挂一个代理），拿到的 `.mrec` 用 `inspect --verify` 校验后入库为字节级 golden，之后 Java 侧每个协议切片以 `replay`（字节级模式）回归。在对拍环境就绪前，可并行推进：接入层加固（**认证码 GAME 登录消费即失效 + 断线清理**（W06 冒烟暴露：`GateSessionRegistry.remove` 无调用点）、连接数/频率限制、空闲超时）、bot-swarm 的加压扩展（更高并发、orc 怪物、负载混合）、Delphi `.map` 真实地图加载与 MonGen 配置解析。装备穿脱、使用物品（`CM_EAT`）、丢弃（`CM_DROPITEM`）属于后续物品切片，不得在对拍前提前扩展。
 
 1. ✅ **接通 7200 首包认证：**已按 `Client/ClMain.pas:SendRunLogin` 的 `**账号/角色/认证码/客户端版本/RUNLOGINCODE` 格式增加独立 headerless 首包解析；`GateSessionRegistry` 会在 `CM_SELCHR` 时记录角色，并在 GAME 登录时联合校验认证码、账号和已选角色。非法首包返回 `SM_STARTFAIL` 并关闭连接。
 2. ✅ **实现移动协议适配器：**已将 `CM_TURN / CM_WALK / CM_RUN` 的 `Recog` 打包坐标与 `Tag` 方向转换为 `WorldEngine.turn/move`；成功/拒绝事件转换为 `+GOOD/<tick>` / `+FAIL/<tick>`，观察者事件转换为 `SM_WALK / SM_RUN / SM_TURN / SM_DISAPPEAR`。
@@ -140,6 +140,7 @@ done
 - `--skip-server-frames` 的序号以**录制中服务端帧序**为准（`inspect` 列出的序号）；骨架不做模式语言/字节掩码，留待真实 golden 出现后再长。
 - 录制代理不做限速/加密/DES 变换（本链路无 DES），字节透传是唯一职责。
 - recorder 与 replayer 是「golden 捕获与回放对拍」工具，**不能**证明语义正确性——它只能证明两个服务端字节一致；语义仍靠与 Delphi 源码对照与真客户端盲测（计划§05/§10 的铁律不变）。
+- **冒烟顺带暴露（转「接入层加固」切片处理，本切片不修）**：`GateSessionRegistry.remove(certification)` 全库无调用点，认证码断线后终身有效——游戏门回放凭录制里的旧认证码成功重进图（证据文档「暴露的服务端事实」第 1 条）。加固时应实现 GAME 登录消费即失效 + 断线清理，并先对照 Delphi `M2Share` 会话表语义。
 
 ### W05 bot 压测军团交接明细（2026-09-19）
 

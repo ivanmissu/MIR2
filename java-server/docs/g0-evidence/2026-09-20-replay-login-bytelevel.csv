@@ -1,0 +1,4 @@
+index,status,expected_len,actual_len,first_diff_offset,annotation
+0,IDENTICAL,16,16,-1,"S→C SM_CERTIFICATION_SUCCESS(500) recog=0 p=0 t=0 s=0"
+1,IDENTICAL,26,26,-1,"S→C SM_PASSOK_SELECTSERVER(529) recog=0 p=0 t=0 s=1 body=""MIR2/1/"""
+2,CONTENT,51,51,38,"S→C SM_SELECTSERVER_OK(530) recog=0 p=0 t=0 s=0 body=""127.0.0.1/17100/2116123599"""
