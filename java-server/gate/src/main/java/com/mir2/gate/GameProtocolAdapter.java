@@ -71,6 +71,10 @@ public final class GameProtocolAdapter implements WorldEventSink {
         // The client sends its own cell in param/tag, not a packed Recog (ClMain.pas:CM_PICKUP).
         case ProtocolConstants.CM_PICKUP -> reportExceptionalFailure(
             world.pickUp(boundPlayer, new Position(message.param(), message.tag())));
+        // ClientOpenDoor only acts on header param/tag (the DoorIndex carried in Recog is ignored
+        // by the Delphi server). It does not have a +GOOD/+FAIL acknowledgement contract.
+        case ProtocolConstants.CM_OPENDOOR -> world.openDoor(boundPlayer,
+            new Position(message.param(), message.tag())).exceptionally(ignored -> false);
         // Sent by the client right after SM_LOGON (ClMain.pas:3860) and whenever the bag
         // window needs a refresh; no +GOOD/+FAIL ack is part of the Delphi exchange.
         case ProtocolConstants.CM_QUERYBAGITEMS -> reportExceptionalFailure(
@@ -90,6 +94,9 @@ public final class GameProtocolAdapter implements WorldEventSink {
     Objects.requireNonNull(event, "event");
     switch (event) {
       case WorldEvent.MapEntered entered -> sendMapEntered(entered);
+      case WorldEvent.MapChanged changed -> sendMapChanged(changed);
+      case WorldEvent.DoorOpened opened -> sendDoorOpened(opened.position());
+      case WorldEvent.DoorClosed closed -> sendDoorClosed(closed.position());
       case WorldEvent.MoveAccepted accepted -> {
         if (accepted.player().id() == playerId) sendStatus(true);
       }
@@ -143,6 +150,7 @@ public final class GameProtocolAdapter implements WorldEventSink {
         || ident == ProtocolConstants.CM_HEAVYHIT
         || ident == ProtocolConstants.CM_BIGHIT
         || ident == ProtocolConstants.CM_PICKUP
+        || ident == ProtocolConstants.CM_OPENDOOR
         || ident == ProtocolConstants.CM_QUERYBAGITEMS;
   }
 
@@ -180,6 +188,40 @@ public final class GameProtocolAdapter implements WorldEventSink {
     for (GroundItem item : entered.visibleItems()) {
       sendItemShow(item);
     }
+  }
+
+  /**
+   * Same-server map route sequence from ObjBase.pas: RM_CLEAROBJECTS then RM_CHANGEMAP, followed
+   * by the normal map description. This must not reuse SM_NEWMAP/SM_LOGON: those are RunLogin
+   * entry packets, whereas the unmodified client handles SM_CHANGEMAP in-place.
+   */
+  private void sendMapChanged(WorldEvent.MapChanged changed) {
+    WorldObjectSnapshot player = changed.player();
+    if (playerId != player.id()) throw new IllegalStateException("adapter received another player's MapChanged");
+    Position position = player.position();
+    output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_CLEAROBJECTS, 0, 0, 0, 0, "")));
+    output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_CHANGEMAP, player.id(),
+        position.x(), position.y(), 0, WireMessageCodec.encodeBody(changed.map().id()))));
+    output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_MAPDESCRIPTION, -1,
+        0, 0, 0, WireMessageCodec.encodeBody(changed.map().title()))));
+    for (WorldObjectSnapshot visible : changed.visibleObjects()) {
+      sendObjectAction(ProtocolConstants.SM_TURN, visible);
+    }
+    for (GroundItem item : changed.visibleItems()) {
+      sendItemShow(item);
+    }
+  }
+
+  /** RM_DOOROPEN maps to SM_OPENDOOR_OK with Recog/Series zero and x/y in Param/Tag. */
+  private void sendDoorOpened(Position position) {
+    output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_OPENDOOR_OK,
+        0, position.x(), position.y(), 0, "")));
+  }
+
+  /** RM_DOORCLOSE maps to SM_CLOSEDOOR with Recog/Series zero and x/y in Param/Tag. */
+  private void sendDoorClosed(Position position) {
+    output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_CLOSEDOOR,
+        0, position.x(), position.y(), 0, "")));
   }
 
   private void sendMovement(WorldObjectSnapshot object, MovementKind movement) {

@@ -393,6 +393,27 @@ export class GateSession extends EventEmitter {
     const series = packet.message.series;
 
     switch (ident) {
+      // Same-server map routes use the legacy clear + change-map sequence rather than the
+      // RunLogin-only SM_NEWMAP / SM_LOGON pair. Keep the current identity and appearance, but
+      // discard stale entities before SM_MAPDESCRIPTION emits the refreshed mapEntered snapshot.
+      case ProtocolConstants.SM_CLEAROBJECTS: {
+        this.visibleObjects.clear();
+        this.visibleItems.clear();
+        this.log('info', '[7200] 服务端清理旧地图对象，准备切换地图', 'GAME');
+        break;
+      }
+
+      case ProtocolConstants.SM_CHANGEMAP: {
+        this.playerId = recog || this.playerId;
+        this.x = param;
+        this.y = tag;
+        this.mapId = WireMessageCodec.decodeBody(packet.encodedBody) || this.mapId;
+        this.visibleObjects.clear();
+        this.visibleItems.clear();
+        this.log('info', `[7200] 切换地图: id=${this.mapId}, 坐标: (${this.x}, ${this.y})`, 'GAME');
+        break;
+      }
+
       case ProtocolConstants.SM_NEWMAP: {
         this.playerId = recog;
         this.x = param;

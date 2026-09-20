@@ -36,6 +36,8 @@ import java.util.logging.Logger;
  */
 public final class WorldEngine implements AutoCloseable {
   private static final Logger LOG = Logger.getLogger(WorldEngine.class.getName());
+  // TUserEngine.ProcessMapDoor closes doors after GetTickCount - dwOpenTick > 5 seconds.
+  private static final long DOOR_OPEN_MILLIS = 5_000;
 
   public record Config(
       Duration tickInterval,
@@ -83,6 +85,7 @@ public final class WorldEngine implements AutoCloseable {
 
   private final Config config;
   private final Map<String, GameMap> maps = new LinkedHashMap<>();
+  private final Map<RouteKey, MapRoute> routes = new LinkedHashMap<>();
   private final Map<Integer, Player> players = new HashMap<>();
   private final Map<String, Integer> playersByName = new HashMap<>();
   private final Map<Integer, Monster> monsters = new LinkedHashMap<>();
@@ -116,7 +119,17 @@ public final class WorldEngine implements AutoCloseable {
       Collection<GameMap> maps,
       PlayerStateStore playerStateStore,
       ItemDatabase itemDatabase) {
-    this(config, maps, System::currentTimeMillis, new Random(), playerStateStore, itemDatabase);
+    this(config, maps, System::currentTimeMillis, new Random(), playerStateStore, itemDatabase, List.of());
+  }
+
+  /** Production constructor with source-compatible same-server map routes. */
+  public WorldEngine(
+      Config config,
+      Collection<GameMap> maps,
+      PlayerStateStore playerStateStore,
+      ItemDatabase itemDatabase,
+      Collection<MapRoute> routes) {
+    this(config, maps, System::currentTimeMillis, new Random(), playerStateStore, itemDatabase, routes);
   }
 
   public WorldEngine(Collection<GameMap> maps) {
@@ -146,6 +159,18 @@ public final class WorldEngine implements AutoCloseable {
       Random random,
       PlayerStateStore playerStateStore,
       ItemDatabase itemDatabase) {
+    this(config, maps, clock, random, playerStateStore, itemDatabase, List.of());
+  }
+
+  /** Deterministic constructor with source-compatible same-server map routes. */
+  public WorldEngine(
+      Config config,
+      Collection<GameMap> maps,
+      LongSupplier clock,
+      Random random,
+      PlayerStateStore playerStateStore,
+      ItemDatabase itemDatabase,
+      Collection<MapRoute> routes) {
     this.config = Objects.requireNonNull(config);
     this.clock = Objects.requireNonNull(clock, "clock");
     this.random = Objects.requireNonNull(random, "random");
@@ -158,6 +183,7 @@ public final class WorldEngine implements AutoCloseable {
       if (this.maps.putIfAbsent(map.id(), map) != null)
         throw new IllegalArgumentException("duplicate map id: " + map.id());
     }
+    indexRoutes(routes);
   }
 
   /** Starts fixed-rate ticks. Callers may instead use {@link #tickOnce()} in deterministic tests. */
@@ -312,6 +338,15 @@ public final class WorldEngine implements AutoCloseable {
     return submit(() -> pickUpItem(playerId, claimedPosition));
   }
 
+  /**
+   * Handles {@code CM_OPENDOOR}. Delphi accepts the requested map coordinate without a distance
+   * check; an absent or already-open door is simply ignored and has no +GOOD/+FAIL response.
+   */
+  public CompletableFuture<Boolean> openDoor(int playerId, Position position) {
+    Objects.requireNonNull(position, "position");
+    return submit(() -> openDoorForPlayer(playerId, position));
+  }
+
   public CompletableFuture<Void> leavePlayer(int playerId) {
     return submit(() -> {
       leave(playerId);
@@ -354,6 +389,7 @@ public final class WorldEngine implements AutoCloseable {
       if (pending == null) break;
       pending.execute();
     }
+    processDoors();
     regenSpawners();
     updateMonsters();
     expireGroundItems();
@@ -439,6 +475,13 @@ public final class WorldEngine implements AutoCloseable {
         return rejectMove(player, target, WorldEvent.MoveRejection.OCCUPIED);
     }
 
+    MapRoute route = routes.get(new RouteKey(player.map.id(), target));
+    // TBaseObject.Walk permits normal movement only when a nearby route door is closed. Once all
+    // nearby door cells are open, landing on the route invokes EnterAnotherMap instead.
+    if (route != null && player.map.doorsAroundAreOpen(target)) {
+      return transferAlongRoute(player, source, target, direction, movement, route);
+    }
+
     Set<Integer> visibleBefore = new LinkedHashSet<>(visibleIds(player.map, source, player.id));
     player.map.move(player.id, source, target);
     player.position = target;
@@ -451,6 +494,53 @@ public final class WorldEngine implements AutoCloseable {
     emitMovementToObservers(movedPlayer, source, movement, visibleBefore, visibleAfter);
     emitItemVisibilityChanges(player, source, target);
     return MoveResult.accepted(movedPlayer);
+  }
+
+  /** Source-derived same-server branch of {@code TBaseObject.Walk -> EnterAnotherMap}. */
+  private MoveResult transferAlongRoute(
+      Player player,
+      Position source,
+      Position routePosition,
+      Direction direction,
+      MovementKind movement,
+      MapRoute route) {
+    GameMap sourceMap = player.map;
+    GameMap destinationMap = requireMap(route.destinationMapId());
+    Position destination;
+    try {
+      destination = nearestAvailable(destinationMap, route.destinationPosition());
+    } catch (IllegalStateException unavailable) {
+      return rejectMove(player, routePosition, WorldEvent.MoveRejection.ROUTE_DESTINATION_BLOCKED);
+    }
+
+    // Source observers must forget the player rather than receive a movement packet. Delphi
+    // clears the traveller's visible lists and swaps Envir before emitting RM_CHANGEMAP.
+    Set<Integer> oldObservers = new LinkedHashSet<>(visibleIds(sourceMap, source, player.id));
+    oldObservers.addAll(visibleIds(sourceMap, routePosition, player.id));
+    sourceMap.remove(player.id, source);
+    WorldEvent disappeared = new WorldEvent.ObjectDisappeared(player.id);
+    for (int observerId : oldObservers) emit(players.get(observerId), disappeared);
+
+    List<Integer> destinationObservers = visibleIds(destinationMap, destination, 0);
+    destinationMap.place(player.id, destination);
+    player.map = destinationMap;
+    player.position = destination;
+    player.direction = direction;
+    WorldObjectSnapshot transferred = player.snapshot();
+
+    // Keep the local action lock semantics used by the current GAME adapter, then send the
+    // source-equivalent map-change sequence. No SM_WALK/SM_RUN is broadcast across maps.
+    emit(player, new WorldEvent.MoveAccepted(transferred, source, movement));
+    List<WorldObjectSnapshot> visible = destinationObservers.stream()
+        .map(this::findObject)
+        .filter(Objects::nonNull)
+        .map(WorldObject::snapshot)
+        .toList();
+    emit(player, new WorldEvent.MapChanged(
+        transferred, destinationMap.info(), visible, visibleItems(destinationMap, destination)));
+    WorldEvent appeared = new WorldEvent.ObjectAppeared(transferred);
+    for (int observerId : destinationObservers) emit(players.get(observerId), appeared);
+    return MoveResult.accepted(transferred);
   }
 
   private boolean turnPlayer(int playerId, Position claimedPosition, Direction direction) {
@@ -533,6 +623,26 @@ public final class WorldEngine implements AutoCloseable {
     WorldEvent hidden = new WorldEvent.ItemDisappeared(item);
     for (int viewerId : visibleIds(player.map, item.position(), 0)) emit(players.get(viewerId), hidden);
     return true;
+  }
+
+  private boolean openDoorForPlayer(int playerId, Position position) {
+    Player player = requirePlayer(playerId);
+    return player.map.openDoor(position, clock.getAsLong()).map(door -> {
+      WorldEvent opened = new WorldEvent.DoorOpened(player.map.id(), door.position());
+      for (int viewerId : visibleIds(player.map, door.position(), 0)) emit(players.get(viewerId), opened);
+      return true;
+    }).orElse(false);
+  }
+
+  /** Mirrors TUserEngine.ProcessMapDoor's 500ms polling / five-second close behaviour. */
+  private void processDoors() {
+    long now = clock.getAsLong();
+    for (GameMap map : maps.values()) {
+      for (GameMap.Door door : map.closeExpiredDoors(now, DOOR_OPEN_MILLIS)) {
+        WorldEvent closed = new WorldEvent.DoorClosed(map.id(), door.position());
+        for (int viewerId : visibleIds(map, door.position(), 0)) emit(players.get(viewerId), closed);
+      }
+    }
   }
 
   private void leave(int playerId) {
@@ -1059,10 +1169,32 @@ public final class WorldEngine implements AutoCloseable {
     return object;
   }
 
+  private void indexRoutes(Collection<MapRoute> definitions) {
+    Objects.requireNonNull(definitions, "routes");
+    for (MapRoute route : definitions) {
+      Objects.requireNonNull(route, "route");
+      GameMap source = requireMap(route.sourceMapId());
+      GameMap destination = requireMap(route.destinationMapId());
+      if (!source.isTerrainWalkable(route.sourcePosition())) {
+        throw new IllegalArgumentException("route source is outside or blocked: " + route);
+      }
+      if (!destination.isTerrainWalkable(route.destinationPosition())) {
+        throw new IllegalArgumentException("route destination is outside or blocked: " + route);
+      }
+      // Envir.AddMapRoute appends an OS_GATEOBJECT and TBaseObject.Walk keeps the last matching
+      // object seen in its cell list. A later config row therefore wins in this keyed model.
+      routes.put(new RouteKey(source.id(), route.sourcePosition()), route);
+    }
+  }
+
+  /** Delphi TMapManager.FindMap uses CompareText, so configured route IDs are case-insensitive. */
   private GameMap requireMap(String id) {
     GameMap map = maps.get(id);
-    if (map == null) throw new NoSuchElementException("unknown map: " + id);
-    return map;
+    if (map != null) return map;
+    for (Map.Entry<String, GameMap> entry : maps.entrySet()) {
+      if (entry.getKey().equalsIgnoreCase(id)) return entry.getValue();
+    }
+    throw new NoSuchElementException("unknown map: " + id);
   }
 
   private int allocateObjectId() {
@@ -1096,6 +1228,13 @@ public final class WorldEngine implements AutoCloseable {
     scheduler.shutdownNow();
     Pending<?> pending;
     while ((pending = commands.poll()) != null) pending.cancel();
+  }
+
+  private record RouteKey(String mapId, Position position) {
+    private RouteKey {
+      if (mapId == null || mapId.isBlank()) throw new IllegalArgumentException("map id must not be blank");
+      Objects.requireNonNull(position, "position");
+    }
   }
 
   private record Pending<T>(Supplier<T> action, CompletableFuture<T> future) {
@@ -1136,7 +1275,7 @@ public final class WorldEngine implements AutoCloseable {
     private final int id;
     private final UUID characterId;
     private final String name;
-    private final GameMap map;
+    private GameMap map;
     private final int feature;
     private final int status;
     private final WorldEventSink sink;

@@ -226,7 +226,9 @@ $JAVA --enable-native-access=ALL-UNNAMED -XX:MaxRAMPercentage=75 \
 |---|---|---|
 | `MIR2_DATABASE` | `data/mir2.db` | SQLite 数据库路径（相对路径基于进程工作目录；容器内固定为 `/app/data/mir2.db`） |
 | `MIR2_MAP_FILE` | 未设置 | 可选：Delphi `.map` 地图文件路径；未设置时使用 256×256 空白 PoC 地图 |
-| `MIR2_MAP_ID` | `0` | 地图 ID（对应客户端地图文件名） |
+| `MIR2_MAP_ID` | `0` | 首张地图 ID（对应客户端地图文件名） |
+| `MIR2_MAP_DIRECTORY` | 未设置 | 可选：多地图目录；路由指向的非首张地图按 `<目录>/<地图 ID>.map` 加载 |
+| `MIR2_MAP_ROUTES_FILE` | 未设置 | 可选：`MapInfo.txt` 的传送点行或独立路由文件；行格式 `源地图 x y -> 目标地图 x y`，支持空格/逗号/Tab/`-`/`>` 分隔和 `;` 注释 |
 | `MIR2_SPAWN_X` / `MIR2_SPAWN_Y` | `10` / `10` | 首次进图出生点；被占用时自动选择邻近可行走格 |
 
 ### 5.3 世界与战斗
@@ -306,9 +308,21 @@ remote 模式的 bot 账号须先用 `--prepare-db` 播种到**服务端使用�
 `Address already in use` → 换端口（2.5 节）或停掉占用进程。三个端口可独立配置，
 但必须同时对外可达（客户端三段式握手逐段下沉）。
 
-**Q8：想加载真实 Delphi 地图。**
-设置 `MIR2_MAP_FILE` 指向 `.map` 文件（52 字节头 + 12 字节列优先单元格式，已实现加载与
-背景/前景碰撞）。容器部署时需把文件挂载进容器并在 `compose.yml` 中追加 volume。
+**Q8：想加载真实 Delphi 地图、门和同服传送点。**
+设置 `MIR2_MAP_FILE` 指向首张 `.map` 文件（52 字节头 + 12 字节列优先单元格式；已加载
+背景/前景碰撞及 `btDoorIndex/btDoorOffset`）。多个地图时还需设置 `MIR2_MAP_DIRECTORY`，
+并在 `MIR2_MAP_ROUTES_FILE` 放入从 `MapInfo.txt` 提取的路由行，例如：
+
+```text
+; source-map source-x source-y -> destination-map destination-x destination-y
+0 330 270 -> 1 12 18
+1, 12, 18 -> 0, 330, 270
+```
+
+非首张地图将按 `<MIR2_MAP_DIRECTORY>/<地图 ID>.map` 读取。门的 `CM_OPENDOOR` 会广播
+`SM_OPENDOOR_OK`，超过 5 秒自动 `SM_CLOSEDOOR`；传送点在附近一格内的门全部开启后触发，
+同服切图使用 `SM_CLEAROBJECTS → SM_CHANGEMAP → SM_MAPDESCRIPTION`。容器部署时须将地图目录
+和路由文件挂载进容器，且环境变量填写**容器内**路径。
 
 ## 8. 生产环境建议（P4 前的过渡态）
 

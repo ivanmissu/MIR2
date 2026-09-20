@@ -41,6 +41,32 @@ class Mir2MapLoaderTest {
   }
 
   @Test
+  void extractsPackedDoorIndexAndOffsetAndSharesNearbyDoorStatus() throws Exception {
+    byte[] data = mapBytes(4, 3, "door map");
+    // TMapUnitInfo: DoorIndex at byte 6, DoorOffset at byte 7. Two nearby cells with the same
+    // low-seven-bit index share a Delphi TDoorStatus regardless of their stored offsets.
+    int first = Mir2MapLoader.HEADER_BYTES + (1 * 3 + 1) * Mir2MapLoader.CELL_BYTES;
+    data[first + 6] = (byte) 0x83;
+    data[first + 7] = 0x12;
+    int second = Mir2MapLoader.HEADER_BYTES + (2 * 3 + 1) * Mir2MapLoader.CELL_BYTES;
+    data[second + 6] = (byte) 0x83;
+    data[second + 7] = (byte) 0x80;
+    // $80 with a zero low portion is not a door according to Envir.LoadMapData.
+    int ignored = Mir2MapLoader.HEADER_BYTES + (3 * 3) * Mir2MapLoader.CELL_BYTES;
+    data[ignored + 6] = (byte) 0x80;
+    Path file = temporaryDirectory.resolve("doors.map");
+    Files.write(file, data);
+
+    GameMap map = Mir2MapLoader.load("doors", file);
+    assertEquals(2, map.doors().size());
+    assertEquals(new GameMap.Door(new Position(1, 1), 3, 0x12, false),
+        map.doorAt(new Position(1, 1)).orElseThrow());
+    assertTrue(map.openDoor(new Position(1, 1), 100L).isPresent());
+    assertTrue(map.doorAt(new Position(2, 1)).orElseThrow().open(),
+        "nearby cells with the same DoorIndex share one status");
+  }
+
+  @Test
   void rejectsTruncatedAndDimensionallyInvalidFiles() throws Exception {
     Path truncated = temporaryDirectory.resolve("truncated.map");
     Files.write(truncated, new byte[51]);

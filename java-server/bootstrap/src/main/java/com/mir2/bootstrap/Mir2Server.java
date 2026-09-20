@@ -9,6 +9,8 @@ import com.mir2.gate.SessionRouter;
 import com.mir2.persistence.SqliteStore;
 import com.mir2.world.Direction;
 import com.mir2.world.GameMap;
+import com.mir2.world.MapRoute;
+import com.mir2.world.MapRouteLoader;
 import com.mir2.world.Mir2MapLoader;
 import com.mir2.world.MonGenLoader;
 import com.mir2.world.MonsterSpawnDefinition;
@@ -19,6 +21,8 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
@@ -68,15 +72,20 @@ public final class Mir2Server implements AutoCloseable {
         Path mapFile = config.mapFile().toAbsolutePath().normalize();
         initialMap = Mir2MapLoader.load(config.mapId(), mapFile);
       }
+      List<MapRoute> mapRoutes = config.mapRoutesFile() == null
+          ? List.of()
+          : MapRouteLoader.load(config.mapRoutesFile().toAbsolutePath().normalize());
+      List<GameMap> maps = loadMaps(initialMap, mapRoutes);
       Position spawn = new Position(config.spawnX(), config.spawnY());
       if (!initialMap.isTerrainWalkable(spawn))
         throw new IllegalArgumentException("configured spawn is outside the map or blocked: " + spawn);
       world = new WorldEngine(
           new WorldEngine.Config(Duration.ofMillis(config.worldTickMillis()), 12, 10_000,
               900, 5_000, 180_000, 200, config.saveIntervalSeconds() * 1_000L),
-          List.of(initialMap),
+          maps,
           store,
-          store.itemDatabase());
+          store.itemDatabase(),
+          mapRoutes);
       world.start();
       if (config.monGenFile() == null) {
         spawnMonsters(initialMap, spawn);
@@ -104,6 +113,34 @@ public final class Mir2Server implements AutoCloseable {
       close();
       throw error;
     }
+  }
+
+  /**
+   * Loads route endpoint maps from a directory named like the original Map folder. The configured
+   * initial map always wins for its id, so MIR2_MAP_FILE can point outside that directory.
+   */
+  private List<GameMap> loadMaps(GameMap initialMap, List<MapRoute> mapRoutes) throws IOException {
+    LinkedHashMap<String, GameMap> maps = new LinkedHashMap<>();
+    maps.put(initialMap.id(), initialMap);
+    for (MapRoute route : mapRoutes) {
+      loadRouteMap(maps, route.sourceMapId());
+      loadRouteMap(maps, route.destinationMapId());
+    }
+    return List.copyOf(new ArrayList<>(maps.values()));
+  }
+
+  private void loadRouteMap(LinkedHashMap<String, GameMap> maps, String mapId) throws IOException {
+    if (maps.containsKey(mapId) || maps.keySet().stream().anyMatch(id -> id.equalsIgnoreCase(mapId))) return;
+    if (config.mapDirectory() == null) {
+      throw new IllegalArgumentException("MIR2_MAP_DIRECTORY is required to load route endpoint map '"
+          + mapId + "'");
+    }
+    Path directory = config.mapDirectory().toAbsolutePath().normalize();
+    Path file = directory.resolve(mapId + ".map").normalize();
+    if (!file.startsWith(directory)) {
+      throw new IllegalArgumentException("route map id must not escape MIR2_MAP_DIRECTORY: " + mapId);
+    }
+    maps.put(mapId, Mir2MapLoader.load(mapId, file));
   }
 
   /**

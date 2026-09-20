@@ -10,8 +10,10 @@
 | `Common/DES.pas:EncryStr/DecryStr` | `protocol/DesCodec` | implemented with DES/ECB/NoPadding + zero padding; Delphi ciphertext golden still required |
 | `LoginGate` / `SelGate` / `RunGate` socket boundary | `gate` | virtual-thread PoC and legacy framing implemented; limits, Netty and true-client validation remain |
 | `M2Server/UsrEngn.pas:TUserEngine.Run` | `world/WorldEngine` | single-owner fixed tick and FIFO command queue implemented |
-| `M2Server/Envir.pas:TMapHeader/TMapUnitInfo` | `world/Mir2MapLoader` | packed 52-byte header and 12-byte column-major cells implemented + unit tested |
-| `M2Server/Envir.pas:CanWalk/MoveToMovingObject` | `world/GameMap` | terrain flags and moving-object occupancy implemented + unit tested |
+| `M2Server/Envir.pas:TMapHeader/TMapUnitInfo` | `world/Mir2MapLoader` | packed 52-byte header and 12-byte column-major cells implemented + unit tested; W10 also extracts `$80`-tagged `btDoorIndex` + `btDoorOffset` in map-file order |
+| `M2Server/Envir.pas:CanWalk/MoveToMovingObject` | `world/GameMap` | terrain flags and moving-object occupancy implemented + unit tested; W10 mirrors local shared `TDoorStatus` grouping (same index, first previous cell within ±10) |
+| `M2Server/UsrEngn.pas:OpenDoor/CloseDoor/ProcessMapDoor` | `world/WorldEngine.openDoor/processDoors`, `gate/GameProtocolAdapter` | `CM_OPENDOOR → SM_OPENDOOR_OK`, five-second auto close → `SM_CLOSEDOOR`, 12-cell observer broadcast; source-derived tests, real-client golden pending |
+| `M2Server/LocalDB.pas:MapInfo route rows` / `Envir.pas:AddMapRoute` / `ObjBase.pas:EnterAnotherMap` | `world/MapRouteLoader`, `MapRoute`, `WorldEngine` | reads source-compatible route lines; one-JVM transfer observes nearby-door-open condition and emits `SM_CLEAROBJECTS → SM_CHANGEMAP → SM_MAPDESCRIPTION`; extra maps loaded by bootstrap config; real-client golden pending |
 | `M2Server/ObjBase.pas:WalkTo/RunTo/ClientChangeDir` | `world/WorldEngine` | eight-way walk/run/turn validation implemented; timing/golden comparison remains |
 | `M2Server/ObjBase.pas:SearchViewRange/SendRefMsg` | `world/WorldEngine` | 12-cell square interest events (appear/move/turn/disappear) implemented |
 | `RunGate` first RunLogin packet + `CM_TURN/WALK/RUN` | `gate` → `world` adapter | implemented + integration tested; mir2-front login/selection/entry smoke passed |

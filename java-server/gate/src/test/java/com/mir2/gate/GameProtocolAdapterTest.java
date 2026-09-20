@@ -147,6 +147,67 @@ class GameProtocolAdapterTest {
     }
   }
 
+  @Test
+  void clientOpenDoorUsesParamTagAndDoesNotProduceAnActionAck() {
+    GameMap map = GameMap.withDoors("0", "PoC", 20, 20,
+        List.of(new GameMap.DoorDefinition(new Position(7, 8), 1, 0)));
+    try (WorldEngine world = new WorldEngine(List.of(map))) {
+      AtomicReference<WorldEventSink> sink = new AtomicReference<>(ignored -> {});
+      var entered = world.enterPlayer("door-user", "0", new Position(5, 5), Direction.RIGHT,
+          event -> sink.get().send(event));
+      world.tickOnce();
+      List<GameOutbound> output = new ArrayList<>();
+      GameProtocolAdapter adapter = new GameProtocolAdapter(world, entered.join().id(), output::add, () -> 1);
+      sink.set(adapter);
+
+      assertTrue(adapter.handle(new WirePacket(new DefaultMessage(12345, ProtocolConstants.CM_OPENDOOR,
+          7, 8, 0))));
+      world.tickOnce();
+      WirePacket opened = ((GameOutbound.Packet) output.removeFirst()).packet();
+      assertEquals(ProtocolConstants.SM_OPENDOOR_OK, opened.message().ident());
+      assertEquals(7, opened.message().param());
+      assertEquals(8, opened.message().tag());
+      assertTrue(output.isEmpty(), "CM_OPENDOOR has no +GOOD/+FAIL packet");
+    }
+  }
+
+  @Test
+  void doorAndSameServerMapChangeEventsUseTheLegacyDoorAndChangeMapPackets() {
+    try (WorldEngine world = new WorldEngine(List.of(GameMap.empty("0", "PoC", 20, 20)))) {
+      List<GameOutbound> output = new ArrayList<>();
+      GameProtocolAdapter adapter = new GameProtocolAdapter(world, 7, output::add, () -> 1);
+
+      adapter.send(new WorldEvent.DoorOpened("0", new Position(10, 11)));
+      WirePacket opened = ((GameOutbound.Packet) output.removeFirst()).packet();
+      assertEquals(ProtocolConstants.SM_OPENDOOR_OK, opened.message().ident());
+      assertEquals(0, opened.message().recog());
+      assertEquals(10, opened.message().param());
+      assertEquals(11, opened.message().tag());
+
+      adapter.send(new WorldEvent.DoorClosed("0", new Position(10, 11)));
+      WirePacket closed = ((GameOutbound.Packet) output.removeFirst()).packet();
+      assertEquals(ProtocolConstants.SM_CLOSEDOOR, closed.message().ident());
+      assertEquals(10, closed.message().param());
+      assertEquals(11, closed.message().tag());
+
+      WorldObjectSnapshot self = new WorldObjectSnapshot(7, "traveler", WorldObjectType.PLAYER,
+          "1", new Position(3, 4), Direction.DOWN);
+      adapter.send(new WorldEvent.MapChanged(self, new GameMap.MapInfo("1", "矿洞", 20, 20),
+          List.of(), List.of()));
+      assertEquals(ProtocolConstants.SM_CLEAROBJECTS,
+          ((GameOutbound.Packet) output.removeFirst()).packet().message().ident());
+      WirePacket changed = ((GameOutbound.Packet) output.removeFirst()).packet();
+      assertEquals(ProtocolConstants.SM_CHANGEMAP, changed.message().ident());
+      assertEquals(7, changed.message().recog());
+      assertEquals(3, changed.message().param());
+      assertEquals(4, changed.message().tag());
+      assertEquals("1", WireMessageCodec.decodeBody(changed.encodedBody()));
+      assertEquals(ProtocolConstants.SM_MAPDESCRIPTION,
+          ((GameOutbound.Packet) output.removeFirst()).packet().message().ident());
+      assertTrue(output.isEmpty());
+    }
+  }
+
   private static WirePacket action(int ident, int x, int y, Direction direction) {
     return new WirePacket(new DefaultMessage(pack(x, y), ident, 0, direction.code(), 0));
   }

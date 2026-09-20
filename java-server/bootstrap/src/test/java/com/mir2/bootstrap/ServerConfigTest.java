@@ -22,6 +22,8 @@ class ServerConfigTest {
     assertEquals(0, config.monsterCount());
     assertEquals("鸡", config.monsterTemplate().name());
     assertEquals(600, config.saveIntervalSeconds());
+    assertNull(config.mapDirectory());
+    assertNull(config.mapRoutesFile());
     assertNull(config.bootstrapUser());
   }
 
@@ -48,6 +50,8 @@ class ServerConfigTest {
         Map.entry("MIR2_SERVER_NAME", "TestServer"),
         Map.entry("MIR2_MAP_FILE", "/srv/mir/maps/0.map"),
         Map.entry("MIR2_MAP_ID", "0-test"),
+        Map.entry("MIR2_MAP_DIRECTORY", "/srv/mir/maps"),
+        Map.entry("MIR2_MAP_ROUTES_FILE", "/srv/mir/Envir/MapInfo.txt"),
         Map.entry("MIR2_SPAWN_X", "100"),
         Map.entry("MIR2_SPAWN_Y", "200"),
         Map.entry("MIR2_WORLD_TICK_MS", "25"),
@@ -59,6 +63,8 @@ class ServerConfigTest {
     assertEquals("192.0.2.10", config.advertisedHost());
     assertEquals(Path.of("/srv/mir/maps/0.map"), config.mapFile());
     assertEquals("0-test", config.mapId());
+    assertEquals(Path.of("/srv/mir/maps"), config.mapDirectory());
+    assertEquals(Path.of("/srv/mir/Envir/MapInfo.txt"), config.mapRoutesFile());
     assertEquals(100, config.spawnX());
     assertEquals(200, config.spawnY());
     assertEquals(25, config.worldTickMillis());

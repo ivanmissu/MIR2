@@ -6,7 +6,10 @@ import java.util.Objects;
 /** Immutable outputs produced by the single world thread and consumed by a protocol adapter. */
 public sealed interface WorldEvent
     permits WorldEvent.MapEntered,
+        WorldEvent.MapChanged,
         WorldEvent.MapLeft,
+        WorldEvent.DoorOpened,
+        WorldEvent.DoorClosed,
         WorldEvent.ObjectAppeared,
         WorldEvent.ObjectMoved,
         WorldEvent.ObjectTurned,
@@ -42,6 +45,36 @@ public sealed interface WorldEvent
     public MapEntered(
         WorldObjectSnapshot player, GameMap.MapInfo map, List<WorldObjectSnapshot> visibleObjects) {
       this(player, map, visibleObjects, List.of());
+    }
+  }
+
+  /** A same-server {@link MapRoute} transfer; unlike initial entry it maps to SM_CHANGEMAP. */
+  record MapChanged(
+      WorldObjectSnapshot player,
+      GameMap.MapInfo map,
+      List<WorldObjectSnapshot> visibleObjects,
+      List<GroundItem> visibleItems) implements WorldEvent {
+    public MapChanged {
+      Objects.requireNonNull(player, "player");
+      Objects.requireNonNull(map, "map");
+      visibleObjects = List.copyOf(visibleObjects);
+      visibleItems = List.copyOf(visibleItems);
+    }
+  }
+
+  /** Server-side door state changed; recipients are selected by the world view range. */
+  record DoorOpened(String mapId, Position position) implements WorldEvent {
+    public DoorOpened {
+      if (mapId == null || mapId.isBlank()) throw new IllegalArgumentException("map id must not be blank");
+      Objects.requireNonNull(position, "position");
+    }
+  }
+
+  /** Server-side door auto-close after Delphi's five-second default open interval. */
+  record DoorClosed(String mapId, Position position) implements WorldEvent {
+    public DoorClosed {
+      if (mapId == null || mapId.isBlank()) throw new IllegalArgumentException("map id must not be blank");
+      Objects.requireNonNull(position, "position");
     }
   }
 
@@ -194,6 +227,7 @@ public sealed interface WorldEvent
     OUT_OF_BOUNDS,
     BLOCKED_TERRAIN,
     OCCUPIED,
+    ROUTE_DESTINATION_BLOCKED,
     ACTOR_DEAD
   }
 

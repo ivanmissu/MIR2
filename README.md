@@ -45,6 +45,7 @@ Java 服务端。
 - 账号与角色的 SQLite 持久化；角色性别、发型、衣服/武器外观按 Delphi `MakeHumanFeature` 生成 `Feature`
 - W03 世界核心：50ms 单逻辑线程 Tick、命令队列、对象进入/离开与确定性生命周期
 - Delphi `.map` 文件加载（52 字节头、12 字节列优先单元）及背景/前景碰撞标志
+- **W10 门与同服地图传送**：提取 `btDoorIndex/btDoorOffset`、共享门状态、`CM_OPENDOOR → SM_OPENDOOR_OK` 与严格超过 5 秒的 `SM_CLOSEDOOR`；`MapInfo.txt` 路由行触发 `SM_CLEAROBJECTS → SM_CHANGEMAP → SM_MAPDESCRIPTION`，支持按目录加载路由端点 `.map`
 - 八方向走路/跑步、动态占位碰撞、12 格方形视野与出现/移动/消失事件广播
 - 7200 游戏网关已接通世界：RunLogin 首包认证、`CM_TURN/WALK/RUN` 进队列、`SM_NEWMAP/LOGON/MAPDESCRIPTION` 进图
 - **接入层加固（认证码一次性消费 + 断线清理）**：`GateSessionRegistry` 的认证码在成功进图后立即失效，
@@ -176,11 +177,13 @@ java -jar java-server/wiretool/target/mir2-wiretool.jar replay \
 | `MIR2_SERVER_NAME` | `MIR2` | 显示给客户端的服务器名称 |
 | `MIR2_MAP_FILE` | 未设置 | 可选：首张 Delphi `.map` 文件；未设置时建立 256×256 空白 PoC 地图 |
 | `MIR2_MAP_ID` | `0` | 首张地图 ID（对应客户端地图文件名） |
+| `MIR2_MAP_DIRECTORY` | 未设置 | 可选：多地图目录；启用地图传送点时用于加载非首张的 `<地图 ID>.map` |
+| `MIR2_MAP_ROUTES_FILE` | 未设置 | 可选：`Envir/MapInfo.txt` 的传送点行或独立路由文件，格式 `源地图 x y -> 目标地图 x y`；设置后非首张地图还须配置 `MIR2_MAP_DIRECTORY` |
 | `MIR2_SPAWN_X` / `MIR2_SPAWN_Y` | `10` / `10` | GAME 首次进图坐标；占用时自动选择邻近可行走格 |
 | `MIR2_WORLD_TICK_MS` | `50` | 世界逻辑 Tick 间隔（毫秒） |
 | `MIR2_MONSTER_COUNT` | `0` | 启动时在出生点四周生成的怪物数量（0 表示不生成） |
 | `MIR2_MONSTER_KIND` | `chicken` | 怪物种类：`chicken`（鸡）或 `orc`（半兽人） |
-| `MIR2_MONGEN_FILE` | 未设置 | 可选：经典 `MonGen.txt` 刷怪配置；支持 `loadgen`、地图/坐标/范围/数量/分钟/刷新率字段（当前启动时生成首批） |
+| `MIR2_MONGEN_FILE` | 未设置 | 可选：经典 `MonGen.txt` 刷怪配置；支持 `loadgen`、地图/坐标/范围/数量/分钟/刷新率字段，并按行内刷新间隔自动补怪 |
 | `MIR2_MAX_CONNECTIONS_PER_IP` | `128` | 三个网关合计的单 IP 活跃连接上限 |
 | `MIR2_CONNECTION_ATTEMPTS_PER_WINDOW` | `300` | 单 IP 滑动窗口内的新连接尝试上限 |
 | `MIR2_CONNECTION_ATTEMPT_WINDOW_SECONDS` | `60` | 新连接频率窗口（秒） |
@@ -190,6 +193,19 @@ java -jar java-server/wiretool/target/mir2-wiretool.jar replay \
 
 > ⚠️ 如果客户端运行在**另一台机器**上，`MIR2_ADVERTISED_HOST` 必须设置为服务器的局域网
 > 或公网地址，不能用默认的 `127.0.0.1`——否则客户端登录后会尝试连接它自己的回环地址。
+
+### 门与同服地图传送（W10）
+
+- `.map` 加载会保留 `TMapUnitInfo.btDoorIndex / btDoorOffset`；同一门编号且在 Delphi 的
+  `±10` 格匹配范围内的门格共享开关状态。客户端的 `CM_OPENDOOR` 以 `Param/Tag` 坐标开门，
+  服务端向 12 格视野内玩家广播 `SM_OPENDOOR_OK`，并在 **超过 5 秒**后广播
+  `SM_CLOSEDOOR`；不存在或已开启的门按 Delphi 语义静默。
+- 路由文件沿用 `LocalDB.pas` 的 `MapInfo.txt` 路由行：`0 330 270 -> 1 12 18`（空格、逗号、
+  Tab、`-`、`>` 均可作分隔符；`;` 为注释，`[地图定义]` 行会跳过）。到达源坐标时，附近一格
+  内存在的门必须全部已开启；无邻门的传送点可直接触发。
+- 同一 JVM 内的地图切换下发 `SM_CLEAROBJECTS → SM_CHANGEMAP → SM_MAPDESCRIPTION`，**不会**
+  伪装成首次 `SM_NEWMAP/SM_LOGON`。首图以外的地图按 `<MIR2_MAP_DIRECTORY>/<地图 ID>.map`
+  加载。地图/路由运行态尚未经过真实 `mir2.exe` 抓包对拍，继续视为待验证兼容切片。
 
 ## 客户端接入方式
 
@@ -244,8 +260,10 @@ docker compose -f java-server/compose.yml up --build
   但**不能替代**真实客户端对拍与 Delphi 实捕 golden；
 - 7200 游戏网关已把 RunLogin、移动与战斗消息接入世界命令队列，并通过双会话 Socket 集成测试；
   但**尚未与真实 `mir2.exe` 对拍**，字段与消息顺序仍属待验证假设；
-- 认证码一次性消费与断线清理仅覆盖 GAME 连接的会话生命周期；LOGIN/SELECT 网关的连接数/频率限制、
-  空闲超时仍未实现（沿用 Delphi `IsConnLimited` 语义待移植），Netty 替换同样未完成；
+- 认证码一次性消费与断线清理覆盖 GAME 连接生命周期；三网关共享的按 IP 连接数/频率限制及读空闲超时已交付，
+  但 Delphi `IsConnLimited` 的最终阈值仍待 golden/部署数据校准，Netty 替换同样未完成；
+- W10 门与同服地图传送已完成源码推导与确定性测试，但 `SM_OPENDOOR_OK`、`SM_CLOSEDOOR`、
+  `SM_CHANGEMAP` 的真客户端字段、顺序与跨图重登位置持久化尚未经过 golden 验证；
 - 近战战斗、近战怪物 AI、掉落/拾取及 HP/MP/等级/经验/背包重登存档已实现；W04 起背包条目携带完整
   `TStdItem` 模板、稳定 `MakeIndex` 与耐久，`SM_ADDITEM/SM_BAGITEMS` 输出 76 字节 `TClientItem`
   载荷（`TStdItem` 为 66 字节：`String[20]` 占 21 字节，Delphi 源码 "60 bytes" 注释已过时）；
