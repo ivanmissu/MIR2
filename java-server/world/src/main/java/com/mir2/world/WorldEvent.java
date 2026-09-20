@@ -25,7 +25,10 @@ public sealed interface WorldEvent
         WorldEvent.ItemAppeared,
         WorldEvent.ItemDisappeared,
         WorldEvent.ItemPickedUp,
-        WorldEvent.PickupRejected {
+        WorldEvent.PickupRejected,
+        WorldEvent.DoorOpened,
+        WorldEvent.DoorClosed,
+        WorldEvent.PlayerMapChanged {
 
   record MapEntered(
       WorldObjectSnapshot player,
@@ -189,12 +192,45 @@ public sealed interface WorldEvent
     }
   }
 
+  /**
+   * {@code UsrEngn.OpenDoor} broadcast: a door on {@code mapId} at the anchor cell
+   * {@code position} opened; reaches every player inside the +/-12 client square.
+   */
+  record DoorOpened(String mapId, Position position) implements WorldEvent {
+    public DoorOpened {
+      if (mapId == null || mapId.isBlank()) throw new IllegalArgumentException("map id must not be blank");
+      Objects.requireNonNull(position, "position");
+    }
+  }
+
+  /** {@code UsrEngn.CloseDoor} broadcast from the 500ms {@code ProcessMapDoor} sweep. */
+  record DoorClosed(String mapId, Position position) implements WorldEvent {
+    public DoorClosed {
+      if (mapId == null || mapId.isBlank()) throw new IllegalArgumentException("map id must not be blank");
+      Objects.requireNonNull(position, "position");
+    }
+  }
+
+  /**
+   * The player stepped on a gate cell and entered the destination map, mirroring
+   * {@code TBaseObject.EnterAnotherMap}: the adapter must clear the client's object scene
+   * and announce the new map before the fresh visibility batches arrive.
+   */
+  record PlayerMapChanged(WorldObjectSnapshot player, GameMap.MapInfo map) implements WorldEvent {
+    public PlayerMapChanged {
+      Objects.requireNonNull(player, "player");
+      Objects.requireNonNull(map, "map");
+    }
+  }
+
   enum MoveRejection {
     INVALID_TARGET,
     OUT_OF_BOUNDS,
     BLOCKED_TERRAIN,
     OCCUPIED,
-    ACTOR_DEAD
+    ACTOR_DEAD,
+    /** The gate cell fired but its destination was unavailable; Delphi rolls the move back. */
+    GATE_TARGET_UNPASSABLE
   }
 
   enum TurnRejection {

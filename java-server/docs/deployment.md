@@ -225,8 +225,9 @@ $JAVA --enable-native-access=ALL-UNNAMED -XX:MaxRAMPercentage=75 \
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `MIR2_DATABASE` | `data/mir2.db` | SQLite 数据库路径（相对路径基于进程工作目录；容器内固定为 `/app/data/mir2.db`） |
-| `MIR2_MAP_FILE` | 未设置 | 可选：Delphi `.map` 地图文件路径；未设置时使用 256×256 空白 PoC 地图 |
-| `MIR2_MAP_ID` | `0` | 地图 ID（对应客户端地图文件名） |
+| `MIR2_MAP_FILE` | 未设置 | 可选：Delphi `.map` 地图文件路径；未设置时使用 256×256 空白 PoC 地图（与 `MIR2_MAPINFO_FILE` 互斥） |
+| `MIR2_MAPINFO_FILE` | 未设置 | 可选：经典 `MapInfo.txt` 路径（W10）；文件内每个 `[id desc idx]` 条目从同目录加载 `<id>.map`，缺失文件告警并跳过（Delphi `AddMapInfo` 语义）；路线行 `src srcX srcY -> dst dstX dstY` 注册为地图连接点，`loadmapinfo` 从 `MapInfo/` 子目录包含子文件 |
+| `MIR2_MAP_ID` | `0` | 地图 ID（对应客户端地图文件名；`MIR2_MAPINFO_FILE` 多图模式下必须是已加载地图之一，否则启动 fail-fast） |
 | `MIR2_SPAWN_X` / `MIR2_SPAWN_Y` | `10` / `10` | 首次进图出生点；被占用时自动选择邻近可行走格 |
 
 ### 5.3 世界与战斗
@@ -309,6 +310,9 @@ remote 模式的 bot 账号须先用 `--prepare-db` 播种到**服务端使用�
 **Q8：想加载真实 Delphi 地图。**
 设置 `MIR2_MAP_FILE` 指向 `.map` 文件（52 字节头 + 12 字节列优先单元格式，已实现加载与
 背景/前景碰撞）。容器部署时需把文件挂载进容器并在 `compose.yml` 中追加 volume。
+多张地图联动（含连接点传送）改用 `MIR2_MAPINFO_FILE` 指向经典 `MapInfo.txt`：把所有
+`<id>.map` 与 `MapInfo.txt` 放到同一目录（`loadmapinfo` 子文件放 `MapInfo/` 子目录），
+出生图由 `MIR2_MAP_ID` 指定；路线行两端地图未加载时该行被丢弃并告警。
 
 ## 8. 生产环境建议（P4 前的过渡态）
 

@@ -312,6 +312,34 @@ public final class WorldEngine implements AutoCloseable {
     return submit(() -> pickUpItem(playerId, claimedPosition));
   }
 
+  /**
+   * Handles {@code CM_OPENDOOR}: opens the door anchored at {@code claimed} on the player's
+   * map and broadcasts {@code DoorOpened} to every player inside the +/-12 client square,
+   * mirroring {@code TUserEngine.OpenDoor}. Unknown cells and already-open doors answer
+   * silently {@code false}, as the Delphi handler does (no acknowledgement is sent).
+   */
+  public CompletableFuture<Boolean> openDoor(int playerId, Position claimed) {
+    Objects.requireNonNull(claimed, "claimed");
+    return submit(() -> openDoorAt(playerId, claimed));
+  }
+
+  /**
+   * Links a gate cell into its source map, mirroring {@code TMapManager.AddMapRoute}: the
+   * route is registered only when both maps are loaded, and the returned future reports
+   * whether the link was installed (a route naming an unknown map is dropped, like the
+   * Delphi loader).
+   */
+  public CompletableFuture<Boolean> addRoute(TeleportRoute route) {
+    Objects.requireNonNull(route, "route");
+    return submit(() -> {
+      if (!maps.containsKey(route.sourceMapId()) || !maps.containsKey(route.destinationMapId())) {
+        return false;
+      }
+      maps.get(route.sourceMapId()).addGate(route);
+      return true;
+    });
+  }
+
   public CompletableFuture<Void> leavePlayer(int playerId) {
     return submit(() -> {
       leave(playerId);
@@ -357,6 +385,7 @@ public final class WorldEngine implements AutoCloseable {
     regenSpawners();
     updateMonsters();
     expireGroundItems();
+    closeDoorsPeriodically();
     savePlayersPeriodically();
     tickCount.incrementAndGet();
   }
@@ -437,6 +466,19 @@ public final class WorldEngine implements AutoCloseable {
         return rejectMove(player, target, WorldEvent.MoveRejection.BLOCKED_TERRAIN);
       if (player.map.objectAt(candidate) != 0)
         return rejectMove(player, target, WorldEvent.MoveRejection.OCCUPIED);
+    }
+
+    // TBaseObject.Walk fires map gates after the move lands; RunTo ends in the same
+    // Walk(RM_RUN) call, so walk and run trigger connection points identically.
+    TeleportRoute gate = player.map.routeAt(target);
+    if (gate != null && player.map.aroundDoorOpened(target)) {
+      // EnterAnotherMap refuses an unwalkable destination and WalkTo rolls the whole move
+      // back instead of leaving the player standing on the gate cell.
+      GameMap destination = maps.get(gate.destinationMapId());
+      if (destination == null || !destination.canWalk(gate.destination())) {
+        return rejectMove(player, target, WorldEvent.MoveRejection.GATE_TARGET_UNPASSABLE);
+      }
+      return teleportPlayer(player, source, direction, movement, gate, destination);
     }
 
     Set<Integer> visibleBefore = new LinkedHashSet<>(visibleIds(player.map, source, player.id));
@@ -533,6 +575,63 @@ public final class WorldEngine implements AutoCloseable {
     WorldEvent hidden = new WorldEvent.ItemDisappeared(item);
     for (int viewerId : visibleIds(player.map, item.position(), 0)) emit(players.get(viewerId), hidden);
     return true;
+  }
+
+  private boolean openDoorAt(int playerId, Position claimed) {
+    Player player = requirePlayer(playerId);
+    // TPlayObject.ClientOpenDoor checks only the door record itself — castle doors aside, the
+    // Delphi handler does not gate on zone or alive state. The γ01 (castle-taken) flag has no
+    // castle subsystem behind it yet, so it stays false and every found door may open.
+    DoorInfo door = player.map.doorAt(claimed);
+    if (door == null || door.status().opened()) return false;
+    door.status().open(clock.getAsLong());
+    WorldEvent opened = new WorldEvent.DoorOpened(player.map.id(), door.anchor());
+    for (int viewerId : playersInSquare(player.map, claimed)) emit(players.get(viewerId), opened);
+    return true;
+  }
+
+  /** Players (the only door-status recipients) inside the +/-12 client square around center. */
+  private List<Integer> playersInSquare(GameMap map, Position center) {
+    List<Integer> result = new ArrayList<>();
+    for (int objectId : map.objectsInSquare(center, config.viewRange())) {
+      if (players.containsKey(objectId)) result.add(objectId);
+    }
+    return result;
+  }
+
+  /**
+   * {@code TBaseObject.EnterAnotherMap}: switch the player to the gate's destination map. The
+   * preconditions were verified by the caller (walk landed on the gate, no closed door nearby,
+   * destination cell walkable), so this implementation cannot fail and never rolls back.
+   */
+  private MoveResult teleportPlayer(Player player, Position source, Direction direction,
+      MovementKind movement, TeleportRoute gate, GameMap destination) {
+    GameMap origin = player.map;
+    List<Integer> originObservers = visibleIds(origin, source, player.id);
+    origin.remove(player.id, source);
+    player.map = destination;
+    player.position = gate.destination();
+    player.direction = direction;
+    destination.place(player.id, gate.destination());
+    WorldObjectSnapshot snapshot = player.snapshot();
+
+    emit(player, new WorldEvent.MoveAccepted(snapshot, source, movement));
+    WorldEvent disappeared = new WorldEvent.ObjectDisappeared(player.id);
+    for (int viewerId : originObservers) emit(players.get(viewerId), disappeared);
+    // SM_CLEAROBJECTS + SM_CHANGEMAP order is fixed: the client drops its scene first and
+    // rebuilds it from the events that follow (appearances, items).
+    emit(player, new WorldEvent.PlayerMapChanged(snapshot, destination.info()));
+    List<Integer> destinationObservers = visibleIds(destination, player.position, player.id);
+    WorldEvent appeared = new WorldEvent.ObjectAppeared(snapshot);
+    for (int viewerId : destinationObservers) emit(players.get(viewerId), appeared);
+    for (int objectId : destinationObservers) {
+      WorldObject other = findObject(objectId);
+      if (other != null) emit(player, new WorldEvent.ObjectAppeared(other.snapshot()));
+    }
+    for (GroundItem item : visibleItems(destination, player.position)) {
+      emit(player, new WorldEvent.ItemAppeared(item));
+    }
+    return MoveResult.accepted(snapshot);
   }
 
   private void leave(int playerId) {
@@ -671,6 +770,33 @@ public final class WorldEngine implements AutoCloseable {
   /** Delphi paces one MonGen per {@code dwRegenMonstersTime} (200ms) pass; we do the same. */
   private long lastRegenAt = Long.MIN_VALUE / 4;
   private int currentSpawner;
+
+  // TUserEngine.ProcessMapDoor runs off its own 500ms cadence (dwProcessMapDoorTick) and
+  // closes any door once 5 seconds have passed since dwOpenTick.
+  private static final long DOOR_SWEEP_MILLIS = 500;
+  private static final long DOOR_CLOSE_AFTER_MILLIS = 5_000;
+  private long lastDoorSweepAt = Long.MIN_VALUE / 4;
+
+  /** The 500ms door sweep: closes doors opened for more than 5 seconds and broadcasts it. */
+  private void closeDoorsPeriodically() {
+    long now = clock.getAsLong();
+    if (now - lastDoorSweepAt < DOOR_SWEEP_MILLIS) return;
+    lastDoorSweepAt = now;
+    for (GameMap map : maps.values()) {
+      if (!map.hasDoors()) continue;
+      for (DoorInfo door : map.doors()) {
+        DoorInfo.DoorStatus status = door.status();
+        if (status.opened() && now - status.openedAtMillis() > DOOR_CLOSE_AFTER_MILLIS) {
+          status.close();
+          // The client re-closes every map cell sharing this door index (MapUnit.pas scans an
+          // index-symmetric window), so one broadcast per linked anchor is enough — matching
+          // Delphi's per-record CloseDoor over its m_DoorList iteration order.
+          WorldEvent closed = new WorldEvent.DoorClosed(map.id(), door.anchor());
+          for (int viewerId : playersInSquare(map, door.anchor())) emit(players.get(viewerId), closed);
+        }
+      }
+    }
+  }
 
   private void regenSpawners() {
     if (spawners.isEmpty()) return;
@@ -1136,7 +1262,8 @@ public final class WorldEngine implements AutoCloseable {
     private final int id;
     private final UUID characterId;
     private final String name;
-    private final GameMap map;
+    // m_PEnvir equivalent: reassigned by EnterAnotherMap when a gate teleports the player.
+    private GameMap map;
     private final int feature;
     private final int status;
     private final WorldEventSink sink;

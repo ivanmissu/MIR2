@@ -4,9 +4,11 @@ import com.mir2.protocol.DefaultMessage;
 import com.mir2.protocol.ProtocolConstants;
 import com.mir2.protocol.SixBitCodec;
 import com.mir2.world.Direction;
+import com.mir2.world.DoorInfo;
 import com.mir2.world.GameMap;
 import com.mir2.world.MovementKind;
 import com.mir2.world.Position;
+import com.mir2.world.TeleportRoute;
 import com.mir2.world.WorldEngine;
 import com.mir2.world.WorldEvent;
 import com.mir2.world.WorldEventSink;
@@ -144,6 +146,77 @@ class GameProtocolAdapterTest {
       WirePacket disappeared = ((GameOutbound.Packet) output.removeFirst()).packet();
       assertEquals(ProtocolConstants.SM_DISAPPEAR, disappeared.message().ident());
       assertEquals(7, disappeared.message().recog());
+    }
+  }
+
+  @Test
+  void openDoorRequestBroadcastsOpenDoorOkAndStaysSilentOnReplies() {
+    GameMap map = GameMap.empty("0", "PoC", 40, 40);
+    map.addDoor(DoorInfo.create(new Position(10, 10), 1, List.of()));
+    try (WorldEngine world = new WorldEngine(List.of(map))) {
+      List<GameOutbound> output = new ArrayList<>();
+      GameProtocolAdapter adapter = new GameProtocolAdapter(world, output::add, () -> 7);
+      var entered = world.enterPlayer("勇士", "0", new Position(10, 11), Direction.UP, adapter);
+      world.tickOnce();
+      entered.join();
+      output.clear();
+
+      assertTrue(adapter.handle(new WirePacket(
+          new DefaultMessage(1, ProtocolConstants.CM_OPENDOOR, 10, 10, 0))));
+      world.tickOnce();
+
+      WirePacket opened = ((GameOutbound.Packet) output.removeFirst()).packet();
+      assertEquals(ProtocolConstants.SM_OPENDOOR_OK, opened.message().ident());
+      assertEquals(0, opened.message().recog());
+      assertEquals(10, opened.message().param());
+      assertEquals(10, opened.message().tag());
+      assertEquals("", opened.encodedBody());
+      assertTrue(output.isEmpty(), "Delphi sends no acknowledgement for CM_OPENDOOR");
+
+      // Already-open and door-less cell requests stay silent too.
+      assertTrue(adapter.handle(new WirePacket(
+          new DefaultMessage(1, ProtocolConstants.CM_OPENDOOR, 10, 10, 0))));
+      world.tickOnce();
+      assertTrue(adapter.handle(new WirePacket(
+          new DefaultMessage(0, ProtocolConstants.CM_OPENDOOR, 12, 12, 0))));
+      world.tickOnce();
+      assertTrue(output.isEmpty());
+    }
+  }
+
+  @Test
+  void walkingOntoAGateSendsClearObjectsThenChangeMapThenDescription() {
+    GameMap origin = GameMap.empty("0", "比奇省", 40, 40);
+    GameMap destination = GameMap.empty("1", "盟重省", 40, 40);
+    try (WorldEngine world = new WorldEngine(List.of(origin, destination))) {
+      var route = world.addRoute(new TeleportRoute("0", new Position(5, 5), "1",
+          new Position(3, 3)));
+      world.tickOnce();
+      assertTrue(route.join());
+      List<GameOutbound> output = new ArrayList<>();
+      GameProtocolAdapter adapter = new GameProtocolAdapter(world, output::add, () -> 66);
+      var entered = world.enterPlayer("过门", "0", new Position(5, 6), Direction.UP, adapter);
+      world.tickOnce();
+      int playerId = entered.join().id();
+      output.clear();
+
+      assertTrue(adapter.handle(action(ProtocolConstants.CM_WALK, 5, 5, Direction.UP)));
+      world.tickOnce();
+
+      assertEquals(new GameOutbound.Status(true, 66), output.removeFirst());
+      WirePacket clear = ((GameOutbound.Packet) output.removeFirst()).packet();
+      assertEquals(ProtocolConstants.SM_CLEAROBJECTS, clear.message().ident());
+      assertEquals(playerId, clear.message().recog());
+      WirePacket change = ((GameOutbound.Packet) output.removeFirst()).packet();
+      assertEquals(ProtocolConstants.SM_CHANGEMAP, change.message().ident());
+      assertEquals(playerId, change.message().recog());
+      assertEquals(3, change.message().param());
+      assertEquals(3, change.message().tag());
+      assertEquals("1", WireMessageCodec.decodeBody(change.encodedBody()));
+      WirePacket description = ((GameOutbound.Packet) output.removeFirst()).packet();
+      assertEquals(ProtocolConstants.SM_MAPDESCRIPTION, description.message().ident());
+      assertEquals("盟重省", WireMessageCodec.decodeBody(description.encodedBody()));
+      assertTrue(output.isEmpty());
     }
   }
 

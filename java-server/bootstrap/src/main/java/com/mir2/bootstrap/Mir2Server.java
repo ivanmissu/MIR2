@@ -9,6 +9,7 @@ import com.mir2.gate.SessionRouter;
 import com.mir2.persistence.SqliteStore;
 import com.mir2.world.Direction;
 import com.mir2.world.GameMap;
+import com.mir2.world.MapInfoLoader;
 import com.mir2.world.Mir2MapLoader;
 import com.mir2.world.MonGenLoader;
 import com.mir2.world.MonsterSpawnDefinition;
@@ -19,7 +20,9 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
@@ -61,28 +64,54 @@ public final class Mir2Server implements AutoCloseable {
         LOG.info(() -> "Created bootstrap account '" + config.bootstrapUser() + "'");
       }
 
+      List<GameMap> worldMaps;
       GameMap initialMap;
-      if (config.mapFile() == null) {
-        initialMap = GameMap.empty(config.mapId(), "PoC empty map", 256, 256);
+      List<MapInfoLoader.RouteLine> pendingRoutes = List.of();
+      if (config.mapInfoFile() != null) {
+        Path mapInfoFile = config.mapInfoFile().toAbsolutePath().normalize();
+        MapInfoLoader.MapInfoDocument mapInfo = MapInfoLoader.load(mapInfoFile);
+        mapInfo.diagnostics().forEach(line -> LOG.warning("MapInfo: " + line));
+        worldMaps = loadMapsFromMapInfo(mapInfoFile.getParent() == null
+            ? Path.of(".") : mapInfoFile.getParent(), mapInfo);
+        pendingRoutes = mapInfo.routes();
+      } else if (config.mapFile() == null) {
+        worldMaps = List.of(GameMap.empty(config.mapId(), "PoC empty map", 256, 256));
       } else {
         Path mapFile = config.mapFile().toAbsolutePath().normalize();
-        initialMap = Mir2MapLoader.load(config.mapId(), mapFile);
+        worldMaps = List.of(Mir2MapLoader.load(config.mapId(), mapFile));
       }
+      initialMap = worldMaps.stream().filter(map -> map.id().equals(config.mapId())).findFirst()
+          .orElseThrow(() -> new IllegalArgumentException(
+              "spawn map '" + config.mapId() + "' is not among the loaded maps" + worldMaps.stream()
+                  .map(GameMap::id).collect(java.util.stream.Collectors.joining(", ", " [", "]"))));
       Position spawn = new Position(config.spawnX(), config.spawnY());
       if (!initialMap.isTerrainWalkable(spawn))
         throw new IllegalArgumentException("configured spawn is outside the map or blocked: " + spawn);
       world = new WorldEngine(
           new WorldEngine.Config(Duration.ofMillis(config.worldTickMillis()), 12, 10_000,
               900, 5_000, 180_000, 200, config.saveIntervalSeconds() * 1_000L),
-          List.of(initialMap),
+          worldMaps,
           store,
           store.itemDatabase());
       world.start();
+      int routeCount = 0;
+      for (MapInfoLoader.RouteLine routeLine : pendingRoutes) {
+        try {
+          if (world.addRoute(routeLine.toTeleportRoute()).get(5, TimeUnit.SECONDS)) routeCount++;
+          else LOG.warning("MapInfo route skipped (unknown map): " + routeLine);
+        } catch (InterruptedException interrupted) {
+          Thread.currentThread().interrupt();
+          break;
+        } catch (ExecutionException | TimeoutException error) {
+          LOG.log(Level.WARNING, "route registration failed for " + routeLine, error);
+        }
+      }
       if (config.monGenFile() == null) {
         spawnMonsters(initialMap, spawn);
       } else {
-        spawnMonGen(initialMap, config.monGenFile());
+        spawnMonGen(worldMaps, config.monGenFile());
       }
+      final int registeredRoutes = routeCount;
 
       CharacterService characters = new CharacterService(store);
       LegacyGateHandler.WorldConfig worldConfig = new LegacyGateHandler.WorldConfig(
@@ -98,6 +127,7 @@ public final class Mir2Server implements AutoCloseable {
           + ", select=" + config.ports().select() + ", game=" + config.ports().game()
           + ", advertisedHost=" + config.advertisedHost() + ", database=" + database
           + ", map=" + initialMap.id() + "(" + initialMap.width() + "x" + initialMap.height() + ")"
+          + ", maps=" + worldMaps.size() + ", routes=" + registeredRoutes
           + ", worldTickMs=" + config.worldTickMillis()
           + ", monsters=" + config.monsterCount() + "x" + config.monsterTemplate().name());
     } catch (IOException | RuntimeException error) {
@@ -106,16 +136,39 @@ public final class Mir2Server implements AutoCloseable {
     }
   }
 
+  /** Loads every {@code <id>.map} referenced by the document, mirroring AddMapInfo's
+   *  skip-and-log behaviour for unreadable map files. */
+  private static List<GameMap> loadMapsFromMapInfo(Path directory,
+      MapInfoLoader.MapInfoDocument mapInfo) throws IOException {
+    Map<String, GameMap> unique = new LinkedHashMap<>();
+    for (MapInfoLoader.MapDefinition definition : mapInfo.maps()) {
+      Path mapFile = directory.resolve(definition.mapFileName() + ".map");
+      if (!Files.isRegularFile(mapFile)) {
+        LOG.warning("Failure: " + mapFile + " could not be loaded.");
+        continue;
+      }
+      GameMap map = Mir2MapLoader.load(definition.id(), mapFile);
+      if (!definition.description().isBlank()) map = map.withTitle(definition.description());
+      unique.putIfAbsent(map.id(), map);
+    }
+    if (unique.isEmpty())
+      throw new IllegalArgumentException("MapInfo yielded no loadable maps in " + directory);
+    return List.copyOf(unique.values());
+  }
+
   /**
-   * Loads legacy MonGen rows and registers each as a self-replenishing spawner. The world
-   * materialises the initial population on the next tick and keeps refilling losses on the
-   * row's respawn interval, mirroring {@code TUserEngine.RegenMonsters}.
+   * Loads legacy MonGen rows and registers each as a self-replenishing spawner on every
+   * matching map. The world materialises the initial population on the next tick and keeps
+   * refilling losses on the row's respawn interval, mirroring {@code TUserEngine.RegenMonsters}.
    */
-  private void spawnMonGen(GameMap map, Path monGenFile) throws IOException {
+  private void spawnMonGen(List<GameMap> maps, Path monGenFile) throws IOException {
     int registered = 0;
     for (MonsterSpawnDefinition definition : MonGenLoader.load(monGenFile)) {
-      if (!definition.mapName().equalsIgnoreCase(map.title())
-          && !definition.mapName().equalsIgnoreCase(map.id())) continue;
+      GameMap map = maps.stream()
+          .filter(candidate -> definition.mapName().equalsIgnoreCase(candidate.title())
+              || definition.mapName().equalsIgnoreCase(candidate.id()))
+          .findFirst().orElse(null);
+      if (map == null) continue;
       MonsterTemplate template;
       try {
         template = MonsterTemplate.forName(definition.monsterName());

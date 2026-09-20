@@ -2,7 +2,10 @@ package com.mir2.world;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -24,6 +27,11 @@ public final class GameMap {
   private final int height;
   private final byte[] collisionFlags;
   private final int[] occupants;
+  // OS_DOOR / OS_GATEOBJECT equivalents: anchors indexed by their own cell (Envir.pas GetDoor
+  // only matches the exact anchor) and gate routes indexed by their source cell.
+  private final Map<Position, DoorInfo> doorAnchors = new LinkedHashMap<>();
+  private final List<DoorInfo> doorList = new ArrayList<>();
+  private final Map<Position, TeleportRoute> gates = new HashMap<>();
 
   private GameMap(String id, String title, int width, int height, byte[] collisionFlags) {
     if (id == null || id.isBlank()) throw new IllegalArgumentException("map id must not be blank");
@@ -62,6 +70,28 @@ public final class GameMap {
 
   static GameMap fromCollisionFlags(String id, String title, int width, int height, byte[] flags) {
     return new GameMap(id, title, width, height, flags);
+  }
+
+  /** Copy constructor that preserves decoded doors and installed gates but not occupants. */
+  private GameMap(GameMap source, String title) {
+    this(source.id, title, source.width, source.height, source.collisionFlags);
+    doorAnchors.putAll(source.doorAnchors);
+    doorList.addAll(source.doorList);
+    gates.putAll(source.gates);
+  }
+
+  /**
+   * Returns a copy of this map carrying the MapInfo.txt description. {@code SM_MAPDESCRIPTION}
+   * sends {@code m_PEnvir.sMapDesc} (the MapInfo description, ObjBase.pas:SendMapDescription),
+   * not the {@code .map} header title, so the bootstrap swaps it in right after loading —
+   * this method must not be used once any object has entered the map.
+   */
+  public GameMap withTitle(String newTitle) {
+    if (newTitle == null || newTitle.isBlank()) return this;
+    for (int occupant : occupants) {
+      if (occupant != 0) throw new IllegalStateException("cannot retitle a map with occupants on it");
+    }
+    return new GameMap(this, newTitle);
   }
 
   public String id() {
@@ -122,6 +152,64 @@ public final class GameMap {
     int index = index(position);
     if (occupants[index] != objectId) throw new IllegalStateException("map cell does not contain object");
     occupants[index] = 0;
+  }
+
+  /** Registers one door anchor; anchors later registered share status per the Delphi rule. */
+  public void addDoor(DoorInfo door) {
+    Objects.requireNonNull(door, "door");
+    if (!contains(door.anchor()))
+      throw new IllegalArgumentException("door anchor lies outside map: " + door.anchor());
+    if (doorAnchors.putIfAbsent(door.anchor(), door) == null) doorList.add(door);
+  }
+
+  /** Envir.pas GetDoor: exact anchor-cell match only, no area search. */
+  public DoorInfo doorAt(Position cell) {
+    return doorAnchors.get(Objects.requireNonNull(cell, "cell"));
+  }
+
+  /** Decoded door anchors in column-major load order, as built by {@code LoadMapData}. */
+  public List<DoorInfo> doors() {
+    return List.copyOf(doorList);
+  }
+
+  public boolean hasDoors() {
+    return !doorList.isEmpty();
+  }
+
+  /**
+   * Envir.pas {@code ArroundDoorOpened}: true when no closed door has an anchor inside the
+   * +/-1 Chebyshev neighbourhood. Gates silently refuse to fire while a door next to them
+   * is closed (TBaseObject.Walk).
+   */
+  public boolean aroundDoorOpened(Position cell) {
+    for (DoorInfo door : doorList) {
+      if (Math.abs(door.anchor().x() - cell.x()) <= 1
+          && Math.abs(door.anchor().y() - cell.y()) <= 1
+          && !door.status().opened()) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /** Installs a map connection point (OS_GATEOBJECT), sourced from MapInfo.txt routes. */
+  public void addGate(TeleportRoute route) {
+    Objects.requireNonNull(route, "route");
+    if (!route.sourceMapId().equals(id))
+      throw new IllegalArgumentException("route belongs to a different source map: " + route);
+    if (!contains(route.source()))
+      throw new IllegalArgumentException("gate source lies outside map: " + route.source());
+    gates.put(route.source(), route);
+  }
+
+  /** Returns the gate object standing on {@code cell}, or null. */
+  public TeleportRoute routeAt(Position cell) {
+    return gates.get(Objects.requireNonNull(cell, "cell"));
+  }
+
+  /** Number of installed gate cells, for load-time diagnostics. */
+  public int gateCount() {
+    return gates.size();
   }
 
   /** Returns occupied object ids in deterministic column-major order. */
