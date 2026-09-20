@@ -28,10 +28,11 @@
 | ✅ 完成 | W06：traffic recorder / replayer 骨架（**P0 三件套齐活**） | 新增 `java-server/wiretool` 模块（shaded `mir2-wiretool.jar`）：`record` 透明代理（字节透传 + `#…!` 帧/流外噪声分类落盘 `.mrec`，每条连接一个文件，半关闭语义保持一致）、`replay`（客户端帧按录制节奏重发，应答逐字节对拍，差异四分类 + 跳过清单 + `--structural-only`，中文 Markdown/CSV 报告，退出码即结论）、`inspect`（逐帧注解：ident 名反射反查 `ProtocolConstants`、6-bit+GBK 正文、RunLogin 识别且 cert 打码、`--verify` 统计不可解析帧）；dist 通道同步发布三 JAR | 7 个新测试类（录制编解码/分帧/代理/回放/对拍/注解/CLI）；沙箱实跑证据 `java-server/docs/g0-evidence/2026-09-20-wiretool-record-replay-smoke.md`；CI `wiretool-smoke` 门禁 |
 | ✅ 完成 | W07：接入层加固——认证码一次性消费 + 断线清理 | `GateSessionRegistry.requireGame` 保持纯校验语义（供进图重试复用同一认证码）；`LegacyGateHandler.serveGame` 在世界真正接纳玩家（`enterPlayerNear` 成功返回）后立即调用 `sessions.remove` 消费认证码，`finally` 块中做幂等兜底清理（覆盖异常路径与正常断线）；同一认证码在被消费或移除后无法再通过 `require`/`select`/`requireGame` 校验，堵住 W06 冒烟暴露的"断线后认证码终身有效、可重放进图"缺口 | `GateSessionRegistry.java`、`LegacyGateHandler.java`；新增 `GateSessionRegistryTest`（4 用例）与 `GameSessionIntegrationTest#certificationIsConsumedOnEntryAndCannotBeReplayedAfterDisconnect`；连接数/频率限制与空闲超时已由 W08 交付；Netty 替换仍未覆盖 |
 | ✅ 完成 | W08：接入层连接数/频率限制 + 空闲超时 | `AccessPolicy` 在三网关共享按 IP 统计活跃连接与滑动窗口新连接尝试；连接超限在认证前拒绝，socket 设置可配置读空闲超时；新增配置项与单测 | `java-server/gate/AccessPolicy.java`、`GateServer.java`、`ServerConfig.java`；`AccessPolicyTest` |
+| ✅ 完成（本地闭环） | W09：怪物 AI 框架扩展（首批 10 种）+ MonGen 自动刷新 + 周期存档 | ① `MonsterBehavior`（AGGRESSIVE / PASSIVE_FLEE）+ `MonsterTemplate` 目录扩到首批 10 种（鸡/鹿/稻草人/多钩猫/钉耙猫/洞蛆/蝎子/半兽人/半兽勇士/半兽战士，中文与 ASCII 名双向解析），鹿实现 `TChickenDeer` 逃跑 AI（远离最近玩家、永不攻击、直线被堵回退两侧向）；② `WorldEngine.addSpawner` 复刻 `TUserEngine.RegenMonsters`：每 `dwRegenMonstersTime`(200ms) 轮转处理一行 MonGen，`CertList` 语义统计存活数，按行内 respawn 间隔随机重掷格子补足击杀损失，`Mir2Server.spawnMonGen` 从一次性首批生成改为注册自动刷新 spawner；③ 周期存档复刻 `ProcessHumans → SaveHumanRcd`：每玩家按 `MIR2_SAVE_INTERVAL_SECONDS`（默认 600s = Delphi `dwSaveHumanRcdTime` 10 分钟）落库，存储异常不中断 tick；④ `MIR2_MONSTER_KIND` 支持全部 10 种模板名。除鸡/半兽人外的 8 种数值为 TODO(verify) 占位，待 Monster.DB 导入与对拍校准 | `MonsterBehavior.java`、`MonsterTemplate.java`、`WorldEngine.java`（Spawner/monsterFlee/savePlayersPeriodically）、`Mir2Server.java`、`ServerConfig.java`、`deployment.md`；新增 `WorldRegenAndBehaviorTest`（5 用例）+ `ServerConfigTest` 扩展；沙箱内经 ECJ 全模块编译 + world/gate/protocol/auth/character/bootstrap-config 测试全绿（persistence/loadtest 需 sqlite-jdbc，由 CI 验证） |
 
 ### 当前下一步（Next Session）
 
-> **下次开发起点：**第 1–3、5–9 项已完成；P0 三件套（recorder / replayer / bot-swarm）已由 W05/W06 全部交付并入了 CI 门禁；W07 已堵住认证码断线后可重放进图的缺口。主线缺口仍是第 4/8 项的**真实客户端对拍**：需要 Windows + `mir2.exe` 环境，用真客户端验证拾取、`SM_ADDITEM` 载荷与重登 `SM_BAGITEMS`，重点核对 `TClientItem` 76 字节布局推导（`String[20]`=21 字节 → `TStdItem`=66 字节，`MakeIndex` 4 字节对齐至偏移 68）与真客户端 `sizeof(TClientItem)` 是否一致；环境就绪第一时间用 **wiretool `record`** 录下 Delphi 全链路（登录 5000/选人 5100/游戏 7200 各挂一个代理），拿到的 `.mrec` 用 `inspect --verify` 校验后入库为字节级 golden，之后 Java 侧每个协议切片以 `replay`（字节级模式）回归。在对拍环境就绪前，可并行推进：bot-swarm 的加压扩展（更高并发、orc 怪物、负载混合）、Delphi `.map` 真实地图加载与 MonGen 配置解析。装备穿脱、使用物品（`CM_EAT`）、丢弃（`CM_DROPITEM`）属于后续物品切片，不得在对拍前提前扩展。
+> **下次开发起点：**第 1–3、5–9 项已完成；P0 三件套（recorder / replayer / bot-swarm）已由 W05/W06 全部交付并入了 CI 门禁；W07 已堵住认证码断线后可重放进图的缺口；W08 交付连接数/频率限制与空闲超时；W09 交付首批 10 种怪物模板（含鹿的 TChickenDeer 逃跑 AI）、MonGen 自动刷新 spawner（RegenMonsters 语义）与在线周期存档（SaveHumanRcdTime 语义）。主线缺口仍是第 4/8 项的**真实客户端对拍**：需要 Windows + `mir2.exe` 环境，用真客户端验证拾取、`SM_ADDITEM` 载荷与重登 `SM_BAGITEMS`，重点核对 `TClientItem` 76 字节布局推导（`String[20]`=21 字节 → `TStdItem`=66 字节，`MakeIndex` 4 字节对齐至偏移 68）与真客户端 `sizeof(TClientItem)` 是否一致；环境就绪第一时间用 **wiretool `record`** 录下 Delphi 全链路（登录 5000/选人 5100/游戏 7200 各挂一个代理），拿到的 `.mrec` 用 `inspect --verify` 校验后入库为字节级 golden，之后 Java 侧每个协议切片以 `replay`（字节级模式）回归。在对拍环境就绪前，可并行推进：bot-swarm 的加压扩展（更高并发、混合怪物负载现已可用 10 种模板）、门/传送点（`.map` 的 btDoorIndex/btDoorOffset 与 Envir 门列表）、Netty 接入替换。装备穿脱、使用物品（`CM_EAT`）、丢弃（`CM_DROPITEM`）属于后续物品切片，不得在对拍前提前扩展；除鸡/半兽人外 8 种新模板的数值是 TODO(verify) 占位，Monster.DB 导入前不得视为权威。
 
 **W08 已交付（2026-09-20）：**`GateServer` 增加三网关共享的 `AccessPolicy`，按 IP 原子限制活跃连接数与滑动窗口新连接频率；接入成功的 socket 设置可配置读空闲超时，超限连接在认证前拒绝。新增 `MIR2_MAX_CONNECTIONS_PER_IP`、`MIR2_CONNECTION_ATTEMPTS_PER_WINDOW`、`MIR2_CONNECTION_ATTEMPT_WINDOW_SECONDS` 与 `MIR2_IDLE_TIMEOUT_SECONDS` 配置及单测；默认值兼容 50 bot 压测。真实 Delphi `IsConnLimited` 阈值仍待 golden/部署数据校准。
 
@@ -312,8 +313,8 @@ done
 #### P2–P4
 
 - 🟡 地图碰撞、玩家/近战怪生命周期、12 格视野、基础战斗/经验及协议实发已完成；门/传送和其他非玩家对象未完成
-- 🟡 掉落、拾取、46 格背包、状态存档、最小物品目录、`MakeIndex`/耐久与 76 字节 `TClientItem`/`SM_BAGITEMS` 已完成；装备穿脱、物品使用/丢弃与周期批量存档未完成
-- ⬜ 57 种怪物 AI、59 个技能、NPC 脚本
+- 🟡 掉落、拾取、46 格背包、状态存档、最小物品目录、`MakeIndex`/耐久与 76 字节 `TClientItem`/`SM_BAGITEMS` 已完成；周期批量存档已由 W09 交付（`MIR2_SAVE_INTERVAL_SECONDS`，默认 10 分钟对齐 `dwSaveHumanRcdTime`）；装备穿脱、物品使用/丢弃未完成（对拍前禁做）
+- 🟡 怪物 AI 框架 + 首批 10 种常见怪已交付（W09：AGGRESSIVE/PASSIVE_FLEE 双行为、MonGen 自动刷新）；除鸡/半兽人外数值为占位，剩余 47 种怪、59 个技能、NPC 脚本未完成
 - ⬜ 交易、组队、PK、红名、行会、攻城
 - ⬜ 500 机器人 × 4 小时压测、灰度、Docker 双架构、上线回滚演练
 

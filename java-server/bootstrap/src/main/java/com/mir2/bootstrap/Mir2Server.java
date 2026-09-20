@@ -72,7 +72,8 @@ public final class Mir2Server implements AutoCloseable {
       if (!initialMap.isTerrainWalkable(spawn))
         throw new IllegalArgumentException("configured spawn is outside the map or blocked: " + spawn);
       world = new WorldEngine(
-          new WorldEngine.Config(Duration.ofMillis(config.worldTickMillis()), 12, 10_000),
+          new WorldEngine.Config(Duration.ofMillis(config.worldTickMillis()), 12, 10_000,
+              900, 5_000, 180_000, 200, config.saveIntervalSeconds() * 1_000L),
           List.of(initialMap),
           store,
           store.itemDatabase());
@@ -105,9 +106,13 @@ public final class Mir2Server implements AutoCloseable {
     }
   }
 
-  /** Loads legacy MonGen rows and materialises their initial population on the configured map. */
+  /**
+   * Loads legacy MonGen rows and registers each as a self-replenishing spawner. The world
+   * materialises the initial population on the next tick and keeps refilling losses on the
+   * row's respawn interval, mirroring {@code TUserEngine.RegenMonsters}.
+   */
   private void spawnMonGen(GameMap map, Path monGenFile) throws IOException {
-    int placed = 0;
+    int registered = 0;
     for (MonsterSpawnDefinition definition : MonGenLoader.load(monGenFile)) {
       if (!definition.mapName().equalsIgnoreCase(map.title())
           && !definition.mapName().equalsIgnoreCase(map.id())) continue;
@@ -118,26 +123,24 @@ public final class Mir2Server implements AutoCloseable {
         LOG.warning("Skipping MonGen row with unsupported monster '" + definition.monsterName() + "'");
         continue;
       }
-      int wanted = Math.min(definition.count(), 1_000);
-      for (int i = 0; i < wanted; i++) {
-        int side = Math.max(1, definition.range() * 2 + 1);
-        int dx = (i % side) - definition.range();
-        int dy = (i / side) % side - definition.range();
-        Position candidate = new Position(definition.x() + dx, definition.y() + dy);
-        if (!map.canWalk(candidate)) continue;
-        try {
-          world.spawnMonster(template, map.id(), candidate, Direction.DOWN).get(5, TimeUnit.SECONDS);
-          placed++;
-        } catch (InterruptedException interrupted) {
-          Thread.currentThread().interrupt();
-          return;
-        } catch (ExecutionException | TimeoutException error) {
-          LOG.log(Level.WARNING, "MonGen spawn failed at " + candidate, error);
-        }
+      if (definition.count() > 1_000) {
+        LOG.warning("Capping MonGen row for '" + definition.monsterName() + "' at 1000 monsters");
+        definition = new MonsterSpawnDefinition(definition.mapName(), definition.x(), definition.y(),
+            definition.monsterName(), definition.range(), 1_000, definition.respawnMillis(),
+            definition.missionGenRate());
+      }
+      try {
+        world.addSpawner(template, map.id(), definition).get(5, TimeUnit.SECONDS);
+        registered++;
+      } catch (InterruptedException interrupted) {
+        Thread.currentThread().interrupt();
+        return;
+      } catch (ExecutionException | TimeoutException error) {
+        LOG.log(Level.WARNING, "MonGen spawner registration failed for " + definition, error);
       }
     }
-    int spawned = placed;
-    LOG.info(() -> "Loaded MonGen " + monGenFile + ": spawned " + spawned + " monsters");
+    int rows = registered;
+    LOG.info(() -> "Loaded MonGen " + monGenFile + ": registered " + rows + " spawners");
   }
 
   /** Rings monsters around the spawn point so a real client can immediately test the kill loop. */

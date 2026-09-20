@@ -392,7 +392,7 @@ public final class LoadtestMain {
         --account-password S   机器人账号密码（默认 bot-pw）
         --report-dir DIR       报告目录（默认 reports，生成 report.md / report.csv）
         --monsters N           （embedded）初始怪物数量（默认 0）
-        --monster-kind KIND    （embedded）chicken 或 orc（默认 chicken）
+        --monster-kind KIND    （embedded）首批 10 种模板名（chicken/deer/scarecrow/hookcat/rakecat/cavemaggot/scorpion/orc/orcwarrior/orcfighter，默认 chicken）
         --map-file PATH        （embedded）Delphi .map 地图（默认 PoC 空图）
         --tick-ms N            （embedded）世界 tick 毫秒（默认 50）
         --spawn-x N/--spawn-y N（embedded）出生点（默认 10 10）

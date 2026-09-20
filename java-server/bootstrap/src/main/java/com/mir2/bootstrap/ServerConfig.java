@@ -25,7 +25,8 @@ public record ServerConfig(
     int maxConnectionsPerIp,
     int connectionAttemptsPerWindow,
     int connectionAttemptWindowSeconds,
-    int idleTimeoutSeconds) {
+    int idleTimeoutSeconds,
+    int saveIntervalSeconds) {
 
   /** Compatibility constructor for embedded tests and load-test callers. */
   public ServerConfig(Path database, GatePorts ports, String advertisedHost, String serverName,
@@ -33,7 +34,7 @@ public record ServerConfig(
       String monsterKind, String bootstrapUser, String bootstrapPassword) {
     this(database, ports, advertisedHost, serverName, mapFile, mapId, spawnX, spawnY,
         worldTickMillis, monsterCount, monsterKind, null, bootstrapUser, bootstrapPassword,
-        128, 300, 60, 900);
+        128, 300, 60, 900, 600);
   }
 
   public ServerConfig {
@@ -52,9 +53,15 @@ public record ServerConfig(
     if (maxConnectionsPerIp < 1 || connectionAttemptsPerWindow < 1
         || connectionAttemptWindowSeconds < 1 || idleTimeoutSeconds < 1)
       throw new IllegalArgumentException("access-layer limits and timeouts must be positive");
+    if (saveIntervalSeconds < 1)
+      throw new IllegalArgumentException("save interval must be a positive number of seconds");
     monsterKind = requireText(monsterKind, "monster kind");
-    if (!monsterKind.equals("chicken") && !monsterKind.equals("orc"))
-      throw new IllegalArgumentException("monster kind must be 'chicken' or 'orc'");
+    try {
+      com.mir2.world.MonsterTemplate.forName(monsterKind);
+    } catch (IllegalArgumentException unsupported) {
+      throw new IllegalArgumentException(
+          "monster kind must be a supported template name (e.g. chicken, orc, scarecrow)", unsupported);
+    }
     if ((bootstrapUser == null) != (bootstrapPassword == null))
       throw new IllegalArgumentException("bootstrap user and password must be configured together");
     if (bootstrapUser != null && (bootstrapUser.isBlank() || bootstrapPassword.isEmpty()))
@@ -87,14 +94,14 @@ public record ServerConfig(
         positiveInt(environment, "MIR2_MAX_CONNECTIONS_PER_IP", 128),
         positiveInt(environment, "MIR2_CONNECTION_ATTEMPTS_PER_WINDOW", 300),
         positiveInt(environment, "MIR2_CONNECTION_ATTEMPT_WINDOW_SECONDS", 60),
-        positiveInt(environment, "MIR2_IDLE_TIMEOUT_SECONDS", 900));
+        positiveInt(environment, "MIR2_IDLE_TIMEOUT_SECONDS", 900),
+        // g_Config.dwSaveHumanRcdTime defaults to 10 minutes (M2Share.pas).
+        positiveInt(environment, "MIR2_SAVE_INTERVAL_SECONDS", 600));
   }
 
   /** Resolves the configured melee monster used to populate the PoC map. */
   public com.mir2.world.MonsterTemplate monsterTemplate() {
-    return monsterKind.equals("orc")
-        ? com.mir2.world.MonsterTemplate.orc()
-        : com.mir2.world.MonsterTemplate.chicken();
+    return com.mir2.world.MonsterTemplate.forName(monsterKind);
   }
 
   public LegacyGateHandler.Config gateConfig() {
