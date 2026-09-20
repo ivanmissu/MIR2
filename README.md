@@ -47,6 +47,10 @@ Java 服务端。
 - Delphi `.map` 文件加载（52 字节头、12 字节列优先单元）及背景/前景碰撞标志
 - 八方向走路/跑步、动态占位碰撞、12 格方形视野与出现/移动/消失事件广播
 - 7200 游戏网关已接通世界：RunLogin 首包认证、`CM_TURN/WALK/RUN` 进队列、`SM_NEWMAP/LOGON/MAPDESCRIPTION` 进图
+- **接入层加固（认证码一次性消费 + 断线清理）**：`GateSessionRegistry` 的认证码在成功进图后立即失效，
+  同一认证码无法在第二条 GAME 连接上重放；GAME 连接断线（正常退出或异常）时同步清理 World 侧玩家对象
+  与网关侧认证码，避免认证码/会话在客户端断线后悬挂；已进入世界失败的重试（如快速重登留下的
+  `leavePlayer` 竞态）仍可安全复用同一认证码直至真正进图成功
 - **近战战斗闭环**：`CM_HIT / CM_HEAVYHIT / CM_BIGHIT` 攻击判定（共用 Delphi 的 CM_HIT 动作间隔）、
   `SM_STRUCK / SM_HEALTHSPELLCHANGED / SM_DEATH / SM_WINEXP` 广播
 - **近战怪物 AI**：鸡与半兽人两种模板，视野内索敌、追击、按自身间隔攻击、死亡后尸体定时清理
@@ -232,6 +236,8 @@ docker compose -f java-server/compose.yml up --build
   但**不能替代**真实客户端对拍与 Delphi 实捕 golden；
 - 7200 游戏网关已把 RunLogin、移动与战斗消息接入世界命令队列，并通过双会话 Socket 集成测试；
   但**尚未与真实 `mir2.exe` 对拍**，字段与消息顺序仍属待验证假设；
+- 认证码一次性消费与断线清理仅覆盖 GAME 连接的会话生命周期；LOGIN/SELECT 网关的连接数/频率限制、
+  空闲超时仍未实现（沿用 Delphi `IsConnLimited` 语义待移植），Netty 替换同样未完成；
 - 近战战斗、近战怪物 AI、掉落/拾取及 HP/MP/等级/经验/背包重登存档已实现；W04 起背包条目携带完整
   `TStdItem` 模板、稳定 `MakeIndex` 与耐久，`SM_ADDITEM/SM_BAGITEMS` 输出 76 字节 `TClientItem`
   载荷（`TStdItem` 为 66 字节：`String[20]` 占 21 字节，Delphi 源码 "60 bytes" 注释已过时）；
