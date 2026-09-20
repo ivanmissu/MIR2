@@ -1,12 +1,17 @@
 name: Java server dist build
 
-# 手动触发的发布通道：编译打包 fat JAR，并强推到 `dist` 孤儿分支。
+# 发布通道：编译打包 fat JAR，并强推到 `dist` 孤儿分支。
 # 动机：GitHub Actions artifact 存放在 *.blob.core.windows.net，受限网络环境
 # （如 Arena 沙箱）无法直接 `gh run download`；而 github.com 的 git 协议可达，
 # 因此通过 dist 分支用普通 `git fetch` 获取构建产物。
-# 触发方式：gh workflow run java-server-dist.yml --ref <branch>
+# 说明：workflow_dispatch 要求 workflow 文件存在于默认分支；在功能分支上
+# 依赖 push 触发（java-server/** 或本文件变更时）。
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - 'java-server/**'
+      - '.github/workflows/java-server-dist.yml'
 
 permissions:
   contents: write
