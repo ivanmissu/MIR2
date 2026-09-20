@@ -1,0 +1,21 @@
+{
+  "name": "mir2-front-root",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "shared",
+    "bridge",
+    "web"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "test": "npm run test --workspace=@mir2/bridge",
+    "bridge": "npm run dev --workspace=@mir2/bridge",
+    "web": "npm run dev --workspace=@mir2/web",
+    "dev": "concurrently -n \"bridge,web\" -c \"cyan,magenta\" \"npm run bridge\" \"npm run web\"",
+    "start": "concurrently -n \"bridge,web\" -c \"cyan,magenta\" \"npm run start --workspace=@mir2/bridge\" \"npm run preview --workspace=@mir2/web\""
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.0"
+  }
+}
