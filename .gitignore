@@ -70,3 +70,12 @@ java-server/reports/
 java-server/**/reports/
 mir2.db
 reports/
+
+# Node.js and Web build artifacts
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+.vite/
+**/coverage/
+
