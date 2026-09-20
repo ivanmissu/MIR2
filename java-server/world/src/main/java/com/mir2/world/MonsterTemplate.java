@@ -30,6 +30,13 @@ public record MonsterTemplate(
     drops = List.copyOf(drops);
   }
 
+  /** Resolves the templates currently supported by the Java combat slice. */
+  public static MonsterTemplate forName(String name) {
+    if (name.equalsIgnoreCase("chicken") || name.equals("鸡")) return chicken();
+    if (name.equalsIgnoreCase("orc") || name.equals("半兽人")) return orc();
+    throw new IllegalArgumentException("unsupported monster template: " + name);
+  }
+
   /** Packs a monster appearance the same way {@code MakeMonsterFeature} does in ObjBase.pas. */
   public static int packFeature(int raceImage, int weapon, int appearance) {
     if (raceImage < 0 || raceImage > 0xff) throw new IllegalArgumentException("race image must be a byte");

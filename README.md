@@ -180,6 +180,7 @@ java -jar java-server/wiretool/target/mir2-wiretool.jar replay \
 | `MIR2_WORLD_TICK_MS` | `50` | 世界逻辑 Tick 间隔（毫秒） |
 | `MIR2_MONSTER_COUNT` | `0` | 启动时在出生点四周生成的怪物数量（0 表示不生成） |
 | `MIR2_MONSTER_KIND` | `chicken` | 怪物种类：`chicken`（鸡）或 `orc`（半兽人） |
+| `MIR2_MONGEN_FILE` | 未设置 | 可选：经典 `MonGen.txt` 刷怪配置；支持 `loadgen`、地图/坐标/范围/数量/分钟/刷新率字段（当前启动时生成首批） |
 | `MIR2_MAX_CONNECTIONS_PER_IP` | `128` | 三个网关合计的单 IP 活跃连接上限 |
 | `MIR2_CONNECTION_ATTEMPTS_PER_WINDOW` | `300` | 单 IP 滑动窗口内的新连接尝试上限 |
 | `MIR2_CONNECTION_ATTEMPT_WINDOW_SECONDS` | `60` | 新连接频率窗口（秒） |

@@ -10,6 +10,8 @@ import com.mir2.persistence.SqliteStore;
 import com.mir2.world.Direction;
 import com.mir2.world.GameMap;
 import com.mir2.world.Mir2MapLoader;
+import com.mir2.world.MonGenLoader;
+import com.mir2.world.MonsterSpawnDefinition;
 import com.mir2.world.MonsterTemplate;
 import com.mir2.world.Position;
 import com.mir2.world.WorldEngine;
@@ -75,7 +77,11 @@ public final class Mir2Server implements AutoCloseable {
           store,
           store.itemDatabase());
       world.start();
-      spawnMonsters(initialMap, spawn);
+      if (config.monGenFile() == null) {
+        spawnMonsters(initialMap, spawn);
+      } else {
+        spawnMonGen(initialMap, config.monGenFile());
+      }
 
       CharacterService characters = new CharacterService(store);
       LegacyGateHandler.WorldConfig worldConfig = new LegacyGateHandler.WorldConfig(
@@ -97,6 +103,41 @@ public final class Mir2Server implements AutoCloseable {
       close();
       throw error;
     }
+  }
+
+  /** Loads legacy MonGen rows and materialises their initial population on the configured map. */
+  private void spawnMonGen(GameMap map, Path monGenFile) throws IOException {
+    int placed = 0;
+    for (MonsterSpawnDefinition definition : MonGenLoader.load(monGenFile)) {
+      if (!definition.mapName().equalsIgnoreCase(map.name())
+          && !definition.mapName().equalsIgnoreCase(Integer.toString(map.id()))) continue;
+      MonsterTemplate template;
+      try {
+        template = MonsterTemplate.forName(definition.monsterName());
+      } catch (IllegalArgumentException unsupported) {
+        LOG.warning("Skipping MonGen row with unsupported monster '" + definition.monsterName() + "'");
+        continue;
+      }
+      int wanted = Math.min(definition.count(), 1_000);
+      for (int i = 0; i < wanted; i++) {
+        int side = Math.max(1, definition.range() * 2 + 1);
+        int dx = (i % side) - definition.range();
+        int dy = (i / side) % side - definition.range();
+        Position candidate = new Position(definition.x() + dx, definition.y() + dy);
+        if (!map.canWalk(candidate)) continue;
+        try {
+          world.spawnMonster(template, map.id(), candidate, Direction.DOWN).get(5, TimeUnit.SECONDS);
+          placed++;
+        } catch (InterruptedException interrupted) {
+          Thread.currentThread().interrupt();
+          return;
+        } catch (ExecutionException | TimeoutException error) {
+          LOG.log(Level.WARNING, "MonGen spawn failed at " + candidate, error);
+        }
+      }
+    }
+    int spawned = placed;
+    LOG.info(() -> "Loaded MonGen " + monGenFile + ": spawned " + spawned + " monsters");
   }
 
   /** Rings monsters around the spawn point so a real client can immediately test the kill loop. */

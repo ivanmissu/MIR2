@@ -1,6 +1,6 @@
 # MIR2 服务端 Java 化迁移 开发计划书
 
-*Development Plan · v1.0.15 · 2026-09-20*
+*Development Plan · v1.0.16 · 2026-09-20*
 
 **30 周日历（约 7 个月）** · **2 人团队 · 240 人日** · **6 道决策门 G0–G5** · **上线目标：2027 年 5 月** · **全程 Linux/Docker 交付**
 
@@ -707,6 +707,7 @@ staging 从 P1 起常驻（对拍需要）；prod 在 W28 预备。**所有环�
 | `v1.0.13` | `2026-09-20` | 固化受限沙箱工具链 Runbook：新增 `.github/workflows/java-server-dist.yml`（CI 编译 fat JAR 并 force-push 到 `dist` 孤儿分支，绕开被阻断的 Actions artifact 存储/Maven Central）；本 session 实测 run `35480880626` → git fetch → PyPI `jdk4py==21.0.8.2`（Temurin 21）→ `java -jar` 三端口启动全通；记录网络可达性矩阵与单分支克隆的显式 refspec 注意点 |
 | `v1.0.14` | `2026-09-20` | W06 交付 traffic recorder / replayer 骨架，**P0 三件套齐活**：新增 `java-server/wiretool` 模块（`.mrec` v1 录制格式、字节透传代理、节奏回放 + 五分类对拍、结构级/字节级双判定、`inspect` 逐帧注解 + `--verify`、中文 Markdown/CSV 报告）；7 个新测试类；CI 新增 `wiretool-smoke` 门禁（实捕 bot 登录 → 结构级 PASS / 字节级因认证码如期 FAIL）；dist 通道同时发布 server/loadtest/wiretool 三 JAR；补写 Windows+Delphi 侧 golden 实捕操作指引 |
 | `v1.0.15` | `2026-09-20` | W07 交付接入层加固第一项：**认证码 GAME 登录消费即失效 + 断线清理**（修复 W06 冒烟暴露的 `GateSessionRegistry.remove` 无调用点缺口）——`LegacyGateHandler.serveGame` 在世界真正接纳玩家后立即消费认证码，并在 `finally` 中做幂等兜底清理；先前"进图失败即重试"的语义（如快速重登留下的 `leavePlayer` 竞态）保持不变，因为消费只发生在真正进图成功之后，重试仍可复用同一认证码。新增 `GateSessionRegistryTest`（4 个用例：非消费性校验、移除后各校验路径均失败、幂等移除、未选角色/角色不匹配拒绝）及 `GameSessionIntegrationTest#certificationIsConsumedOnEntryAndCannotBeReplayedAfterDisconnect`（端到端证明断线后旧认证码无法重放进图）；连接数/频率限制、空闲超时仍是下一步候选（参考 Delphi 三网关共用的 `IsConnLimited`） |
+| `v1.0.16` | `2026-09-20` | 并行推进 W08 后续：新增经典 `MonGen.txt` 解析器，支持 `loadgen` 包含、注释、引号怪物名与 GBK/UTF-8；通过 `MIR2_MONGEN_FILE` 将鸡/半兽人首批刷怪配置接入启动流程，并加入解析单测。刷怪复活调度与更多怪物模板仍留在后续切片 |
 
 > [!WARNING]
 > **合规声明：**本计划仅用于技术学习与私密社区研究。传奇 IP 与美术资源版权归盛趣游戏 / Wemade 所有； 禁止商业运营、公开拉新与客户端资源分发。上线运营前请再次确认法律边界（详见评估报告第 09 节 R8）。
