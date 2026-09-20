@@ -116,7 +116,7 @@ done
 - `Replayer`（`replay` 子命令内核）：只回放客户端事件（帧重新 `#…!` 包裹、噪声原样发），节奏 = 录制时戳 ÷ `--speed`（或 `--max-speed`）；读取线程旁收服务端帧/噪声；发送被对端截断时记录 note 并继续对拍（剩余记 MISSING），绝不抛栈。
 - `ReplayDiff`：按服务端帧序配对，五分类（一致 / 内容差异 + 首差异偏移 / 缺失 / 多余 / 跳过）；字节级判定 = 内容差异+缺失+多余全零，结构级判定（`--structural-only`）只卡缺失+多余——用于认证码/tick 等已知易变字段的会话冒烟，与字节级 golden 判定的语义边界写进了类注释与报告里。
 - `ReplayReport`：中文 Markdown + CSV 双报告（`replay-<label>-<时间戳>`），汇总表 + 差异明细表（帧注解内嵌）;
-- `FrameDescriber`（`inspect`/报告共用）：反射反查 `ProtocolConstants` 数百个 CM_/SM_ 名；客户端帧先探 RunLogin（整条 6-bit 解码出 `**account/character/cert/version/code` 才算，**cert 打码**，避免 6-bit 正文被误当消息头）再探标准包头；服务端帧不剥数字前缀；正文 6-bit+GBK 解码预览；不可解析帧降级 hex 摘要。**注解只是描述，不参与录制/回放的正确性**。
+- `FrameDescriber`（`inspect`/报告共用）：反射反查 `ProtocolConstants` 数百个 CM_/SM_ 名；客户端帧先探 RunLogin（整条 6-bit 解码出 `**account/character/cert/version/code` 才算，**cert 打码**，避免 6-bit 正文被误当消息头）再探标准包头；服务端帧识别 `+GOOD/+FAIL/<tick>` 原始应答帧且不剥数字前缀；正文 6-bit+GBK 解码预览；不可解析帧降级 hex 摘要。**注解只是描述，不参与录制/回放的正确性**。
 - `WireToolMain`：`record` / `replay` / `inspect` 三子命令，退出码约定 0=OK/PASS、1=回放 FAIL 或 inspect verify 失败、2=用法或 I/O 错误；完整中文 `--help`。
 - CI：`java-server.yml` 新增 `wiretool-smoke` job——实起 fat JAR 服务端 + 录制代理 + 2 bot 经代理登录，随后 `inspect --verify`（全帧可解析）、结构级回放（PASS 退出 0）、字节级回放（因 `SM_SELECTSERVER_OK` 内嵌随机认证码如期 FAIL 退出 1，反向证明对拍不是摆设），产物（捕获 + 报告）上 artifact；dist 通道改为同时发布 `mir2-server.jar` / `mir2-loadtest.jar` / `mir2-wiretool.jar`（各自 sha256）。
 

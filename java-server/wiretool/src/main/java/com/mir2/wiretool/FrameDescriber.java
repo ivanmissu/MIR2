@@ -45,6 +45,8 @@ public final class FrameDescriber {
     // its 6-bit body would otherwise decode into a garbage-but-plausible message header.
     String runLogin = tryRunLogin(kind, payload, offset);
     if (runLogin != null) return label + " " + runLogin;
+    String ack = tryActionAck(kind, payload);
+    if (ack != null) return label + " " + ack;
     String packet = tryPacket(kind, payload, offset);
     if (packet != null) return label + " " + packet;
     return label + " unparsed " + payload.length + "B hex=" + hexPreview(payload);
@@ -57,12 +59,13 @@ public final class FrameDescriber {
     return name == null ? "IDENT_" + ident : name + "(" + ident + ")";
   }
 
-  /** {@code true} when the payload parses as a header+body packet or a RunLogin first packet. */
+  /** {@code true} when the payload parses as a header+body packet, RunLogin, or action ack. */
   public static boolean parses(Recording.Kind kind, byte[] payload) {
     if (kind == Recording.Kind.MARKER) return true;
     if (!kind.frame()) return false;
     int offset = sequenceDigitOffset(kind, payload);
-    return tryRunLogin(kind, payload, offset) != null || tryPacket(kind, payload, offset) != null;
+    return tryRunLogin(kind, payload, offset) != null || tryActionAck(kind, payload) != null
+        || tryPacket(kind, payload, offset) != null;
   }
 
   private static String tryPacket(Recording.Kind kind, byte[] payload, int offset) {
@@ -87,6 +90,18 @@ public final class FrameDescriber {
       text.append(" body=\"").append(decodedPreview(encodedBody)).append('"');
     }
     return text.toString();
+  }
+
+  /** Server-side raw action acknowledgements: {@code +GOOD/<tick>} / {@code +FAIL/<tick>}. */
+  private static String tryActionAck(Recording.Kind kind, byte[] payload) {
+    if (kind != Recording.Kind.SERVER_FRAME || payload.length < 7 || payload[0] != '+')
+      return null;
+    String text = new String(payload, StandardCharsets.ISO_8859_1);
+    if (!text.startsWith("+GOOD/", 0) && !text.startsWith("+FAIL/", 0)) return null;
+    for (int index = 6; index < text.length(); index++) {
+      if (!Character.isDigit(text.charAt(index))) return null;
+    }
+    return "ack " + text.substring(0, 5) + " tick=" + text.substring(6);
   }
 
   private static String tryRunLogin(Recording.Kind kind, byte[] payload, int offset) {

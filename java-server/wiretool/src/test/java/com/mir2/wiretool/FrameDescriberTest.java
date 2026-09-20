@@ -47,6 +47,22 @@ class FrameDescriberTest {
   }
 
   @Test
+  void recognizesServerActionAcknowledgements() {
+    byte[] good = "+GOOD/2897877".getBytes(StandardCharsets.ISO_8859_1);
+    String description = FrameDescriber.describe(Recording.Kind.SERVER_FRAME, good);
+    assertTrue(description.contains("ack +GOOD tick=2897877"), description);
+    assertTrue(FrameDescriber.parses(Recording.Kind.SERVER_FRAME, good));
+
+    byte[] fail = "+FAIL/42".getBytes(StandardCharsets.ISO_8859_1);
+    assertTrue(FrameDescriber.describe(Recording.Kind.SERVER_FRAME, fail)
+        .contains("ack +FAIL tick=42"));
+    // Acks are server-side only and the body must be nothing but the tick digits.
+    assertFalse(FrameDescriber.parses(Recording.Kind.CLIENT_FRAME, good));
+    assertFalse(FrameDescriber.parses(Recording.Kind.SERVER_FRAME,
+        "+GOOD/12x".getBytes(StandardCharsets.ISO_8859_1)));
+  }
+
+  @Test
   void fallsBackToHexForUnparseableFrames() {
     byte[] garbage = new byte[] {(byte) 0xEE, 0x01, 0x02, (byte) 0xFF, 0x10};
     String description = FrameDescriber.describe(Recording.Kind.SERVER_FRAME, garbage);
