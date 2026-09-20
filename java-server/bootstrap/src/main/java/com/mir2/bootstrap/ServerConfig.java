@@ -20,7 +20,20 @@ public record ServerConfig(
     int monsterCount,
     String monsterKind,
     String bootstrapUser,
-    String bootstrapPassword) {
+    String bootstrapPassword,
+    int maxConnectionsPerIp,
+    int connectionAttemptsPerWindow,
+    int connectionAttemptWindowSeconds,
+    int idleTimeoutSeconds) {
+
+  /** Compatibility constructor for embedded tests and load-test callers. */
+  public ServerConfig(Path database, GatePorts ports, String advertisedHost, String serverName,
+      Path mapFile, String mapId, int spawnX, int spawnY, int worldTickMillis, int monsterCount,
+      String monsterKind, String bootstrapUser, String bootstrapPassword) {
+    this(database, ports, advertisedHost, serverName, mapFile, mapId, spawnX, spawnY,
+        worldTickMillis, monsterCount, monsterKind, bootstrapUser, bootstrapPassword,
+        128, 300, 60, 900);
+  }
 
   public ServerConfig {
     Objects.requireNonNull(database, "database");
@@ -35,6 +48,9 @@ public record ServerConfig(
       throw new IllegalArgumentException("world tick interval must be between 1 and 10000 milliseconds");
     if (monsterCount < 0 || monsterCount > 1_000)
       throw new IllegalArgumentException("monster count must be between 0 and 1000");
+    if (maxConnectionsPerIp < 1 || connectionAttemptsPerWindow < 1
+        || connectionAttemptWindowSeconds < 1 || idleTimeoutSeconds < 1)
+      throw new IllegalArgumentException("access-layer limits and timeouts must be positive");
     monsterKind = requireText(monsterKind, "monster kind");
     if (!monsterKind.equals("chicken") && !monsterKind.equals("orc"))
       throw new IllegalArgumentException("monster kind must be 'chicken' or 'orc'");
@@ -65,7 +81,11 @@ public record ServerConfig(
         nonNegativeInt(environment, "MIR2_MONSTER_COUNT", 0),
         value(environment, "MIR2_MONSTER_KIND", "chicken"),
         nullable(environment.get("MIR2_BOOTSTRAP_USER")),
-        nullable(environment.get("MIR2_BOOTSTRAP_PASSWORD")));
+        nullable(environment.get("MIR2_BOOTSTRAP_PASSWORD")),
+        positiveInt(environment, "MIR2_MAX_CONNECTIONS_PER_IP", 128),
+        positiveInt(environment, "MIR2_CONNECTION_ATTEMPTS_PER_WINDOW", 300),
+        positiveInt(environment, "MIR2_CONNECTION_ATTEMPT_WINDOW_SECONDS", 60),
+        positiveInt(environment, "MIR2_IDLE_TIMEOUT_SECONDS", 900));
   }
 
   /** Resolves the configured melee monster used to populate the PoC map. */
