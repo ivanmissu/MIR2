@@ -81,6 +81,9 @@ Java 服务端。
 
 ## 快速开始
 
+> 📦 完整的部署指南（Docker Compose 快速启动、systemd 裸 JAR 部署、受限环境产物获取、
+> 配置项参考与故障排查）见 **[java-server/docs/deployment.md](java-server/docs/deployment.md)**。
+
 ### 1. 构建与测试
 
 在仓库根目录执行：
