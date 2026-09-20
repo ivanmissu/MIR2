@@ -2,6 +2,7 @@ package com.mir2.bootstrap;
 
 import com.mir2.auth.AuthService;
 import com.mir2.character.CharacterService;
+import com.mir2.gate.AccessPolicy;
 import com.mir2.gate.GateServer;
 import com.mir2.gate.LegacyGateHandler;
 import com.mir2.gate.SessionRouter;
@@ -80,7 +81,11 @@ public final class Mir2Server implements AutoCloseable {
       LegacyGateHandler.WorldConfig worldConfig = new LegacyGateHandler.WorldConfig(
           world, config.mapId(), spawn, Direction.DOWN);
       gates = new GateServer(
-          config.ports(), new SessionRouter(auth, characters), config.gateConfig(), worldConfig);
+          config.ports(), new SessionRouter(auth, characters), config.gateConfig(), worldConfig,
+          new AccessPolicy(new AccessPolicy.Config(config.maxConnectionsPerIp(),
+              config.connectionAttemptsPerWindow(),
+              Duration.ofSeconds(config.connectionAttemptWindowSeconds()),
+              Duration.ofSeconds(config.idleTimeoutSeconds()))));
       gates.start();
       LOG.info(() -> "MIR2 Java server started: login=" + config.ports().login()
           + ", select=" + config.ports().select() + ", game=" + config.ports().game()

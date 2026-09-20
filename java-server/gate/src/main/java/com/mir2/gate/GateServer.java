@@ -15,14 +15,21 @@ import java.util.function.BiConsumer;
 public final class GateServer implements AutoCloseable {
   private final GatePorts ports;
   private final BiConsumer<ClientConnection, IOException> handler;
+  private final AccessPolicy accessPolicy;
   private final ExecutorService connections = Executors.newVirtualThreadPerTaskExecutor();
   private final List<ServerSocket> listeners = new CopyOnWriteArrayList<>();
   private final List<ClientConnection> clients = new CopyOnWriteArrayList<>();
   private volatile boolean running;
 
   public GateServer(GatePorts ports, BiConsumer<ClientConnection, IOException> handler) {
+    this(ports, handler, new AccessPolicy());
+  }
+
+  public GateServer(GatePorts ports, BiConsumer<ClientConnection, IOException> handler,
+      AccessPolicy accessPolicy) {
     this.ports = Objects.requireNonNull(ports);
     this.handler = Objects.requireNonNull(handler);
+    this.accessPolicy = Objects.requireNonNull(accessPolicy);
   }
 
   /** Creates a directly usable PoC server with login and character-selection routing. */
@@ -35,6 +42,12 @@ public final class GateServer implements AutoCloseable {
       LegacyGateHandler.WorldConfig world) {
     this(ports, new LegacyGateHandler(
         router, new GateSessionRegistry(), config, Throwable::printStackTrace, world));
+  }
+
+  public GateServer(GatePorts ports, SessionRouter router, LegacyGateHandler.Config config,
+      LegacyGateHandler.WorldConfig world, AccessPolicy accessPolicy) {
+    this(ports, new LegacyGateHandler(
+        router, new GateSessionRegistry(), config, Throwable::printStackTrace, world), accessPolicy);
   }
 
   public synchronized void start() throws IOException {
@@ -58,7 +71,13 @@ public final class GateServer implements AutoCloseable {
     while (!server.isClosed()) {
       try {
         Socket socket = server.accept();
+        AccessPolicy.Permit permit = accessPolicy.tryAcquire(socket.getRemoteSocketAddress());
+        if (permit == null) {
+          socket.close();
+          continue;
+        }
         socket.setKeepAlive(true);
+        socket.setSoTimeout(Math.toIntExact(accessPolicy.idleTimeout().toMillis()));
         ClientConnection connection = new ClientConnection(socket, kind);
         clients.add(connection);
         connections.submit(() -> {
@@ -67,6 +86,7 @@ public final class GateServer implements AutoCloseable {
           } finally {
             clients.remove(connection);
             connection.close();
+            permit.close();
           }
         });
       } catch (IOException error) {
