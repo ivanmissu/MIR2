@@ -69,6 +69,18 @@ Java 服务端。
   偏移/缺失/多余/跳过五分类，中文 Markdown/CSV 报告，退出码即结论），支持已知易变帧跳过清单与
   `--structural-only` 结构级冒烟模式；`inspect` 逐帧注解（CM_/SM_ 名反查、6-bit+GBK 正文预览、
   RunLogin 识别且认证码打码）。Delphi 实捕 golden 后即成为协议回归的基线工具
+- **接入层加固其二（W08）**：三网关共享 `AccessPolicy`——按 IP 的活跃连接上限、滑动窗口新连接频率
+  限制、可配置读空闲超时；超限连接在认证前拒绝，默认值兼容 50 bot 压测
+- **怪物 AI 框架 + 首批 10 种怪、MonGen 自动刷新、在线周期存档（W09）**：`AGGRESSIVE` / `PASSIVE_FLEE`
+  双行为模板（鸡/鹿/稻草人/多钩猫/钉耙猫/洞蛆/蝎子/半兽人/半兽勇士/半兽战士，鹿复刻 `TChickenDeer`
+  逃跑 AI）；`addSpawner` 复刻 `RegenMonsters`——200ms 轮转、`CertList` 存活统计、按行内刷新间隔补足；
+  `MIR2_SAVE_INTERVAL_SECONDS`（默认 600s）逐玩家周期落库（`SaveHumanRcdTime` 语义）
+- **门与传送点（W10）**：`.map` 门锚点解析（`btDoorIndex` `$80` 锚点 + 同 index `±10` 共享
+  `TDoorStatus`）、`CM_OPENDOOR → SM_OPENDOOR_OK`（±12 广播）、500ms 扫拍 + 5 秒自动关门
+  （`ProcessMapDoor` 语义，广播 `SM_CLOSEDOOR`）；`MapInfo.txt`（`loadmapinfo` 包含、`;` 注释、
+  `[id|alias desc idx]` 条目）多图加载与路线行（`src srcX srcY -> dst dstX dstY`）；
+  走/跑落到连接点即换图（`SM_CLEAROBJECTS + SM_CHANGEMAP + SM_MAPDESCRIPTION`），邻近关门压制
+  连接点（`ArroundDoorOpened`），目标不可走则整步回滚（`WalkTo` 语义）
 - 可执行 shaded JAR 与 Docker Compose 打包
 
 ## 环境要求
@@ -174,8 +186,9 @@ java -jar java-server/wiretool/target/mir2-wiretool.jar replay \
 | `MIR2_GAME_PORT` | `7200` | 游戏网关监听端口 |
 | `MIR2_ADVERTISED_HOST` | `127.0.0.1` | 下发给客户端的下一段连接地址 |
 | `MIR2_SERVER_NAME` | `MIR2` | 显示给客户端的服务器名称 |
-| `MIR2_MAP_FILE` | 未设置 | 可选：首张 Delphi `.map` 文件；未设置时建立 256×256 空白 PoC 地图 |
-| `MIR2_MAP_ID` | `0` | 首张地图 ID（对应客户端地图文件名） |
+| `MIR2_MAP_FILE` | 未设置 | 可选：首张 Delphi `.map` 文件；未设置时建立 256×256 空白 PoC 地图（与 `MIR2_MAPINFO_FILE` 互斥） |
+| `MIR2_MAPINFO_FILE` | 未设置 | 可选：经典 `MapInfo.txt`（`loadmapinfo` 包含、`[id|alias desc idx]` 地图条目、路线行）；按条目从同目录加载 `<id>.map` 多图并注册地图连接点（与 `MIR2_MAP_FILE` 互斥） |
+| `MIR2_MAP_ID` | `0` | 首张地图 ID（对应客户端地图文件名；`MIR2_MAPINFO_FILE` 模式下必须是已加载地图之一） |
 | `MIR2_SPAWN_X` / `MIR2_SPAWN_Y` | `10` / `10` | GAME 首次进图坐标；占用时自动选择邻近可行走格 |
 | `MIR2_WORLD_TICK_MS` | `50` | 世界逻辑 Tick 间隔（毫秒） |
 | `MIR2_MONSTER_COUNT` | `0` | 启动时在出生点四周生成的怪物数量（0 表示不生成） |
@@ -250,7 +263,10 @@ docker compose -f java-server/compose.yml up --build
   `TStdItem` 模板、稳定 `MakeIndex` 与耐久，`SM_ADDITEM/SM_BAGITEMS` 输出 76 字节 `TClientItem`
   载荷（`TStdItem` 为 66 字节：`String[20]` 占 21 字节，Delphi 源码 "60 bytes" 注释已过时）；
   物品数值仍是最小占位目录，待导入真实 StdItems 数据后校正；装备穿脱、技能/魔法、远程攻击与
-  57 种怪物仍未实现；
+  剩余 47 种怪物仍未实现；
+- 门与地图连接点（W10）已实现：`.map` 门锚点 + `CM_OPENDOOR` + 5 秒自动关门、`MapInfo.txt` 多图与
+  连接点换图（含目标不可走整步回滚）；昼夜亮暗（`DayBright`）、地图旗标（SAFE/FIGHT/NORECONNECT 等）、
+  城堡门差异分支与跨服切换（`nServerIndex` 不同）仍未实现；
 - DES 封装已按 Delphi 语义实现，但仍需 Delphi 端密文金样本做最终核对。
 
 ## 参与迁移

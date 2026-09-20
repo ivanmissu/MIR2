@@ -11,6 +11,8 @@ import java.nio.file.Path;
 public final class Mir2MapLoader {
   public static final int HEADER_BYTES = 52;
   public static final int CELL_BYTES = 12;
+  /** Offset of {@code btDoorIndex} inside one 12-byte {@code TMapUnitInfo} cell. */
+  public static final int DOOR_INDEX_OFFSET = 6;
   private static final int TITLE_BYTES = 16;
   private static final Charset GBK = Charset.forName("GBK");
 
@@ -37,6 +39,7 @@ public final class Mir2MapLoader {
     String title = new String(data, 5, titleLength, GBK);
 
     byte[] collisionFlags = new byte[(int) cellCount];
+    java.util.List<DoorInfo> doors = new java.util.ArrayList<>();
     for (int x = 0; x < width; x++) {
       for (int y = 0; y < height; y++) {
         int index = x * height + y;
@@ -45,9 +48,19 @@ public final class Mir2MapLoader {
         int foreground = unsignedShort(data, offset + 4);
         if ((background & 0x8000) != 0) collisionFlags[index] = GameMap.BACKGROUND_BLOCKED;
         if ((foreground & 0x8000) != 0) collisionFlags[index] = GameMap.FOREGROUND_BLOCKED;
+
+        // Envir.pas LoadMapData doors: btDoorIndex & $80 marks a door anchor cell and
+        // (& $7f) is the door's index within the map; index 0 means "no door".
+        int doorFlag = Byte.toUnsignedInt(data[offset + DOOR_INDEX_OFFSET]);
+        if ((doorFlag & 0x80) != 0) {
+          int doorIndex = doorFlag & 0x7f;
+          if (doorIndex > 0) doors.add(DoorInfo.create(new Position(x, y), doorIndex, doors));
+        }
       }
     }
-    return GameMap.fromCollisionFlags(mapId, title, width, height, collisionFlags);
+    GameMap map = GameMap.fromCollisionFlags(mapId, title, width, height, collisionFlags);
+    for (DoorInfo door : doors) map.addDoor(door);
+    return map;
   }
 
   private static int unsignedShort(byte[] data, int offset) {

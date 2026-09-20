@@ -13,6 +13,7 @@ public record ServerConfig(
     String advertisedHost,
     String serverName,
     Path mapFile,
+    Path mapInfoFile,
     String mapId,
     int spawnX,
     int spawnY,
@@ -32,7 +33,7 @@ public record ServerConfig(
   public ServerConfig(Path database, GatePorts ports, String advertisedHost, String serverName,
       Path mapFile, String mapId, int spawnX, int spawnY, int worldTickMillis, int monsterCount,
       String monsterKind, String bootstrapUser, String bootstrapPassword) {
-    this(database, ports, advertisedHost, serverName, mapFile, mapId, spawnX, spawnY,
+    this(database, ports, advertisedHost, serverName, mapFile, null, mapId, spawnX, spawnY,
         worldTickMillis, monsterCount, monsterKind, null, bootstrapUser, bootstrapPassword,
         128, 300, 60, 900, 600);
   }
@@ -44,6 +45,8 @@ public record ServerConfig(
     serverName = requireText(serverName, "server name");
     mapId = requireText(mapId, "map id");
     if (serverName.indexOf('/') >= 0) throw new IllegalArgumentException("server name must not contain '/'");
+    if (mapFile != null && mapInfoFile != null)
+      throw new IllegalArgumentException("MIR2_MAP_FILE and MIR2_MAPINFO_FILE are mutually exclusive");
     if (spawnX < 0 || spawnX > 0xffff || spawnY < 0 || spawnY > 0xffff)
       throw new IllegalArgumentException("spawn coordinates must be unsigned 16-bit values");
     if (worldTickMillis < 1 || worldTickMillis > 10_000)
@@ -82,6 +85,7 @@ public record ServerConfig(
         value(environment, "MIR2_ADVERTISED_HOST", "127.0.0.1"),
         value(environment, "MIR2_SERVER_NAME", "MIR2"),
         nullablePath(environment.get("MIR2_MAP_FILE")),
+        nullablePath(environment.get("MIR2_MAPINFO_FILE")),
         value(environment, "MIR2_MAP_ID", "0"),
         nonNegativeInt(environment, "MIR2_SPAWN_X", 10),
         nonNegativeInt(environment, "MIR2_SPAWN_Y", 10),

@@ -26,6 +26,16 @@ class ServerConfigTest {
   }
 
   @Test
+  void mapInfoFileIsConfigurableAndConflictsWithTheSingleMapOverride() {
+    ServerConfig config = ServerConfig.from(Map.of("MIR2_MAPINFO_FILE", "envir/MapInfo.txt"));
+    assertEquals(Path.of("envir/MapInfo.txt"), config.mapInfoFile());
+    assertNull(config.mapFile());
+    assertThrows(IllegalArgumentException.class, () -> ServerConfig.from(Map.of(
+        "MIR2_MAP_FILE", "0.map",
+        "MIR2_MAPINFO_FILE", "envir/MapInfo.txt")));
+  }
+
+  @Test
   void firstTenMonsterKindsAndSaveIntervalAreConfigurable() {
     ServerConfig config = ServerConfig.from(Map.of(
         "MIR2_MONSTER_KIND", "scarecrow",

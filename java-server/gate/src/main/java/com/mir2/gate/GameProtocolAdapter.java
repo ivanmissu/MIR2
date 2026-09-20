@@ -71,6 +71,10 @@ public final class GameProtocolAdapter implements WorldEventSink {
         // The client sends its own cell in param/tag, not a packed Recog (ClMain.pas:CM_PICKUP).
         case ProtocolConstants.CM_PICKUP -> reportExceptionalFailure(
             world.pickUp(boundPlayer, new Position(message.param(), message.tag())));
+        // Sent by CheckDoorAction when the player clicks a closed door cell; the Delphi
+        // server answers silently — success shows up as a SM_OPENDOOR_OK broadcast.
+        case ProtocolConstants.CM_OPENDOOR -> reportExceptionalFailure(
+            world.openDoor(boundPlayer, new Position(message.param(), message.tag())));
         // Sent by the client right after SM_LOGON (ClMain.pas:3860) and whenever the bag
         // window needs a refresh; no +GOOD/+FAIL ack is part of the Delphi exchange.
         case ProtocolConstants.CM_QUERYBAGITEMS -> reportExceptionalFailure(
@@ -125,6 +129,11 @@ public final class GameProtocolAdapter implements WorldEventSink {
       case WorldEvent.ItemPickedUp pickedUp -> sendItemPickedUp(pickedUp);
       case WorldEvent.ObjectDisappeared disappeared -> output.accept(new GameOutbound.Packet(
           packet(ProtocolConstants.SM_DISAPPEAR, disappeared.objectId(), 0, 0, 0, "")));
+      case WorldEvent.DoorOpened opened -> output.accept(new GameOutbound.Packet(
+          packet(ProtocolConstants.SM_OPENDOOR_OK, 0, opened.position().x(), opened.position().y(), 0, "")));
+      case WorldEvent.DoorClosed closed -> output.accept(new GameOutbound.Packet(
+          packet(ProtocolConstants.SM_CLOSEDOOR, 0, closed.position().x(), closed.position().y(), 0, "")));
+      case WorldEvent.PlayerMapChanged changed -> sendMapChanged(changed);
       default -> {
         // MapLeft has no client packet; socket closure already ends the local session.
       }
@@ -143,6 +152,7 @@ public final class GameProtocolAdapter implements WorldEventSink {
         || ident == ProtocolConstants.CM_HEAVYHIT
         || ident == ProtocolConstants.CM_BIGHIT
         || ident == ProtocolConstants.CM_PICKUP
+        || ident == ProtocolConstants.CM_OPENDOOR
         || ident == ProtocolConstants.CM_QUERYBAGITEMS;
   }
 
@@ -180,6 +190,24 @@ public final class GameProtocolAdapter implements WorldEventSink {
     for (GroundItem item : entered.visibleItems()) {
       sendItemShow(item);
     }
+  }
+
+  /**
+   * RM_CHANGEMAP sequence (ObjBase.pas): SM_CLEAROBJECTS first (the client flags
+   * g_boMapMoving), then SM_CHANGEMAP carrying the destination name so the client can swap
+   * its map file, then the fresh SM_MAPDESCRIPTION. Appearance events refill the scene.
+   */
+  private void sendMapChanged(WorldEvent.PlayerMapChanged changed) {
+    WorldObjectSnapshot player = changed.player();
+    output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_CLEAROBJECTS, player.id(),
+        0, 0, 0, "")));
+    // DayBright() rides in the series slot; with no day/night cycle or DARK/DAYLIGHT map
+    // flags implemented yet we keep the wire-stable value 0, as SM_NEWMAP already does.
+    output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_CHANGEMAP, player.id(),
+        player.position().x(), player.position().y(), 0,
+        WireMessageCodec.encodeBody(changed.map().id()))));
+    output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_MAPDESCRIPTION, -1,
+        0, 0, 0, WireMessageCodec.encodeBody(changed.map().title()))));
   }
 
   private void sendMovement(WorldObjectSnapshot object, MovementKind movement) {

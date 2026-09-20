@@ -1,12 +1,12 @@
 # MIR2 服务端 Java 化迁移 开发计划书
 
-*Development Plan · v1.0.16 · 2026-09-20*
+*Development Plan · v1.0.17 · 2026-09-20*
 
 **30 周日历（约 7 个月）** · **2 人团队 · 240 人日** · **6 道决策门 G0–G5** · **上线目标：2027 年 5 月** · **全程 Linux/Docker 交付**
 
 本计划以《可行性评估报告》的 GO 结论为基线，将 8–12 人月的迁移工程拆解为 **1 个 PoC + 5 个阶段（P0–P4）+ 6 道决策门（G0–G5）**，覆盖团队分工、周级任务分解、工程规范、 CI/CD、发布回滚与预算，可直接作为项目执行与跟踪的依据。
 
-> **执行状态（截至 2026-09-20）**：S0/W01 协议基座已完成；W02 账号、角色、SQLite 持久化已完成；Gate 接入与会话路由已完成初版；可执行 JAR、环境配置、优雅停机及 Docker Compose 已交付。W03 的 **Tick、地图、碰撞、对象生命周期、12 格视野、RunLogin、移动协议及 GAME→World 接线** 已形成自动化闭环；近战攻击、单种怪物 AI、击杀/经验、掉落/拾取与战斗/背包状态落库已完成。W04 **物品目录与背包同步**已交付：完整 `StdItem` 模板与 SQLite `std_items` 目录、复刻 `GetItemNumber` 的稳定 `MakeIndex`、耐久字段、**76 字节 `TClientItem`** 小端编解码，以及 `CM_QUERYBAGITEMS → SM_BAGITEMS`（空包静默）与 `SM_ADDITEM` 完整载荷。W05 交付 **bot 压测军团**：50 机器人 × 5 分钟在 embedded 与 remote-fatjar 双模式均 PASS（0 错误），CI 每个 PR 增跑 50×2 分钟回归。本次会话（W06）交付 **traffic recorder / replayer 骨架**（P0 三件套至此齐活）：新增 `java-server/wiretool` 模块，`record` 透明代理把 `mir2.exe ↔ 服务端（Delphi 或 Java）`双向流量按 `#…!` 帧无损落盘 `.mrec`，`replay` 把录到的客户端帧按原节奏回放到目标服务端并与录制应答**逐字节对拍**（缺失/多余/首差异偏移分类，支持易变帧跳过清单与 `--structural-only` 结构级判定），`inspect` 输出逐帧注解（ident 名反查、GBK 正文、RunLogin 识别、cert 打码）；CI 新增 wiretool 门禁（代理实捕 bot 登录 → inspect 校验 → 结构级回放 PASS / 字节级回放因认证码易变而如期 FAIL）；dist 通道现同时发布 server/loadtest/wiretool 三个 fat JAR。本次会话（W07）交付**接入层加固第一项**：修复 W06 冒烟暴露的 `GateSessionRegistry.remove` 无调用点缺口——认证码在 GAME 登录真正进图成功后立即消费失效，GAME 连接断线（正常/异常）时同步清理 World 侧玩家对象与网关侧认证码；进图失败重试（如快速重登的 `leavePlayer` 竞态）仍可复用同一认证码直至真正进图成功，不影响 bot-swarm 既有的重登语义。真实 `mir2.exe` 对拍与 Delphi 实捕 golden 仍是最大缺口，待 Windows 客户端环境——届时直接用 wiretool 录 Delphi 链路并按字节级 golden 入库；连接数/频率限制与空闲超时仍是接入层加固的下一步候选。
+> **执行状态（截至 2026-09-20）**：S0/W01 协议基座已完成；W02 账号、角色、SQLite 持久化已完成；Gate 接入与会话路由已完成初版；可执行 JAR、环境配置、优雅停机及 Docker Compose 已交付。W03 的 **Tick、地图、碰撞、对象生命周期、12 格视野、RunLogin、移动协议及 GAME→World 接线** 已形成自动化闭环；近战攻击、单种怪物 AI、击杀/经验、掉落/拾取与战斗/背包状态落库已完成。W04 **物品目录与背包同步**已交付：完整 `StdItem` 模板与 SQLite `std_items` 目录、复刻 `GetItemNumber` 的稳定 `MakeIndex`、耐久字段、**76 字节 `TClientItem`** 小端编解码，以及 `CM_QUERYBAGITEMS → SM_BAGITEMS`（空包静默）与 `SM_ADDITEM` 完整载荷。W05 交付 **bot 压测军团**：50 机器人 × 5 分钟在 embedded 与 remote-fatjar 双模式均 PASS（0 错误），CI 每个 PR 增跑 50×2 分钟回归。本次会话（W06）交付 **traffic recorder / replayer 骨架**（P0 三件套至此齐活）：新增 `java-server/wiretool` 模块，`record` 透明代理把 `mir2.exe ↔ 服务端（Delphi 或 Java）`双向流量按 `#…!` 帧无损落盘 `.mrec`，`replay` 把录到的客户端帧按原节奏回放到目标服务端并与录制应答**逐字节对拍**（缺失/多余/首差异偏移分类，支持易变帧跳过清单与 `--structural-only` 结构级判定），`inspect` 输出逐帧注解（ident 名反查、GBK 正文、RunLogin 识别、cert 打码）；CI 新增 wiretool 门禁（代理实捕 bot 登录 → inspect 校验 → 结构级回放 PASS / 字节级回放因认证码易变而如期 FAIL）；dist 通道现同时发布 server/loadtest/wiretool 三个 fat JAR。本次会话（W07）交付**接入层加固第一项**：修复 W06 冒烟暴露的 `GateSessionRegistry.remove` 无调用点缺口——认证码在 GAME 登录真正进图成功后立即消费失效，GAME 连接断线（正常/异常）时同步清理 World 侧玩家对象与网关侧认证码；进图失败重试（如快速重登的 `leavePlayer` 竞态）仍可复用同一认证码直至真正进图成功，不影响 bot-swarm 既有的重登语义。真实 `mir2.exe` 对拍与 Delphi 实捕 golden 仍是最大缺口，待 Windows 客户端环境——届时直接用 wiretool 录 Delphi 链路并按字节级 golden 入库；连接数/频率限制与空闲超时已由 W08 交付。本次会话（W10）交付**门与传送点**：`.map` `btDoorIndex` 门锚点解析（同 index ±10 半径共享 `TDoorStatus`）、`CM_OPENDOOR → SM_OPENDOOR_OK` ±12 广播、500ms 扫拍 5 秒自动关门（`ProcessMapDoor` 语义）、「关门不挡路」客户端本地拦截 quirk 忠实复刻；经典 `MapInfo.txt` 加载器（`loadmapinfo` 子目录内嵌、`;` 注释、`[id|alias desc]` 条目、`GetValidStr3` 分隔符链路线行）与 `MIR2_MAPINFO_FILE` 多图模式；走/跑落格触发换图（`SM_CLEAROBJECTS→SM_CHANGEMAP→SM_MAPDESCRIPTION`、±1 关门压制连接点、目标不可走整步回滚）。城堡门差异分支、跨服切换、MapFlag 旗标与昼夜亮暗显式留在后续切片。
 
 ## ✅ 当前执行进度（Session Handoff）
 
@@ -29,10 +29,11 @@
 | ✅ 完成 | W07：接入层加固——认证码一次性消费 + 断线清理 | `GateSessionRegistry.requireGame` 保持纯校验语义（供进图重试复用同一认证码）；`LegacyGateHandler.serveGame` 在世界真正接纳玩家（`enterPlayerNear` 成功返回）后立即调用 `sessions.remove` 消费认证码，`finally` 块中做幂等兜底清理（覆盖异常路径与正常断线）；同一认证码在被消费或移除后无法再通过 `require`/`select`/`requireGame` 校验，堵住 W06 冒烟暴露的"断线后认证码终身有效、可重放进图"缺口 | `GateSessionRegistry.java`、`LegacyGateHandler.java`；新增 `GateSessionRegistryTest`（4 用例）与 `GameSessionIntegrationTest#certificationIsConsumedOnEntryAndCannotBeReplayedAfterDisconnect`；连接数/频率限制与空闲超时已由 W08 交付；Netty 替换仍未覆盖 |
 | ✅ 完成 | W08：接入层连接数/频率限制 + 空闲超时 | `AccessPolicy` 在三网关共享按 IP 统计活跃连接与滑动窗口新连接尝试；连接超限在认证前拒绝，socket 设置可配置读空闲超时；新增配置项与单测 | `java-server/gate/AccessPolicy.java`、`GateServer.java`、`ServerConfig.java`；`AccessPolicyTest` |
 | ✅ 完成（本地闭环） | W09：怪物 AI 框架扩展（首批 10 种）+ MonGen 自动刷新 + 周期存档 | ① `MonsterBehavior`（AGGRESSIVE / PASSIVE_FLEE）+ `MonsterTemplate` 目录扩到首批 10 种（鸡/鹿/稻草人/多钩猫/钉耙猫/洞蛆/蝎子/半兽人/半兽勇士/半兽战士，中文与 ASCII 名双向解析），鹿实现 `TChickenDeer` 逃跑 AI（远离最近玩家、永不攻击、直线被堵回退两侧向）；② `WorldEngine.addSpawner` 复刻 `TUserEngine.RegenMonsters`：每 `dwRegenMonstersTime`(200ms) 轮转处理一行 MonGen，`CertList` 语义统计存活数，按行内 respawn 间隔随机重掷格子补足击杀损失，`Mir2Server.spawnMonGen` 从一次性首批生成改为注册自动刷新 spawner；③ 周期存档复刻 `ProcessHumans → SaveHumanRcd`：每玩家按 `MIR2_SAVE_INTERVAL_SECONDS`（默认 600s = Delphi `dwSaveHumanRcdTime` 10 分钟）落库，存储异常不中断 tick；④ `MIR2_MONSTER_KIND` 支持全部 10 种模板名。除鸡/半兽人外的 8 种数值为 TODO(verify) 占位，待 Monster.DB 导入与对拍校准 | `MonsterBehavior.java`、`MonsterTemplate.java`、`WorldEngine.java`（Spawner/monsterFlee/savePlayersPeriodically）、`Mir2Server.java`、`ServerConfig.java`、`deployment.md`；新增 `WorldRegenAndBehaviorTest`（5 用例）+ `ServerConfigTest` 扩展；沙箱内经 ECJ 全模块编译 + world/gate/protocol/auth/character/bootstrap-config 测试全绿（persistence/loadtest 需 sqlite-jdbc，由 CI 验证） |
+| ✅ 完成（本地闭环） | W10：门与传送点（`.map` 门锚点 + MapInfo.txt 多图与连接点） | ① 门：`Mir2MapLoader` 解析 `btDoorIndex` `$80` 锚点（`&$7F>0` 才有门），同 index ±10 半径共享 `TDoorStatus`（`DoorInfo`）；服务端如实复刻 "关门不挡路"（`CanWalk*` 不查门，拦截在原客户端本地数据）；`CM_OPENDOOR` 命中锚点即开、±12 广播 `SM_OPENDOOR_OK(x,y)`，重复/非锚点静默；`closeDoorsPeriodically` 复刻 `ProcessMapDoor`——500ms 扫拍、开满 5 秒广播 `SM_CLOSEDOOR`（每条链接锚点一条广播，客户端按 index 扩散，快照见 `MapUnit.pas`）；② 传送点：`MapInfoLoader` 复刻 `QMapInfo`（`loadmapinfo` 从 `MapInfo/` 子目录内嵌、`;` 注释行、`[id|alias desc idx flags]` 条目、`src srcX srcY -> dst dstX dstY` 路线行走 Delphi `GetValidStr3` 分隔符链，`Str_ToInt(x,0)` 容错）；`Mir2Server` 以 `MIR2_MAPINFO_FILE` 接管多图加载（缺 `.map` 文件告警跳过= `AddMapInfo` 语义，`MIR2_MAP_ID` 指定出生图仍需 fail-fast），路由经 `WorldEngine.addRoute` 装入源图 gate 索引（两端地图缺一即丢弃=`AddMapRoute` 失败语义）；③ 走/跑落格触发 `EnterAnotherMap`：成功 → `SM_CLEAROBJECTS→SM_CHANGEMAP(recog=self,param=x,tag=y,series=0[DayBright占位],body=地图名)→SM_MAPDESCRIPTION` + 双图观察者 appear/disappear + 传送者全量视野重灌；目标图格不可走/目标图缺失 → 整步回滚（`WalkTo` 语义，新 `MoveRejection.GATE_TARGET_UNPASSABLE`）；门 ±1 关门压制连接点（`ArroundDoorOpened`）。城堡门差异分支、跨服切换、MapFlag 旗标、昼夜 `DayBright` 显式留在后续切片 | `DoorInfo.java`、`TeleportRoute.java`、`MapInfoLoader.java`、`GameMap.java`（门/路由索引）、`Mir2MapLoader.java`、`WorldEngine.java`（openDoor/closeDoorsPeriodically/addRoute/teleportPlayer）、`GameProtocolAdapter.java`、`Mir2Server.java`、`ServerConfig.java`（`MIR2_MAPINFO_FILE`）；新增 `WorldDoorAndTeleportTest`（8 用例）、`MapInfoLoaderTest`（5 用例）、`Mir2MapLoaderTest` 门解析 2 用例、`GameProtocolAdapterTest` 2 用例、`ServerConfigTest` 扩展；沙箱无 javac（jdk4py 为 JRE）→ 全量编译与测试交 CI（同 W09 前后一致的验证路径） |
 
 ### 当前下一步（Next Session）
 
-> **下次开发起点：**第 1–3、5–9 项已完成；P0 三件套（recorder / replayer / bot-swarm）已由 W05/W06 全部交付并入了 CI 门禁；W07 已堵住认证码断线后可重放进图的缺口；W08 交付连接数/频率限制与空闲超时；W09 交付首批 10 种怪物模板（含鹿的 TChickenDeer 逃跑 AI）、MonGen 自动刷新 spawner（RegenMonsters 语义）与在线周期存档（SaveHumanRcdTime 语义）。主线缺口仍是第 4/8 项的**真实客户端对拍**：需要 Windows + `mir2.exe` 环境，用真客户端验证拾取、`SM_ADDITEM` 载荷与重登 `SM_BAGITEMS`，重点核对 `TClientItem` 76 字节布局推导（`String[20]`=21 字节 → `TStdItem`=66 字节，`MakeIndex` 4 字节对齐至偏移 68）与真客户端 `sizeof(TClientItem)` 是否一致；环境就绪第一时间用 **wiretool `record`** 录下 Delphi 全链路（登录 5000/选人 5100/游戏 7200 各挂一个代理），拿到的 `.mrec` 用 `inspect --verify` 校验后入库为字节级 golden，之后 Java 侧每个协议切片以 `replay`（字节级模式）回归。在对拍环境就绪前，可并行推进：bot-swarm 的加压扩展（更高并发、混合怪物负载现已可用 10 种模板）、门/传送点（`.map` 的 btDoorIndex/btDoorOffset 与 Envir 门列表）、Netty 接入替换。装备穿脱、使用物品（`CM_EAT`）、丢弃（`CM_DROPITEM`）属于后续物品切片，不得在对拍前提前扩展；除鸡/半兽人外 8 种新模板的数值是 TODO(verify) 占位，Monster.DB 导入前不得视为权威。
+> **下次开发起点：**第 1–3、5–9 项已完成；P0 三件套（recorder / replayer / bot-swarm）已由 W05/W06 全部交付并入了 CI 门禁；W07 已堵住认证码断线后可重放进图的缺口；W08 交付连接数/频率限制与空闲超时；W09 交付首批 10 种怪物模板（含鹿的 TChickenDeer 逃跑 AI）、MonGen 自动刷新 spawner（RegenMonsters 语义）与在线周期存档（SaveHumanRcdTime 语义）；W10 交付门与传送点——`.map` 门锚点、`CM_OPENDOOR→SM_OPENDOOR_OK`±12 广播、500ms 扫拍 5 秒自动关门、`MapInfo.txt` 多图加载与连接点换图（失败整步回滚）。主线缺口仍是第 4/8 项的**真实客户端对拍**：需要 Windows + `mir2.exe` 环境，用真客户端验证拾取、`SM_ADDITEM` 载荷与重登 `SM_BAGITEMS`，重点核对 `TClientItem` 76 字节布局推导（`String[20]`=21 字节 → `TStdItem`=66 字节，`MakeIndex` 4 字节对齐至偏移 68）与真客户端 `sizeof(TClientItem)` 是否一致；环境就绪第一时间用 **wiretool `record`** 录下 Delphi 全链路（登录 5000/选人 5100/游戏 7200 各挂一个代理），拿到的 `.mrec` 用 `inspect --verify` 校验后入库为字节级 golden，之后 Java 侧每个协议切片以 `replay`（字节级模式）回归。在对拍环境就绪前，可并行推进：bot-swarm 的加压扩展（更高并发、混合怪物负载、**跨图连接点走图**——W10 后 bot 已具备多图世界对象）、昼夜亮暗与地图旗标（`DayBright`/SAFE/FIGHT/NORECONNECT 等 MapFlag 子集，`SM_DAYCHANGING`/`SM_CHANGEMAP` series 联动）、门耐久/攻击开门等城堡门差异分支、Netty 接入替换。装备穿脱、使用物品（`CM_EAT`）、丢弃（`CM_DROPITEM`）属于后续物品切片，不得在对拍前提前扩展；除鸡/半兽人外 8 种新模板的数值是 TODO(verify) 占位，Monster.DB 导入前不得视为权威。
 
 **W08 已交付（2026-09-20）：**`GateServer` 增加三网关共享的 `AccessPolicy`，按 IP 原子限制活跃连接数与滑动窗口新连接频率；接入成功的 socket 设置可配置读空闲超时，超限连接在认证前拒绝。新增 `MIR2_MAX_CONNECTIONS_PER_IP`、`MIR2_CONNECTION_ATTEMPTS_PER_WINDOW`、`MIR2_CONNECTION_ATTEMPT_WINDOW_SECONDS` 与 `MIR2_IDLE_TIMEOUT_SECONDS` 配置及单测；默认值兼容 50 bot 压测。真实 Delphi `IsConnLimited` 阈值仍待 golden/部署数据校准。
 
@@ -110,6 +111,47 @@ done
 - 端口默认值 7000/7100/7200（`GatePorts.DEFAULT_*`），上例显式改为 17xxx 避免与本地其它服务冲突；启动成功日志为 `MIR2 Java server started: login=…, select=…, game=…`，并自动创建 `MIR2_BOOTSTRAP_USER` 测试账号。
 - 其余可用环境变量：`MIR2_MAP_FILE/MIR2_MAP_ID`、`MIR2_MONSTER_COUNT/MIR2_MONSTER_KIND`、`MIR2_SPAWN_X/Y`、`MIR2_WORLD_TICK_MS`、`MIR2_SERVER_NAME`、`MIR2_ADVERTISED_HOST`（见 `bootstrap/ServerConfig.java`）。
 - **长驻注意**：Arena 会话内要让服务器持续运行请用 start_process 工具；普通 bash 调用超时会连同后台子进程一起被杀（本 session 实测）。
+
+### W10 门与传送点交接明细（2026-09-20）
+
+#### Delphi 事实依据（本切片语义均来自源码核对，非推测）
+
+| 主题 | 依据 | 结论 |
+|---|---|---|
+| 门解析 | `Envir.pas:LoadMapData` | `btDoorIndex & $80 ≠ 0` 且 `& $7F > 0` 才建 `TDoorInfo`；±10 切比雪夫半径内同 index 共享一个 `TDoorStatus`（`nRefCount` 计数链） |
+| 开门 | `ObjBase.pas:ClientOpenDoor` / `UsrEngn.OpenDoor` | `CM_OPENDOOR(1002)`，`nParam2=x / nParam3=y`；`GetDoor` 只命中锚点格；`!boOpened && !bo01` 才执行；`dwOpenTick=now`，±12 玩家收到 `SM_OPENDOOR_OK(612)`（recog=0, param=x, tag=y, 空体），客户端 `TMap.OpenDoor` 再按 index 在 ±10 窗口内扩散整组门 |
+| 关门 | `UsrEngn.ProcessMapDoor`（`dwProcessMapDoorTick` 500ms） | 开满 5 秒（`GetTickCount - dwOpenTick > 5000`）自动关，广播 `SM_CLOSEDOOR(614)`；Delphi 只广播**链接中第一条门记录**的锚点——客户端 `TMap.CloseDoor` 的不对称窗口（`cx-8..cx+10`）负责补齐，复刻此行为并注释 |
+| 关门不挡路 | `Envir.CanWalk/CanWalkOfItem/CanWalkEx` | 服务端行走校验**不查门**；关门拦截是客户端 `TMap.CanMove` 用 `btDoorOffset & $80` 做的本地行为——Java 側忠实复刻为 quirk，不做「服务端关门点位补拦」 |
+| 路线解析 | `LocalDB.pas:QMapInfo` | `MapInfo.txt`：`;` 整行注释、`loadmapinfo <file>` 从 `<dir>/MapInfo/` 子目录内嵌、`[id desc idx flags]` 条目（可选 `[id|alias desc]` 别名，本切片把 alias 解释为 `.map` 文件名覆盖——Delphi 中该分支赋值的 `sNewName` 是**死变量**）、其余非空行为路线；字段级分隔符链与 `Str_ToInt(x,0)` 容错已逐字符复刻 |
+| 路线注册 | `Envir.AddMapRoute` | 两端地图都存在才链接，否则整行丢弃——`WorldEngine.addRoute` 同样返回 false |
+| 触发 | `ObjBase.Walk`（`RunTo`→`Walk(RM_RUN)`） | 走/跑终点格有 `OS_GATEOBJECT` 且 `m_btRaceServer=RC_PLAYOBJECT` 且 `ArroundDoorOpened(当前格)`（±1 内无未开门）才触发 `EnterAnotherMap`；怪物不触发 |
+| 换图 | `ObjBase.EnterAnotherMap` | 目标图/格不可用 → 整步回滚（`WalkTo` 删位还原）；成功 → `SM_CLEAROBJECTS(633)`→`SM_CHANGEMAP(634)`（recog=self, param=x, tag=y, series=DayBright, body=**地图名**）→ 客户端 `g_boMapMoving` 路径重建视野 |
+
+#### 已落地代码
+
+- `world/DoorInfo.java`（锚点 + `DoorStatus` 共享工厂）、`world/TeleportRoute.java`、`world/GameMap.java`（门/路由索引、`aroundDoorOpened`、`withTitle`——`SM_MAPDESCRIPTION` 发的是 MapInfo 描述而非 `.map` 头标题，见 `SendMapDescription`）、`world/Mir2MapLoader.java`（`btDoorIndex` 解析）、`world/MapInfoLoader.java`（include/注释/条目/路线全量解析 + diagnostics）。
+- `world/WorldEngine.java`：`openDoor`（Delphi 静默语义）、`closeDoorsPeriodically`（500ms/5s 常量内联）、`addRoute`、`movePlayer` gate 分支 + `teleportPlayer`（完整事件扇出：MoveAccepted→旧图 Observer disappear→`PlayerMapChanged`→新图 appear + 传送者全量视野与物品重灌）、新 `MoveRejection.GATE_TARGET_UNPASSABLE`。
+- `world/WorldEvent.java`：`DoorOpened`/`DoorClosed`/`PlayerMapChanged` 三种事件。
+- `gate/GameProtocolAdapter.java`：`CM_OPENDOOR` 接入（Delphi 无应答——不发送 `+GOOD/+FAIL`）；`SM_OPENDOOR_OK/SM_CLOSEDOOR`（recog=0, x, y）与 `SM_CLEAROBJECTS→SM_CHANGEMAP→SM_MAPDESCRIPTION` 序列（`DayBright` 长期占位 0，与 `SM_NEWMAP` 既有处理一致）。
+- `bootstrap`：`MIR2_MAPINFO_FILE` 新配置（与 `MIR2_MAP_FILE` 互斥，`ServerConfigTest` 覆盖）；`Mir2Server` 多图加载（缺 `.map` 文件告警跳过）、出生图 fail-fast、路线经命令队列注册、`spawnMonGen` 匹配扩展到全部已加载地图、启动日志带 `maps=/routes=` 汇总。
+
+#### 新增测试（8+5+2+2+1 用例）
+
+- `WorldDoorAndTeleportTest`（8）：±12 广播边界、重复/非锚点静默、链接门共享状态 + 500ms 扫拍 5s 自动关、走路过河全事件扇出（含双图观察者）、跑步同触发、关门压制连接点（开门后恢复传送）、目标不可走整步回滚（占位复原）、未知地图路由丢弃。
+- `MapInfoLoaderTest`（5）：定义行/路线行（含逗号制表符混合、`->` 变体、行尾注释截断）、`loadmapinfo` 子目录内嵌、别名条目 + 非数字坐标回 0、缺失 include 静默跳过、RouteLine→TeleportRoute 转换。
+- `Mir2MapLoaderTest`（+2）：门锚点解码（Point=0 不算门、不同 index 不共享）、同 index ±10 共享/超 10 独立。
+- `GameProtocolAdapterTest`（+2）：开门广播布局 + 静默语义、落 gate 的 SM 序列（`Status(true)→CLEAROBJECTS→CHANGEMAP(body=地图id)→MAPDESCRIPTION`）。
+- `ServerConfigTest`（+1）：`MIR2_MAPINFO_FILE` 解析与互斥校验。
+
+#### 明确未实现 / 注意事项
+
+- **城堡门差异分支不做**：`Castle.pas` 便门守卫（`CheckInPalace` 等）与攻城战相关 `bo01`——城堡子系统未落地；当前语义等同 `Castle=nil` 分支。
+- **昼夜亮暗不做**：`SM_CHANGEMAP`/`SM_NEWMAP` 的 `DayBright` series 与 `SM_DAYCHANGING` 仍按 0 发送，等待昼夜 + `DARK/DAYLIGHT` MapFlag 切片。
+- **MapFlag 不做**：SAFE/FIGHT/NORECONNECT/NEEDSET_ON…（`EnterAnotherMap` 里的 `nNEEDSETONFlag` 关卡检查）与 music id（`SM_MAPDESCRIPTION` recog）暂按 `-1/0` 占位；flag 令牌在 `MapInfoLoader` 已被消费丢弃，后续可原位扩展。
+- **跨服切换不做**（`m_nServerIndex` 不同 → `DisappearA+SwitchData+紧急关连接` 流程）——Java 单进程恒同服，与既有 PoC 范围一致。
+- **怪物不触发连接点**——忠实复刻 `m_btRaceServer=RC_PLAYOBJECT` 分支（Delphi 中怪物落入 gate 会 `Result:=False` 回滚整步，这一怪异路径未复刻，实际地图数据基本不触发；如发现需要请走 quirks 流程）。
+- **回滚语义对齐**：`GATE_TARGET_UNPASSABLE` 是 Java 侧新增的显式拒绝码（Delphi 走 `WalkTo` 静默回滚且不发走路广播），bot/前端按「整步未发生」处理即可——占位复原已在占用索引上验证。
+- mir2-front 网页控制台对 `SM_CLEAROBJECTS/`SM_CHANGEMAP`/`SM_OPENDOOR_OK/`SM_CLOSEDOOR` 只记录不中断（bridge keepalive 未受影响）；真联调对拍仍在等 Windows 客户端环境。
 
 ### W06 traffic recorder / replayer 交接明细（2026-09-20）
 
@@ -312,7 +354,7 @@ done
 
 #### P2–P4
 
-- 🟡 地图碰撞、玩家/近战怪生命周期、12 格视野、基础战斗/经验及协议实发已完成；门/传送和其他非玩家对象未完成
+- 🟡 地图碰撞、玩家/近战怪生命周期、12 格视野、基础战斗/经验及协议实发已完成；**门/传送点已由 W10 交付**（`.map` 门锚点、`CM_OPENDOOR`±12 广播、500ms 扫拍 5 秒自动关、`MapInfo.txt` 多图与连接点换图、目标不可走整步回滚、关门压制连接点）；城堡门差异分支、跨服切换、MapFlag 旗标与昼夜亮暗未完成
 - 🟡 掉落、拾取、46 格背包、状态存档、最小物品目录、`MakeIndex`/耐久与 76 字节 `TClientItem`/`SM_BAGITEMS` 已完成；周期批量存档已由 W09 交付（`MIR2_SAVE_INTERVAL_SECONDS`，默认 10 分钟对齐 `dwSaveHumanRcdTime`）；装备穿脱、物品使用/丢弃未完成（对拍前禁做）
 - 🟡 怪物 AI 框架 + 首批 10 种常见怪已交付（W09：AGGRESSIVE/PASSIVE_FLEE 双行为、MonGen 自动刷新）；除鸡/半兽人外数值为占位，剩余 47 种怪、59 个技能、NPC 脚本未完成
 - ⬜ 交易、组队、PK、红名、行会、攻城
@@ -709,13 +751,14 @@ staging 从 P1 起常驻（对拍需要）；prod 在 W28 预备。**所有环�
 | `v1.0.14` | `2026-09-20` | W06 交付 traffic recorder / replayer 骨架，**P0 三件套齐活**：新增 `java-server/wiretool` 模块（`.mrec` v1 录制格式、字节透传代理、节奏回放 + 五分类对拍、结构级/字节级双判定、`inspect` 逐帧注解 + `--verify`、中文 Markdown/CSV 报告）；7 个新测试类；CI 新增 `wiretool-smoke` 门禁（实捕 bot 登录 → 结构级 PASS / 字节级因认证码如期 FAIL）；dist 通道同时发布 server/loadtest/wiretool 三 JAR；补写 Windows+Delphi 侧 golden 实捕操作指引 |
 | `v1.0.15` | `2026-09-20` | W07 交付接入层加固第一项：**认证码 GAME 登录消费即失效 + 断线清理**（修复 W06 冒烟暴露的 `GateSessionRegistry.remove` 无调用点缺口）——`LegacyGateHandler.serveGame` 在世界真正接纳玩家后立即消费认证码，并在 `finally` 中做幂等兜底清理；先前"进图失败即重试"的语义（如快速重登留下的 `leavePlayer` 竞态）保持不变，因为消费只发生在真正进图成功之后，重试仍可复用同一认证码。新增 `GateSessionRegistryTest`（4 个用例：非消费性校验、移除后各校验路径均失败、幂等移除、未选角色/角色不匹配拒绝）及 `GameSessionIntegrationTest#certificationIsConsumedOnEntryAndCannotBeReplayedAfterDisconnect`（端到端证明断线后旧认证码无法重放进图）；连接数/频率限制、空闲超时仍是下一步候选（参考 Delphi 三网关共用的 `IsConnLimited`） |
 | `v1.0.16` | `2026-09-20` | 并行推进 W08 后续：新增经典 `MonGen.txt` 解析器，支持 `loadgen` 包含、注释、引号怪物名与 GBK/UTF-8；通过 `MIR2_MONGEN_FILE` 将鸡/半兽人首批刷怪配置接入启动流程，并加入解析单测。刷怪复活调度与更多怪物模板仍留在后续切片 |
+| `v1.0.17` | `2026-09-20` | 补记 W09 合并（PR #22）并交付 **W10 门与传送点**：① `.map` `btDoorIndex` 门锚点解析（同 index ±10 共享 `TDoorStatus`）、`CM_OPENDOOR → SM_OPENDOOR_OK` ±12 广播、500ms 扫拍 5 秒自动关（`ProcessMapDoor` 语义，`SM_CLOSEDOOR` 首锚点广播 + 客户端 index 扩散）、「关门不挡路」客户端本地拦截 quirk 忠实复刻；② 经典 `MapInfo.txt` 加载器（`loadmapinfo`、`;` 注释、`[id|alias desc]` 条目、`GetValidStr3` 分隔符链路线行）、`MIR2_MAPINFO_FILE` 多图模式、连接点经 `WorldEngine.addRoute` 注册；③ 走/跑落格换图（`SM_CLEAROBJECTS→SM_CHANGEMAP→SM_MAPDESCRIPTION`、`ArroundDoorOpened` 压制、EnterAnotherMap 失败整步回滚），新 `MoveRejection.GATE_TARGET_UNPASSABLE`；新增 `WorldDoorAndTeleportTest`(8) + `MapInfoLoaderTest`(5) + `Mir2MapLoaderTest`(+2) + `GameProtocolAdapterTest`(+2) + `ServerConfigTest`(+1)；边界：城堡门/跨服切换/MapFlag/昼夜亮暗留后续切片，装备穿脱等仍对拍前禁做；下一步调整：真客户端对拍（仍卡 Windows 环境）+ bot-swarm 加压扩展/Netty 替换并行候选 |
 
 > [!WARNING]
 > **合规声明：**本计划仅用于技术学习与私密社区研究。传奇 IP 与美术资源版权归盛趣游戏 / Wemade 所有； 禁止商业运营、公开拉新与客户端资源分发。上线运营前请再次确认法律边界（详见评估报告第 09 节 R8）。
 
 ---
 
-*📋 MIR2 → JAVA · DEVELOPMENT PLAN v1.0.15*
+*📋 MIR2 → JAVA · DEVELOPMENT PLAN v1.0.17*
 
 基线：ivanmissu/MIR2 · 9 程序 / 142,007 行 Pascal → 单 JVM / Linux·Docker · 兼容 mir2.exe 零改动
 
