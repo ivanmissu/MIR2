@@ -28,7 +28,8 @@ Java 服务端。
     ├── world/          单线程 Tick、地图碰撞、对象生命周期与视野广播
     ├── persistence/    SQLite 持久化
     ├── bootstrap/      进程启动入口与可执行 JAR 打包
-    └── loadtest/       bot 压测军团（全链路稳定性压测与报告）
+    ├── loadtest/       bot 压测军团（全链路稳定性压测与报告）
+    └── wiretool/       流量录制/回放对拍（recorder 透明代理 + replayer 字节级对拍）
 ```
 
 ## 已实现的 Java 功能
@@ -58,6 +59,12 @@ Java 服务端。
   的 50+ 机器人稳定性压测工具，输出中文 Markdown/CSV 报告（进图率、重登数、动作 +GOOD/+FAIL/超时、
   p50/p90/p99/max 应答延迟、服务端消息分布、错误分类）；支持 embedded（进程内起服务端 + JVM 堆采样）
   与 remote（对独立进程的 `mir2-server.jar`）两种模式
+- **流量录制/回放对拍（wiretool 模块，P0 三件套之二）**：`record` 透明代理把 `mir2.exe ↔ 服务端`
+  （Delphi 或 Java）的双向流量按 `#…!` 帧无损落盘 `.mrec`（原始字节透传、半关闭语义保持）；
+  `replay` 将录到的客户端帧按录制节奏回放到目标服务端并与录制应答**逐字节对拍**（一致/内容差异+首差异
+  偏移/缺失/多余/跳过五分类，中文 Markdown/CSV 报告，退出码即结论），支持已知易变帧跳过清单与
+  `--structural-only` 结构级冒烟模式；`inspect` 逐帧注解（CM_/SM_ 名反查、6-bit+GBK 正文预览、
+  RunLogin 识别且认证码打码）。Delphi 实捕 golden 后即成为协议回归的基线工具
 - 可执行 shaded JAR 与 Docker Compose 打包
 
 ## 环境要求
@@ -121,6 +128,32 @@ java -jar java-server/loadtest/target/mir2-loadtest.jar \
 所有参数（持续时间、节奏、重登周期、随机种子、报告目录等）见 `--help`。
 CI 在每个 PR 上跑一轮缩短版（50 机器人 × 2 分钟）作为稳定性回归。
 
+### 5. 流量录制 / 回放对拍（wiretool）
+
+`wiretool` 模块（P0「录制/回放/机器人」三件套之二）提供无需改客户端的流量捕获与回放对拍，
+是后续 Delphi 字节级 golden 的捕获工具与协议回归工具：
+
+```bash
+# 录制：挂在客户端与服务端之间（Delphi 服务端抓 golden 同理，指向 Delphi 门端口）
+java -jar java-server/wiretool/target/mir2-wiretool.jar record \
+  --listen-port 7000 --target-host 127.0.0.1 --target-port 17000 \
+  --out-dir captures --label mir2
+
+# 摘要：逐帧注解（ident 名、GBK 正文、RunLogin），--verify 校验全部帧可解析
+java -jar java-server/wiretool/target/mir2-wiretool.jar inspect \
+  --file captures/<capture>.mrec --verify
+
+# 回放对拍：客户端帧按原节奏重发到目标服务端，应答与录制逐字节比较
+java -jar java-server/wiretool/target/mir2-wiretool.jar replay \
+  --file captures/<capture>.mrec --target-host 127.0.0.1 --target-port 17000 \
+  --max-speed --skip-server-frames 2        # 已知易变帧（认证码等）可跳过
+```
+
+- 回放退出码即结论：0 = 字节级一致，1 = 有差异（中文 Markdown/CSV 报告落在 `reports/`）。
+- `--structural-only` 只判定帧序列形状（缺失/多余），忽略内容差异——适合认证码/tick 随机
+  字段多发的会话冒烟；真正的 golden 判定请用字节级。
+- 录制文件格式 `.mrec` v1：magic + 元数据行 + 逐条（方向、相对毫秒、长度、载荷）；
+  帧外原始字节记为噪声段，整条流可逐字节重构；写入逐条落盘，kill 进程最多损失最后半条。
 
 ## 配置说明
 
@@ -195,8 +228,8 @@ docker compose -f java-server/compose.yml up --build
 
 - 编译与启动冒烟测试**尚不能**证明与真实 `mir2.exe` 完全兼容，真实客户端联调验证仍在
   进行中；bot 压测军团（50 机器人 × 5 分钟全链路，embedded 与 remote 双模式，
-  报告见 `java-server/docs/g0-evidence/`）已先行覆盖协议回归与稳定性，但**不能替代**真实
-  客户端对拍；
+  报告见 `java-server/docs/g0-evidence/`）与 wiretool 录制/回放对拍骨架已先行就位，
+  但**不能替代**真实客户端对拍与 Delphi 实捕 golden；
 - 7200 游戏网关已把 RunLogin、移动与战斗消息接入世界命令队列，并通过双会话 Socket 集成测试；
   但**尚未与真实 `mir2.exe` 对拍**，字段与消息顺序仍属待验证假设；
 - 近战战斗、近战怪物 AI、掉落/拾取及 HP/MP/等级/经验/背包重登存档已实现；W04 起背包条目携带完整

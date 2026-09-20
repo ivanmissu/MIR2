@@ -30,9 +30,9 @@ jobs:
           distribution: temurin
           java-version: '21'
           cache: maven
-      - name: Build executable JAR
-        run: mvn --batch-mode --no-transfer-progress -pl bootstrap -am -DskipTests package
-      - name: Publish JAR to dist branch
+      - name: Build executable JARs
+        run: mvn --batch-mode --no-transfer-progress -pl bootstrap,loadtest,wiretool -am -DskipTests package
+      - name: Publish JARs to dist branch
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -41,8 +41,15 @@ jobs:
           publish_dir="${RUNNER_TEMP}/dist-publish"
           rm -rf "$publish_dir"
           mkdir -p "$publish_dir"
-          cp bootstrap/target/mir2-server.jar "$publish_dir/"
-          sha256sum bootstrap/target/mir2-server.jar | awk '{print $1}' > "$publish_dir/mir2-server.jar.sha256"
+          for jar in mir2-server mir2-loadtest mir2-wiretool; do
+            case "$jar" in
+              mir2-server) module=bootstrap ;;
+              mir2-loadtest) module=loadtest ;;
+              mir2-wiretool) module=wiretool ;;
+            esac
+            cp "$module/target/$jar.jar" "$publish_dir/"
+            sha256sum "$publish_dir/$jar.jar" | awk '{print $1}' > "$publish_dir/$jar.jar.sha256"
+          done
           {
             echo "source_commit=$(git rev-parse HEAD)"
             echo "source_branch=${GITHUB_REF_NAME}"
@@ -53,6 +60,6 @@ jobs:
           git init --initial-branch=dist
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add mir2-server.jar mir2-server.jar.sha256 dist-manifest.txt
-          git commit -m "mir2-server.jar @ ${GITHUB_SHA}"
+          git add *.jar *.jar.sha256 dist-manifest.txt
+          git commit -m "mir2 fat JARs @ ${GITHUB_SHA}"
           git push --force "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:refs/heads/dist
