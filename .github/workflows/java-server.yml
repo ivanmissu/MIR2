@@ -1,0 +1,174 @@
+name: Java server protocol baseline
+on:
+  pull_request:
+  push:
+    paths:
+      - 'java-server/**'
+      - '.github/workflows/java-server.yml'
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: java-server
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Run Maven tests
+        shell: bash
+        run: |
+          set +e
+          mvn --batch-mode --no-transfer-progress verify 2>&1 | tee maven-test.log
+          status=${PIPESTATUS[0]}
+          if (( status != 0 )); then
+            while IFS= read -r line; do
+              message=${line//'%'/'%25'}
+              message=${message//$'\r'/'%0D'}
+              message=${message//$'\n'/'%0A'}
+              echo "::error title=Maven test failure::$message"
+            done < <(grep -E '^\[ERROR\]' maven-test.log | tail -20)
+          fi
+          exit "$status"
+      - name: Upload executable JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: mir2-server-jar
+          path: java-server/bootstrap/target/mir2-server.jar
+          if-no-files-found: error
+          retention-days: 7
+      - name: Smoke-test executable JAR
+        shell: bash
+        run: |
+          MIR2_DATABASE="$RUNNER_TEMP/mir2-smoke.db" \
+          MIR2_LOGIN_PORT=17000 \
+          MIR2_SELECT_PORT=17100 \
+          MIR2_GAME_PORT=17200 \
+          MIR2_BOOTSTRAP_USER=smoke \
+          MIR2_BOOTSTRAP_PASSWORD=smoke-password \
+          java -jar bootstrap/target/mir2-server.jar >"$RUNNER_TEMP/mir2-server.log" 2>&1 &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true' EXIT
+          for attempt in {1..20}; do
+            if (echo >/dev/tcp/127.0.0.1/17000) 2>/dev/null \
+                && (echo >/dev/tcp/127.0.0.1/17100) 2>/dev/null \
+                && (echo >/dev/tcp/127.0.0.1/17200) 2>/dev/null; then
+              exit 0
+            fi
+            sleep 0.5
+          done
+          cat "$RUNNER_TEMP/mir2-server.log"
+          exit 1
+      - name: Validate Compose and build Docker image
+        run: |
+          docker compose --file compose.yml config
+          docker build --tag mir2-java-server:ci .
+  bot-swarm:
+    name: Bot-swarm stability (scaled G0 rehearsal)
+    runs-on: ubuntu-latest
+    needs: test
+    defaults:
+      run:
+        working-directory: java-server
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Build loadtest JAR
+        run: mvn --batch-mode --no-transfer-progress -pl loadtest -am -DskipTests package
+      - name: Run 50-bot embedded swarm (2 minutes)
+        run: |
+          java --enable-native-access=ALL-UNNAMED \
+            -jar loadtest/target/mir2-loadtest.jar \
+            --embedded --bots 50 --duration 2m --monsters 12 --relog-every 30s \
+            --report-dir "$RUNNER_TEMP/bot-swarm-report"
+      - name: Upload bot-swarm report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bot-swarm-report
+          path: ${{ runner.temp }}/bot-swarm-report/
+          if-no-files-found: warn
+          retention-days: 7
+  wiretool-smoke:
+    name: Wiretool record/replay smoke
+    runs-on: ubuntu-latest
+    needs: test
+    defaults:
+      run:
+        working-directory: java-server
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Build server, loadtest and wiretool JARs
+        run: mvn --batch-mode --no-transfer-progress -pl bootstrap,loadtest,wiretool -am -DskipTests package
+      - name: Record a proxied login session and replay it
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORK="$RUNNER_TEMP/wiretool"
+          mkdir -p "$WORK/captures" "$WORK/reports"
+          # 1. Seed the bot accounts, then boot the fat JAR on the non-standard ports.
+          java -jar loadtest/target/mir2-loadtest.jar --prepare-db "$WORK/mir2.db" --bots 2
+          MIR2_DATABASE="$WORK/mir2.db" \
+          MIR2_LOGIN_PORT=17000 MIR2_SELECT_PORT=17100 MIR2_GAME_PORT=17200 \
+            java -jar bootstrap/target/mir2-server.jar >"$WORK/server.log" 2>&1 &
+          server_pid=$!
+          # 2. Recording proxy: clients reach the login gate through port 7000.
+          java -jar wiretool/target/mir2-wiretool.jar record \
+            --listen-port 7000 --target-host 127.0.0.1 --target-port 17000 \
+            --out-dir "$WORK/captures" --label ci \
+            >"$WORK/recorder.log" 2>&1 &
+          recorder_pid=$!
+          cleanup() {
+            kill "$recorder_pid" "$server_pid" 2>/dev/null || true
+            wait "$recorder_pid" 2>/dev/null || true
+            wait "$server_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          for attempt in {1..20}; do
+            if (echo >/dev/tcp/127.0.0.1/17000) 2>/dev/null \
+                && (echo >/dev/tcp/127.0.0.1/7000) 2>/dev/null; then break; fi
+            sleep 0.5
+          done
+          # 3. Two bots log in through the proxy (select/game go direct, that is fine —
+          #    the login gate alone gives a complete request/answer conversation to diff).
+          java -jar loadtest/target/mir2-loadtest.jar \
+            --host 127.0.0.1 --login-port 7000 --bots 2 --duration 20s \
+            --relog-every 12s --ramp 1s --report-dir "$WORK/swarm"
+          sleep 1
+          capture="$(ls -t "$WORK"/captures/*.mrec | head -1)"
+          echo "capture=$capture"
+          # 4. inspect must parse every frame the bots produced.
+          java -jar wiretool/target/mir2-wiretool.jar inspect --file "$capture" --verify
+          # 5. Structural replay passes: the recorded conversation shape must reproduce
+          #    (the certification body is the only volatile field).
+          java -jar wiretool/target/mir2-wiretool.jar replay \
+            --file "$capture" --target-host 127.0.0.1 --target-port 17000 \
+            --max-speed --structural-only --label structural --report-dir "$WORK/reports"
+          # 6. Byte-level replay must FAIL: SM_SELECTSERVER_OK carries a fresh random
+          #    certification, proving the byte comparison is real and not vacuous.
+          if java -jar wiretool/target/mir2-wiretool.jar replay \
+              --file "$capture" --target-host 127.0.0.1 --target-port 17000 \
+              --max-speed --label bytelevel --report-dir "$WORK/reports"; then
+            echo "byte-level replay unexpectedly passed (expected certification mismatch)" >&2
+            exit 1
+          fi
+      - name: Upload wiretool captures and replay reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wiretool-smoke
+          path: ${{ runner.temp }}/wiretool/
+          if-no-files-found: warn
+          retention-days: 7

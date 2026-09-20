@@ -1,0 +1,65 @@
+name: Java server dist build
+
+# 发布通道：编译打包 fat JAR，并强推到 `dist` 孤儿分支。
+# 动机：GitHub Actions artifact 存放在 *.blob.core.windows.net，受限网络环境
+# （如 Arena 沙箱）无法直接 `gh run download`；而 github.com 的 git 协议可达，
+# 因此通过 dist 分支用普通 `git fetch` 获取构建产物。
+# 说明：workflow_dispatch 要求 workflow 文件存在于默认分支；在功能分支上
+# 依赖 push 触发（java-server/** 或本文件变更时）。
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'java-server/**'
+      - '.github/workflows/java-server-dist.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  dist:
+    name: Build fat JAR and publish to dist branch
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: java-server
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Build executable JARs
+        run: mvn --batch-mode --no-transfer-progress -pl bootstrap,loadtest,wiretool -am -DskipTests package
+      - name: Publish JARs to dist branch
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          publish_dir="${RUNNER_TEMP}/dist-publish"
+          rm -rf "$publish_dir"
+          mkdir -p "$publish_dir"
+          for jar in mir2-server mir2-loadtest mir2-wiretool; do
+            case "$jar" in
+              mir2-server) module=bootstrap ;;
+              mir2-loadtest) module=loadtest ;;
+              mir2-wiretool) module=wiretool ;;
+            esac
+            cp "$module/target/$jar.jar" "$publish_dir/"
+            sha256sum "$publish_dir/$jar.jar" | awk '{print $1}' > "$publish_dir/$jar.jar.sha256"
+          done
+          {
+            echo "source_commit=$(git rev-parse HEAD)"
+            echo "source_branch=${GITHUB_REF_NAME}"
+            echo "build_run=${GITHUB_RUN_ID}"
+            echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } > "$publish_dir/dist-manifest.txt"
+          cd "$publish_dir"
+          git init --initial-branch=dist
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add *.jar *.jar.sha256 dist-manifest.txt
+          git commit -m "mir2 fat JARs @ ${GITHUB_SHA}"
+          git push --force "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:refs/heads/dist

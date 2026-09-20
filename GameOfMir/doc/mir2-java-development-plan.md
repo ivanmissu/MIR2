@@ -1,10 +1,319 @@
 # MIR2 服务端 Java 化迁移 开发计划书
 
-*Development Plan · v1.0 · 2026-09-18*
+*Development Plan · v1.0.14 · 2026-09-20*
 
 **30 周日历（约 7 个月）** · **2 人团队 · 240 人日** · **6 道决策门 G0–G5** · **上线目标：2027 年 5 月** · **全程 Linux/Docker 交付**
 
 本计划以《可行性评估报告》的 GO 结论为基线，将 8–12 人月的迁移工程拆解为 **1 个 PoC + 5 个阶段（P0–P4）+ 6 道决策门（G0–G5）**，覆盖团队分工、周级任务分解、工程规范、 CI/CD、发布回滚与预算，可直接作为项目执行与跟踪的依据。
+
+> **执行状态（截至 2026-09-20）**：S0/W01 协议基座已完成；W02 账号、角色、SQLite 持久化已完成；Gate 接入与会话路由已完成初版；可执行 JAR、环境配置、优雅停机及 Docker Compose 已交付。W03 的 **Tick、地图、碰撞、对象生命周期、12 格视野、RunLogin、移动协议及 GAME→World 接线** 已形成自动化闭环；近战攻击、单种怪物 AI、击杀/经验、掉落/拾取与战斗/背包状态落库已完成。W04 **物品目录与背包同步**已交付：完整 `StdItem` 模板与 SQLite `std_items` 目录、复刻 `GetItemNumber` 的稳定 `MakeIndex`、耐久字段、**76 字节 `TClientItem`** 小端编解码，以及 `CM_QUERYBAGITEMS → SM_BAGITEMS`（空包静默）与 `SM_ADDITEM` 完整载荷。W05 交付 **bot 压测军团**：50 机器人 × 5 分钟在 embedded 与 remote-fatjar 双模式均 PASS（0 错误），CI 每个 PR 增跑 50×2 分钟回归。本次会话（W06）交付 **traffic recorder / replayer 骨架**（P0 三件套至此齐活）：新增 `java-server/wiretool` 模块，`record` 透明代理把 `mir2.exe ↔ 服务端（Delphi 或 Java）`双向流量按 `#…!` 帧无损落盘 `.mrec`，`replay` 把录到的客户端帧按原节奏回放到目标服务端并与录制应答**逐字节对拍**（缺失/多余/首差异偏移分类，支持易变帧跳过清单与 `--structural-only` 结构级判定），`inspect` 输出逐帧注解（ident 名反查、GBK 正文、RunLogin 识别、cert 打码）；CI 新增 wiretool 门禁（代理实捕 bot 登录 → inspect 校验 → 结构级回放 PASS / 字节级回放因认证码易变而如期 FAIL）；dist 通道现同时发布 server/loadtest/wiretool 三个 fat JAR。真实 `mir2.exe` 对拍与 Delphi 实捕 golden 仍是最大缺口，待 Windows 客户端环境——届时直接用 wiretool 录 Delphi 链路并按字节级 golden 入库。
+
+## ✅ 当前执行进度（Session Handoff）
+
+| 状态 | 计划任务 | 已交付内容 | 代码位置 / 验收依据 |
+| --- | --- | --- | --- |
+| ✅ 完成 | W01：Grobal2 常量与 12B codec | `TDefaultMessage` 小端序编解码；302 个 `CM_ / SM_` 常量 | `java-server/protocol/DefaultMessage.java`、`ProtocolConstants.java`；`ProtocolTest` |
+| ✅ 完成 | W01：EDcode 6-bit | OLDMODE 6-bit 编解码及消息封装 | `java-server/protocol/SixBitCodec.java`、`MessageCodec.java` |
+| ✅ 完成 | W01：DES | DES/ECB/NoPadding + Delphi 零填充兼容封装 | `java-server/protocol/DesCodec.java`；回环测试 |
+| ✅ 完成 | W01：GBK 字节语义 | 按 GBK 字节截断角色名，避免中文半字符截断 | `java-server/protocol/ByteStrings.java`；边界测试 |
+| ✅ 完成 | W02：登录+选角最小路径中的账号/角色领域模型 | 注册、登录、会话、角色列表、创建、删除 | `java-server/auth`、`java-server/character` |
+| 🟡 部分完成 | W01：20 组 golden | 已有 20 组确定性回环向量；尚未接入 Delphi 实际抓包 golden | `java-server/docs/g0-checklist.md` |
+| ✅ 完成 | W02：SQLite 数据存储 | AuthService、CharacterService 已支持注入 SQLiteStore；账号/角色数据通过 SQLite 持久化并可重启恢复；JDK 21 CI 全量测试已通过 | `java-server/persistence`；GitHub Actions run `35329322893` |
+| ✅ 完成 | 可启动交付基座 | 增加 Main 入口、环境变量配置、首次测试账号、优雅停机、可执行 fat JAR、Dockerfile 与 Compose；JAR 三端口启动冒烟和镜像构建已进入 CI | `java-server/bootstrap`、`Dockerfile`、`compose.yml`；Actions run `35329322893` |
+| 🟡 部分完成 | W02：接入骨架（7000/7100/7200） | 已完成三监听器、`#序号+消息头+消息体!` 分帧、连接状态、整数认证码桥接和登录/选服/角色查询建删选字段映射；GAME 首包已按 `**账号/角色/认证码/版本/登录码` 独立解析，并校验认证码与已选角色；Netty 替换、限速及真客户端验证未完成 | `java-server/gate`；`LegacyGateHandlerTest`、`WireMessageCodecTest` |
+| 🟡 部分完成 | W03：tick、地图、移动广播 | 单 owner Tick、地图/碰撞、12 格视野、7200 RunLogin、GAME 会话进出、`SM_NEWMAP/LOGON/MAPDESCRIPTION`、`TCharDesc`、移动确认与观察者广播均已接通 | `GameProtocolAdapterTest`、`GameSessionIntegrationTest`；模拟双会话闭环已通过，尚缺真客户端对拍 |
+| ✅ 完成（本地闭环） | W03：近战怪、击杀、掉落、拾取与重登存档 | 近战攻击、怪物 AI、经验、掉落/拾取已实现；HP/MP/等级/经验与 46 格背包由 SQLite 原子保存并进图恢复，角色外观字段已落库。真实客户端 `TClientItem` 与对拍仍归并行兼容任务 | `WorldCombatTest`、`GameCombatProtocolTest`、`WorldPersistenceIntegrationTest`；CI run `35427011522` |
+| ✅ 完成（本地闭环） | W04：最小物品目录 + `TClientItem` + 背包同步 | 完整 `StdItem`（66 字节 `TStdItem` 全字段）+ `ItemDatabase` 端口 + SQLite `std_items` 启动种子；`MakeIndex` 复刻 `GetItemNumber` 并按持久化高水位接续；拾取满耐久；76 字节 `TClientItem` 编解码；`CM_QUERYBAGITEMS → SM_BAGITEMS`、`SM_ADDITEM` 完整载荷；W03 背包原位升级 | `ClientItemCodecTest`、`GameCombatProtocolTest`（新增 bag-items 用例）、`SqliteStoreTest`（目录种子 + W03 升级）、`WorldPersistenceIntegrationTest`；CI run `35433957340` 全绿（Maven 全量测试、fat JAR 三端口冒烟、Compose 校验、Docker 镜像构建） |
+| ✅ 完成 | W05：bot 压测军团（P0 三件套之一 + G0「50 bots」项） | 新增 `java-server/loadtest` Maven 模块：`BotWireClient`（复用 gate 公有 `WireMessageCodec`，`#…!` 帧 + 前缀轮转 + 12B 小端头 + 6bit 体 + GBK）、`Mir2Bot`（登录→建号→进图→走/打/捡/查包→周期重登状态机，`+GOOD/+FAIL` 应答计时）、`BotSwarm`（斜坡启动、实时监测行、PASS/FAIL 判定）、`BotMetrics/BotReport`（计数/分位延迟/错误分类 + 中文 Markdown/CSV）、`LoadtestMain`（embedded 进程内起服 + JVM 堆采样 / remote 对独立进程 / `--prepare-db` 批量建号）；8 个新单测（3 个测试类）；CI 新增 `bot-swarm` job（每 PR 跑 50×2 分钟 embedded） | `BotSwarmEmbeddedTest` 等（本地 70/70）；`java-server/docs/g0-evidence/`（50×5 分钟 embedded + remote-fatjar 双报告，均 0 错误）；`.github/workflows/java-server.yml` |
+| ✅ 完成 | W06：traffic recorder / replayer 骨架（**P0 三件套齐活**） | 新增 `java-server/wiretool` 模块（shaded `mir2-wiretool.jar`）：`record` 透明代理（字节透传 + `#…!` 帧/流外噪声分类落盘 `.mrec`，每条连接一个文件，半关闭语义保持一致）、`replay`（客户端帧按录制节奏重发，应答逐字节对拍，差异四分类 + 跳过清单 + `--structural-only`，中文 Markdown/CSV 报告，退出码即结论）、`inspect`（逐帧注解：ident 名反射反查 `ProtocolConstants`、6-bit+GBK 正文、RunLogin 识别且 cert 打码、`--verify` 统计不可解析帧）；dist 通道同步发布三 JAR | 7 个新测试类（录制编解码/分帧/代理/回放/对拍/注解/CLI）；沙箱实跑证据 `java-server/docs/g0-evidence/2026-09-20-wiretool-record-replay-smoke.md`；CI `wiretool-smoke` 门禁 |
+
+### 当前下一步（Next Session）
+
+> **下次开发起点：**第 1–3、5–7 项已完成；P0 三件套（recorder / replayer / bot-swarm）已由 W05/W06 全部交付并入了 CI 门禁。主线缺口仍是第 4/8 项的**真实客户端对拍**：需要 Windows + `mir2.exe` 环境，用真客户端验证拾取、`SM_ADDITEM` 载荷与重登 `SM_BAGITEMS`，重点核对 `TClientItem` 76 字节布局推导（`String[20]`=21 字节 → `TStdItem`=66 字节，`MakeIndex` 4 字节对齐至偏移 68）与真客户端 `sizeof(TClientItem)` 是否一致；环境就绪第一时间用 **wiretool `record`** 录下 Delphi 全链路（登录 5000/选人 5100/游戏 7200 各挂一个代理），拿到的 `.mrec` 用 `inspect --verify` 校验后入库为字节级 golden，之后 Java 侧每个协议切片以 `replay`（字节级模式）回归。在对拍环境就绪前，可并行推进：接入层加固（**认证码 GAME 登录消费即失效 + 断线清理**（W06 冒烟暴露：`GateSessionRegistry.remove` 无调用点）、连接数/频率限制、空闲超时）、bot-swarm 的加压扩展（更高并发、orc 怪物、负载混合）、Delphi `.map` 真实地图加载与 MonGen 配置解析。装备穿脱、使用物品（`CM_EAT`）、丢弃（`CM_DROPITEM`）属于后续物品切片，不得在对拍前提前扩展。
+
+1. ✅ **接通 7200 首包认证：**已按 `Client/ClMain.pas:SendRunLogin` 的 `**账号/角色/认证码/客户端版本/RUNLOGINCODE` 格式增加独立 headerless 首包解析；`GateSessionRegistry` 会在 `CM_SELCHR` 时记录角色，并在 GAME 登录时联合校验认证码、账号和已选角色。非法首包返回 `SM_STARTFAIL` 并关闭连接。
+2. ✅ **实现移动协议适配器：**已将 `CM_TURN / CM_WALK / CM_RUN` 的 `Recog` 打包坐标与 `Tag` 方向转换为 `WorldEngine.turn/move`；成功/拒绝事件转换为 `+GOOD/<tick>` / `+FAIL/<tick>`，观察者事件转换为 `SM_WALK / SM_RUN / SM_TURN / SM_DISAPPEAR`。
+3. ✅ **补齐进图最小消息并接线会话：**`MapEntered` 已转换为 `SM_NEWMAP + SM_LOGON + SM_MAPDESCRIPTION`，实现 8 字节小端 `TCharDesc` 与 16 字节 `TMessageBodyWL`；认证 GAME socket 会加入/移出 `WorldEngine`，支持可配置出生点和邻近空位选择。双模拟会话已覆盖“进入→互相出现→走/跑→离开视野→断线清理”。
+4. **真实客户端对拍：**用真 `mir2.exe` 和 Delphi 抓包确认 RunLogin、`+GOOD/+FAIL`、`SM_*` 字段及应答顺序，重点核对日夜亮度、裸装 Feature、角色名/颜色附加体、完整 `SM_LOGON` 后续序列，以及 **拾取 → `SM_ADDITEM` 的 76 字节 `TClientItem` 载荷** 与 **`SM_LOGON` 后客户端自发 `CM_QUERYBAGITEMS` → `SM_BAGITEMS` 的应答顺序与字段**；差异补进 golden，同时保持 Maven/JDK 21、fat JAR 冒烟和 Docker 构建全绿。
+5. ✅ **近战战斗切片：**已实现 `Ability`（HP/MP/DC/AC/等级/经验）、`AttackKind`、单格正面攻击与 Delphi 共用的 `CM_HIT` 动作间隔、伤害 = 攻击随机值 − 防御随机值；`MonsterTemplate`（鸡 / 半兽人）带视野索敌、追击、独立攻击间隔与尸体超时清理；`ItemDrop` / `GroundItem` 实现「N 分之一」掉落、地面物品视野同步与 `CM_PICKUP` 拾取；协议侧新增 `SM_HIT/HEAVYHIT/BIGHIT`、`SM_STRUCK`（TMessageBodyWL）、`SM_HEALTHSPELLCHANGED`、`SM_DEATH`（TCharDesc）、`SM_WINEXP`、`SM_ITEMSHOW/ITEMHIDE/ADDITEM`。
+6. ✅ **战斗与背包状态落库：**新增 `PlayerStateStore` 端口及 SQLite 实现，将完整 `Ability` 与最多 46 个 `BackpackItem` 在伤害、经验、拾取和离场时保存；进图在 `MapEntered` 前按角色 UUID 恢复。`character_state` 与 `character_inventory` 事务更新，角色删除级联清理；旧 W02 `characters` 表自动增加性别/发型/衣服/武器外观列并回填默认状态。`CM_NEWCHR` 的 hair/sex 已贯通到 `SM_LOGON Feature`。`WorldPersistenceIntegrationTest` 覆盖 Store/World 双重启后的 HP、经验、背包恢复。
+7. ✅ **最小物品目录与背包同步（W04）：**`StdItem`/`ItemDatabase`/`StdItems` 落地最小目录（鸡肉/鹿肉/木剑/金创药(小量)）并以 SQLite `std_items` 持久化；`MakeIndex` 复刻 `GetItemNumber` 语义并从持久化高水位接续；`ClientItemCodec` 输出 76 字节小端 `TClientItem`；`CM_QUERYBAGITEMS → SM_BAGITEMS` 与 `SM_ADDITEM` 完整载荷接通；W03 背包行原位升级并在进图时重编号。物品数值仍为 TODO(verify) 占位，待真实 StdItems 数据导入。
+8. **真实客户端对拍（可并行）：**用真 `mir2.exe` 和 Delphi 抓包确认 RunLogin、`+GOOD/+FAIL`、进图与战斗 `SM_*` 的字段及应答顺序，差异补进 golden。
+9. 接入层的连接数限制、消息大小/频率限制、空闲超时和 Netty 替换仍需完成，但不阻塞上述 world 协议闭环的 PoC 顺序。
+10. 57 种怪物、技能/魔法、远程与群攻仍不得提前扩展，等存档闭环与对拍完成后再按 P2 计划推进。
+
+### 工具链 Runbook：GitHub Actions 编译打包 → fetch 产物 → jdk4py 启动（Agent 备忘，2026-09-20 实测）
+
+> **场景**：受限沙箱（Arena）内无 `java`/`mvn`，需要拿到可运行的服务端 fat JAR 并启动。**全程实测通过**（CI run `35480880626` → dist 分支 `47b1f8b` → jdk4py Temurin 21.0.8 → 三端口 17000/17100/17200 全部 UP）。
+
+#### 网络事实（决定路径选择）
+
+| 目的地 | 可达性 | 影响 |
+| --- | --- | --- |
+| `github.com`（git push/fetch、gh api、api.github.com）、PyPI、`codeload.github.com` | ✅ 可达 | CI 触发、git 拉产物、装 jdk4py 都可行 |
+| `repo.maven.apache.org`（Maven Central）、`dlcdn.apache.org` | ❌ TLS 握手即断 | **沙箱本地编译不可行**（依赖拉不下来） |
+| `productionresultssa*.blob.core.windows.net`（Actions artifact 存储）、`objects.githubusercontent.com`（Release 资产）、`raw.githubusercontent.com` | ❌ TLS 握手即断 | **`gh run download` / Release 下载在沙箱内不可用**，产物必须走 git 通道（`dist` 分支） |
+
+#### Step 1 · 让 GitHub Actions 编译打包（两条通道）
+
+- **主流水线** `.github/workflows/java-server.yml`：push/PR 触发 `mvn verify` 全量测试，并上传 artifact `mir2-server-jar`（即 `java-server/bootstrap/target/mir2-server.jar`，保留 7 天）。**仅在 artifact 存储可达的环境**（如本地开发机）可直接下载：
+  ```bash
+  gh run list --branch <branch> --limit 3            # 找到成功的 run id
+  gh run download <run-id> -n mir2-server-jar -D /tmp/mir2-dist
+  ```
+- **沙箱通道** `.github/workflows/java-server-dist.yml`（本 session 新增）：`java-server/**` 或该文件变更时 push 自动触发（`workflow_dispatch` 需文件先合入默认分支 master 才可用，功能分支上走 push 触发即可）。job 执行 `mvn -pl bootstrap -am -DskipTests package`，随后把 fat JAR + sha256 + manifest **force-push 到 `dist` 孤儿分支**（每次全量覆盖，无历史膨胀）。产物清单：`mir2-server.jar`、`mir2-server.jar.sha256`、`dist-manifest.txt`（记录源提交/分支/构建 run）。
+
+#### Step 2 · fetch 打好的包（沙箱实测命令）
+
+```bash
+cd /home/user/MIR2
+# 本仓库为单分支克隆（remote.origin.fetch 仅 master），必须用显式 refspec 才会建 origin/dist 跟踪引用
+git fetch origin +refs/heads/dist:refs/remotes/origin/dist --depth=1
+mkdir -p /tmp/mir2-dist
+git show origin/dist:mir2-server.jar        > /tmp/mir2-dist/mir2-server.jar
+git show origin/dist:mir2-server.jar.sha256 > /tmp/mir2-dist/mir2-server.jar.sha256
+git show origin/dist:dist-manifest.txt       # 校对源提交 / 构建 run
+echo "$(cat /tmp/mir2-dist/mir2-server.jar.sha256)  mir2-server.jar" \
+  | (cd /tmp/mir2-dist && sha256sum -c -)
+```
+
+#### Step 3 · PyPI 安装 jdk4py 取得 JDK 21
+
+```bash
+python3 -m venv /tmp/jdk4py-venv                    # 系统 Python 受 PEP 668 限制，直接 pip install 会被拒
+/tmp/jdk4py-venv/bin/pip install jdk4py==21.0.8.2   # Temurin 21.0.8 LTS，匹配 maven.compiler.release=21
+JAVA=$(/tmp/jdk4py-venv/bin/python -c 'import jdk4py; print(jdk4py.JAVA)')
+# jdk4py.JAVA     → <venv>/lib/python3.x/site-packages/jdk4py/java-runtime/bin/java
+# jdk4py.JAVA_HOME → 对应 JAVA_HOME（需要 javac/jar 等全套工具时用）
+```
+
+#### Step 4 · java 命令启动 + 三端口冒烟
+
+```bash
+cd /tmp/mir2-dist
+MIR2_DATABASE=/tmp/mir2-dist/mir2.db \
+MIR2_LOGIN_PORT=17000 MIR2_SELECT_PORT=17100 MIR2_GAME_PORT=17200 \
+MIR2_BOOTSTRAP_USER=smoke MIR2_BOOTSTRAP_PASSWORD=smoke-password \
+"$JAVA" -jar mir2-server.jar &
+for i in $(seq 1 30); do
+  (echo >/dev/tcp/127.0.0.1/17000) 2>/dev/null && (echo >/dev/tcp/127.0.0.1/17100) 2>/dev/null \
+    && (echo >/dev/tcp/127.0.0.1/17200) 2>/dev/null && { echo "ALL 3 PORTS UP"; break; }
+  sleep 1
+done
+```
+
+- 端口默认值 7000/7100/7200（`GatePorts.DEFAULT_*`），上例显式改为 17xxx 避免与本地其它服务冲突；启动成功日志为 `MIR2 Java server started: login=…, select=…, game=…`，并自动创建 `MIR2_BOOTSTRAP_USER` 测试账号。
+- 其余可用环境变量：`MIR2_MAP_FILE/MIR2_MAP_ID`、`MIR2_MONSTER_COUNT/MIR2_MONSTER_KIND`、`MIR2_SPAWN_X/Y`、`MIR2_WORLD_TICK_MS`、`MIR2_SERVER_NAME`、`MIR2_ADVERTISED_HOST`（见 `bootstrap/ServerConfig.java`）。
+- **长驻注意**：Arena 会话内要让服务器持续运行请用 start_process 工具；普通 bash 调用超时会连同后台子进程一起被杀（本 session 实测）。
+
+### W06 traffic recorder / replayer 交接明细（2026-09-20）
+
+#### 已落地代码（`java-server/wiretool/`，Maven 第 9 模块，shaded `mir2-wiretool.jar`）
+
+- `.mrec` 录制格式 v1（`RecordingCodec`）：`MREC` magic + 版本字节 + UTF-8 元数据行（`tool/format/label/listen/target/peer/started`，分号/等号/换行自动转义）+ 逐条记录（1 字节类别 `>`/`<`/`n`/`N`/`E`、u32-LE 相对毫秒、u32-LE 长度、载荷）。writer 每条 flush——录得再久，突然 kill 也只损失最后半条；reader 容忍截断尾部（保留可读前缀，正好覆盖进程被杀的场景）。
+- `FrameSplitter`：与 `WireMessageCodec.readPacket` 同源的增量分类器——帧外字节记为噪声段、超 8KiB 的"帧"降级为噪声且**保留开头 `#`** 使原始字节流可逐字节重构（有不变式单测）；未收尾残尾在 `finish()` 时吐为噪声。
+- `RecorderProxy`（`record` 子命令）：每连接一条虚拟线程 + 双向 pump，**转发的是原始字节块**（录制只是旁路分类），半关闭（`shutdownOutput`）按原样传递；每条连接写一个 `<label>-<时间戳>-<端口>-<序号>.mrec` 并夹入 session-open/close marker；录制写盘失败只告警、绝不掐断代理；`--max-connections N` 便于 CI/单拍；SIGTERM 优雅退出。
+- `Replayer`（`replay` 子命令内核）：只回放客户端事件（帧重新 `#…!` 包裹、噪声原样发），节奏 = 录制时戳 ÷ `--speed`（或 `--max-speed`）；读取线程旁收服务端帧/噪声；发送被对端截断时记录 note 并继续对拍（剩余记 MISSING），绝不抛栈。
+- `ReplayDiff`：按服务端帧序配对，五分类（一致 / 内容差异 + 首差异偏移 / 缺失 / 多余 / 跳过）；字节级判定 = 内容差异+缺失+多余全零，结构级判定（`--structural-only`）只卡缺失+多余——用于认证码/tick 等已知易变字段的会话冒烟，与字节级 golden 判定的语义边界写进了类注释与报告里。
+- `ReplayReport`：中文 Markdown + CSV 双报告（`replay-<label>-<时间戳>`），汇总表 + 差异明细表（帧注解内嵌）;
+- `FrameDescriber`（`inspect`/报告共用）：反射反查 `ProtocolConstants` 数百个 CM_/SM_ 名；客户端帧先探 RunLogin（整条 6-bit 解码出 `**account/character/cert/version/code` 才算，**cert 打码**，避免 6-bit 正文被误当消息头）再探标准包头；服务端帧识别 `+GOOD/+FAIL/<tick>` 原始应答帧且不剥数字前缀；正文 6-bit+GBK 解码预览；不可解析帧降级 hex 摘要。**注解只是描述，不参与录制/回放的正确性**。
+- `WireToolMain`：`record` / `replay` / `inspect` 三子命令，退出码约定 0=OK/PASS、1=回放 FAIL 或 inspect verify 失败、2=用法或 I/O 错误；完整中文 `--help`。
+- CI：`java-server.yml` 新增 `wiretool-smoke` job——实起 fat JAR 服务端 + 录制代理 + 2 bot 经代理登录，随后 `inspect --verify`（全帧可解析）、结构级回放（PASS 退出 0）、字节级回放（因 `SM_SELECTSERVER_OK` 内嵌随机认证码如期 FAIL 退出 1，反向证明对拍不是摆设），产物（捕获 + 报告）上 artifact；dist 通道改为同时发布 `mir2-server.jar` / `mir2-loadtest.jar` / `mir2-wiretool.jar`（各自 sha256）。
+
+#### 验收证据
+
+- 7 个新测试类：`RecordingCodecTest`（往返/元数据转义/截断容忍）、`FrameSplitterTest`（跨块/噪声/未收尾/超帧降级 + 字节重构不变式）、`FrameDescriberTest`（CM_/SM_ 反查、RunLogin 打码、hex 降级）、`ReplayDiffTest`（五分类与两种判定）、`RecorderProxyTest`（回环字节透传、帧/噪声分类、单调时戳、串行连接一文件一连）、`ReplayerTest`（逐字节命中、偏移定位、缺失/多余、节奏缩放、中途断链对拍）、`WireToolMainTest`（CLI 出口码与 verify 语义）。
+- 沙箱实跑（jdk4py JRE + CI 产物）：服务端 + 录制代理 17000→27000 + bot 登录实捕 → inspect 注解 → 结构级/字节级回放，报告存档 `java-server/docs/g0-evidence/2026-09-20-wiretool-record-replay-smoke.md`。
+- 计划书 v1.0.14；CI run 见本 PR 检查区。
+
+#### Delphi 侧 golden 实捕操作指引（Windows 环境就绪后照做）
+
+1. 在 Delphi 服务端机器（或同网段代理机）上放 `mir2-wiretool.jar` 与一个 JRE 21；
+2. 每道门挂一个录制代理：`record --listen-port 7000 --target-host 127.0.0.1 --target-port 17000`（按 Delphi 侧 LoginGate/SelGate/RunGate 实际绑定端口调整；客户端登录器指向代理端口）；
+3. 用真 `mir2.exe` 走完整链路（登录→选人→进图→走/打/捡/重登），Ctrl+C 收工；
+4. `inspect --file <capture>.mrec --verify` 全绿后，把 `.mrec` 与 `inspect` 摘要提交 `java-server/docs/golden/`（后续切片任务）；
+5. 此后 Java 服务端每改一段协议，`replay --file <golden>.mrec --target-host … --target-port …`（字节级）即为回归对拍；易变帧序号用 `--skip-server-frames` 登记并在 PR 里说明。
+
+#### 明确未实现 / 注意事项
+
+- 回放是**单连接**语义：三段式握手要分三次回放（每道门各自的 `.mrec` 对各自端口），不跨连接维持认证态；`SM_LOGON` 之后的 GAME 门会话若要回放字节级 PASS，需要先快照数据库并用 `--skip-server-frames` 登记认证码/tick 帧——骨架期如实暴露，不做 magic。
+- `--skip-server-frames` 的序号以**录制中服务端帧序**为准（`inspect` 列出的序号）；骨架不做模式语言/字节掩码，留待真实 golden 出现后再长。
+- 录制代理不做限速/加密/DES 变换（本链路无 DES），字节透传是唯一职责。
+- recorder 与 replayer 是「golden 捕获与回放对拍」工具，**不能**证明语义正确性——它只能证明两个服务端字节一致；语义仍靠与 Delphi 源码对照与真客户端盲测（计划§05/§10 的铁律不变）。
+- **冒烟顺带暴露（转「接入层加固」切片处理，本切片不修）**：`GateSessionRegistry.remove(certification)` 全库无调用点，认证码断线后终身有效——游戏门回放凭录制里的旧认证码成功重进图（证据文档「暴露的服务端事实」第 1 条）。加固时应实现 GAME 登录消费即失效 + 断线清理，并先对照 Delphi `M2Share` 会话表语义。
+
+### W05 bot 压测军团交接明细（2026-09-19）
+
+#### 已落地代码（`java-server/loadtest/`，Maven 第 8 模块）
+
+- `BotWireClient`：真实线上协议客户端——`#<seq><12B 小端头><6bit 体>!` 帧、客户端前缀轮转 `'1'..'9'`（服务端剥离）、GBK 文本、`+GOOD/<tick>` / `+FAIL/<tick>` 动作确认（先于正常 `SM_` 帧到达）。直接复用 gate 公有的 `WireMessageCodec`/`DefaultMessage`/`MessageCodec`，不复制编解码逻辑。
+- `Mir2Bot`：单个机器人状态机——登录门三步（`CM_PROTOCOL → CM_IDPASSWORD → CM_SELECTSERVER`）、选人门（`CM_QUERYCHR`，无角色则 `CM_NEWCHR` 建号，再 `CM_SELCHR`）、GAME 无头首包 `**账号/角色/认证码/120040918/9`，进图后 `SM_NEWMAP/SM_LOGON/MAPDESCRIPTION` 对齐；游戏循环按 锁定威胁→靠近→攻击 / 拾取地面物 / 随机走跑转向 决策（只用已实现消息），每会话发一次 `CM_QUERYBAGITEMS`；到 `--relog-every` 周期完整退出重登。位置认知漂移已修复：移动成功后同步自身 `position/direction`，`Direction.toward` 相等崩溃以 `towardOrRandom()` 容错。
+- `BotSwarm`：斜坡启动（默认 10s）、`--bots` 个虚拟线程机器人、每 10s 打印监测行（inWorld/entries/relogs/sent/recv/ackP90/errors）、运行结束按 **0 错误且全部进图** 判定 PASS/FAIL；外部 `requestStop()` 干净收场。
+- `BotMetrics` / `BotReport`：计数器（进图、重登、死亡、包收发、按 `SM_` 分布）+ 动作应答延迟分位（p50/p90/p99/max，按动作分类）+ 错误分类计数；输出中文 Markdown 与 CSV 双报告到 `--report-dir`。
+- `LoadtestMain`（可执行 fat JAR 入口）：三种模式——`--embedded`（进程内起 `Mir2Server`，临时库 + 随机端口 + 1s 周期 JVM 堆采样写进报告）、remote（`--host/--login-port` 对独立进程的 `mir2-server.jar`）、`--prepare-db`（批量创建 `bot0001..` 账号）；`--duration/--relog-every` 支持 `PT5M`/`45s`/`5m`/`1h`/纯秒数；随机种子固定可复现；SIGTERM 关停钩子也会写出（部分）报告。
+- CI：`.github/workflows/java-server.yml` 新增 `bot-swarm` job——Maven 构建后跑 50 机器人 × 2 分钟 embedded，报告作为 artifact 上传，非零退出码即失败。
+- 测试：`LongSamplesTest`（最近邻分位）、`BotReportTest`（报告/CSV 内容与不变式）、`BotSwarmEmbeddedTest`（embedded 全链路：多 bot 走/打/捡/重登断言）；本地全套 70/70 通过。
+
+#### 验收证据（G0「50 bots」项）
+
+- **remote 模式**：`mir2-server.jar` 独立进程（24 鸡），50 bots × 5 分钟——PASS，0 错误；350 进图 / 300 次完整重登；22,197 动作、769,008 包收包；turn p50=70.9ms/p90=91.4ms（≈ tick+命令队列的物理下限，PoC 合理）。
+- **embedded 模式**：同规模 5 分钟——PASS，0 错误；JVM 堆峰值 39MB / 结束 24MB（62 次采样，无泄漏迹象）；服务端运行后三端口仍可接受连接。
+- 报告存档：`java-server/docs/g0-evidence/2026-09-19-{remote-fatjar,embedded}-50bots-5min.md/.csv`。
+- 完整 G0 口径（50 × 1 小时）命令：`java -jar loadtest/target/mir2-loadtest.jar --embedded --bots 50 --duration 1h --monsters 24 --relog-every 90s`。
+
+#### 压测暴露的服务端事实（记录，不在本切片修）
+
+- 每次重登的「socket 已关 vs world 写入」竞态会让 `WorldEngine.emit` 打一条 WARNING 堆栈（`Socket is closed`）——**已有 catch 保护，不中断 tick、不丢状态**，但 350 次重登即数百条日志噪音；后续切片可在 gate 出站侧对已关闭连接静默或降频。
+- 高密度出生区（50 bot 锚点 15×15）`+FAIL` 约 21%（格被占）——符合碰撞语义，非缺陷；动作应答 p99 ≈ 125ms，受 50ms tick + 队列深度支配。
+- 本地沙箱用 jdk4py JRE + ECJ 构建（脚本 `~/tools/build-mir2.sh`，仓库外），CI 的 Maven 构建不受影响；`junit-framework` `TestIdentifier.java:321` 的 `ClassNotFoundException` 补丁只在本地工具树，**不入库**。
+
+#### 明确未实现 / 注意事项
+
+- bot 只覆盖**已实现**的 `CM_` 消息；装备穿脱、`CM_EAT`、`CM_DROPITEM`、技能与 57 怪按红线不在 bot 行为里（发现服务器支持后再扩展行为树）。
+- `ackP90<=…ms` 的监测行显示的是**截至当前最差**分位，精确值以最终报告为准。
+- recorder / replayer（P0 三件套另两件）未开始；bot-swarm 是「行为正确性 + 稳定性」证据，不能替代字节级 golden 与真客户端对拍。
+
+### W04 物品目录与背包同步交接明细（2026-09-19）
+
+#### 已落地代码
+
+- `world/StdItem`：完整 `TStdItem` 模板（name/stdMode/shape/weight/aniCount/source/needIdentify/looks/duraMax/ac/mac/dc/mc/sc/need/needLevel/price），u32 字段用 `long` 保存并在写入线上时截断；`packedRange(min,max)` 复刻 `ItmUnit.pas GetItemAddValue` 的 `MakeLong` 打包；`placeholder(name,looks)` 兜底目录外名称。
+- `world/ItemDatabase` + `world/StdItems`：world 内的目录端口（等价 M2Server 内存 `StdItemList`），最小目录 = 鸡肉/鹿肉/木剑/金创药(小量)；数值按经典数据设置但全部标 `TODO(verify)`，待真实 StdItems 导入校正。
+- `world/BackpackItem`：由 `(name, looks)` 升级为 `(StdItem 模板, makeIndex, dura, duraMax)`；`of(template, makeIndex)` 复刻 `CopyToUserItemFromName` 的满耐久创建（实例耐久 = 模板 DuraMax 低 16 位）。
+- `world/WorldEngine`：新增 `ItemDatabase` 注入；`allocateMakeIndex` 复刻 `M2Share.GetItemNumber`（单调递增，超过 `High(Integer)/2-1` 回绕到 1），构造时从 `PlayerStateStore.itemMakeIndexHighWater()` 接续，重启不重号；拾取时按名称解析模板（目录缺失则用地面 looks 兜底）；掉落 Looks 优先取目录模板值；进图恢复时为 W03 旧行（makeIndex=0）重编号。
+- `gate/ClientItemCodec`：76 字节小端 `TClientItem`（packed 66 字节 `TStdItem` + 2 字节对齐填充 + `MakeIndex`(偏移 68) + `Dura`/`DuraMax` word）；`String[20]` 名字槽 = 1 长度字节 + GBK 载荷 + 零填充；`encodeBag` 按 Delphi 惯例给每个条目补尾随 `/`。
+- `gate/GameProtocolAdapter`：`CM_QUERYBAGITEMS → SM_BAGITEMS`（recog=玩家、series=数量、空包完全静默，与 `ObjBase.pas:15952` 一致）；`SM_ADDITEM` 载荷从纯名字升级为完整 `TClientItem`（`SendAddItem` 无分隔符）。
+- `persistence/SqliteStore`：新增 `std_items` 表并在启动时 `INSERT OR IGNORE` 种子目录；`character_inventory` 增加 `make_index/dura/dura_max` 列（W03 原位升级）；载入按名称 LEFT JOIN 模板、缺失时用 placeholder 保留条目；保存时对包内模板 `INSERT OR IGNORE`（首写为准，不覆盖精调数据）；`itemMakeIndexHighWater()` 取 `MAX(make_index)`；`itemDatabase()` 启动快照交给引擎。
+- `bootstrap`：`WorldEngine` 装配接入 `store.itemDatabase()`。
+
+#### 关键证据与推导（TClientItem = 76 字节）
+
+- `TStdItem`（packed，Grobal2.pas:540）：`String[20]` 名字槽 21 字节 + 7 个单字节字段 + `Looks` word + 9 个 dword = **66 字节**（源码 "60 bytes" 注释源自旧版 `String[14]`，已过时）。
+- `TClientItem`（非 packed，Grobal2.pas:562）：`MakeIndex: Integer` 按 4 字节自然对齐落在偏移 68，字节 66–67 为对齐填充，加 `Dura`/`DuraMax` 两个 word 共 **76 字节**；客户端 `ClMain.pas ClientGetAddItem/ClientGetBagItmes` 均按 `sizeof(TClientItem)` 解码。此前计划中的 "68 字节" 是基于过时注释的推导，已更正；最终以 Delphi 抓包 golden 为准。
+- `SM_BAGITEMS`：头 `MakeDefaultMsg(SM_BAGITEMS, Recog, 0, 0, Count)`，正文 = 每件 `EncodeBuffer(TClientItem) + '/'`（含末尾 `/`）；空包不发送。`SM_ADDITEM`：series=1，正文为单个无分隔 `TClientItem` 块。
+- `MakeIndex`：`GetItemNumber`（M2Share.pas:3611）单调递增；`CopyToUserItemFromName`（UsrEngn.pas:1624）创建实例时 `Dura := DuraMax := StdItem.DuraMax`。
+
+#### 验收证据
+
+- `gate/ClientItemCodecTest`：76 字节布局逐偏移断言（GBK 名字槽、`MakeLong(2,5)` 的 DC、66–67 填充、`MakeIndex` 偏移 68）、6-bit 回环、20 字节满槽名字、实例耐久 word 截断、bag 正文 `/` 拼接与空串。
+- `gate/GameCombatProtocolTest`：拾取后 `SM_ADDITEM` 解码出完整模板 + 正数 `MakeIndex`；新增 `CM_QUERYBAGITEMS` 用例断言空包静默、拾取后 series=1 且正文与 `encodeBag` 逐字节一致。
+- `world/WorldCombatTest`：拾取事件携带完整模板、`MakeIndex>0`、满耐久。
+- `persistence/SqliteStoreTest`：磨损木剑（makeIndex=101, dura=7/20）+ 满耐久鸡肉的完整往返；目录种子与未知名称 placeholder 保留；W03 `character_inventory`（仅 name+looks）原位升级、升级行 join 到目录模板、重编号往返；高水位断言。
+- `persistence/WorldPersistenceIntegrationTest`：杀鸡拾取 → 重启 Store/World → 重登，`MakeIndex` 与模板逐字段不丢。
+
+#### 明确未实现 / 注意事项
+
+- 物品数值（价格/恢复量/耐久）是最小占位目录，全部标注 `TODO(verify)`；真实 StdItems.DB 导入前不得用于经济平衡。
+- `SM_UPDATEITEM`（耐久变化）、`CM_EAT`（使用物品）、`CM_DROPITEM`（丢弃）、装备槽 `UseItems` 与 `SM_SENDUSEITEMS` 均未实现，属于后续物品切片。
+- 目录查找按名称精确匹配；Delphi `CompareText` 的大小写不敏感语义对中文名称无影响，待英文物品名导入时再对齐。
+- `TClientItem` 布局是从 Grobal2.pas 字段表推导的（Delphi 记录对齐规则），**尚未有 Delphi 端抓包 golden**；真客户端对拍是 G0 前置条件。
+- 46 件物品的 `SM_BAGITEMS` 正文约 4.7K 字符，低于 8192 字节帧上限；更大背包需分帧时按 Delphi 行为再定。
+
+### W03 存档闭环交接明细（2026-09-19）
+
+#### 已落地代码
+
+- `world/PlayerStateStore` 是 world→持久化端口；`PlayerState` 以角色 UUID 绑定完整 `Ability` 与有序 `BackpackItem`，背包上限固定为 Delphi `MAXBAGITEM=46`。无 JDBC 的 world 单测继续使用 transient no-op 实现。
+- `persistence/SqliteStore` 新增 `character_state` 与 `character_inventory`；能力和完整背包在同一事务中 upsert/替换，角色删除通过外键级联。状态保存会同步 `characters.level`，保证选人界面的等级不滞后。
+- 旧 W02 数据库启动时原位迁移：`characters` 自动增加 `gender/hair/dress_shape/weapon_shape`，既有角色回填默认 `Ability`，无需删库。
+- `WorldEngine` 以角色 UUID 进图，在 `MapEntered` 前恢复状态；玩家受伤、获得经验、拾取和离场均触发保存。拾取先落库再移除地面物品，保存失败会回滚内存背包且不会吞掉掉落。
+- `Character.feature()` 复刻 `MakeHumanFeature(0, dress*2+gender, weapon*2+gender, hair*2+gender)`；`CM_NEWCHR` 的 hair/sex 已进入角色表、选人列表和 GAME 会话，最终用于 `SM_LOGON/TCharDesc`。
+
+#### 验收证据
+
+- `SqliteStoreTest`：覆盖外观、HP/MP/等级/经验、背包重开恢复，角色删除级联，以及 W02 旧表自动升级/状态回填。
+- `WorldPersistenceIntegrationTest`：确定性执行「杀鸡得经验 → 拾取鸡肉 → 半兽人造成 HP 损失 → 关闭并重开 Store/World → 同 UUID 进图」，逐项断言 Ability 与背包不丢。
+- `GameSessionIntegrationTest`：从 `CM_NEWCHR hair/sex` 一直断言到 `SM_LOGON` 的 packed Feature。
+- GitHub Actions run `35427011522` 全绿：Maven/JDK 21 全量测试、fat JAR 上传与三端口冒烟、Compose 校验、Docker 镜像构建。
+
+#### 下一步边界
+
+- ~~当前持久化条目只有名称和 `Looks`~~（已由 W04 交付）：最小物品目录、稳定 `MakeIndex`、耐久字段、76 字节 `TClientItem` 编码以及 `CM_QUERYBAGITEMS → SM_BAGITEMS` 均已落地；真客户端验收重登背包仍待对拍。
+- SQLite 当前按每次战斗状态变化同步写入，满足 PoC 一致性但不代表最终吞吐方案；P2 压测后再决定脏标记/周期批量保存，不得在 G0 对拍前提前复杂化。
+- 角色表已有衣服/武器 shape，但尚无穿脱命令、装备槽和属性重算；这些属于后续物品/装备切片。
+
+### W03 战斗切片交接明细（2026-09-19）
+
+#### 已落地代码
+
+- `world/Ability`：HP/MaxHP、MP/MaxMP、DC/AC 上下限、等级与经验；Delphi 把攻防存成 `Word` 高低字节区间，Java 侧展开存储，仅在上线字节时再打包。
+- `world/AttackKind`：`HIT / HEAVY_HIT / BIG_HIT`，对应 `CM_HIT / CM_HEAVYHIT / CM_BIGHIT`；按 `ObjBase.pas:CheckActionInterval` 的语义共用同一个 `CM_HIT` 动作间隔（默认 900ms）。
+- `WorldEngine.attack`：校验坐标一致、存活、动作间隔，命中正前方单格；伤害 = `rand(minDC..maxDC) - rand(minAC..maxAC)`，下限 0。攻击动画对**攻击者本人不回发**（复刻 `ObjBase.pas:5324` 的 `RM_HIT` 抑制）。
+- `world/MonsterTemplate` + `ItemDrop`：鸡（6HP，必掉鸡肉）与半兽人（45HP，1/2 鹿肉、1/20 木剑）；`feature` 直接按 `MakeMonsterFeature(raceImg, weapon, appr)` 打包存储。
+- `WorldEngine.updateMonsters`：每 Tick 做索敌（视野内最近的存活玩家）、贴身则按怪物攻击间隔攻击、否则按行走间隔追击（正前方受阻时尝试左右相邻方向）；死亡后按 `corpseLingerMillis` 清理尸体并发 `SM_DISAPPEAR`。
+- `world/GroundItem` + `WorldEngine.pickUp`：死亡格优先掉落、被占则扫描周围 8 格；地面物品参与视野进出同步；拾取要求玩家站在同格，取该格最新一件。
+- `gate/GameProtocolAdapter`：新增 `CM_HIT/HEAVYHIT/BIGHIT`（Recog 打包坐标 + Tag 方向）与 `CM_PICKUP`（param/tag 为客户端自身坐标，与 `ClMain.pas:3050` 一致）入站；出站新增 `SM_HIT/HEAVYHIT/BIGHIT`、`SM_STRUCK`（param=HP、tag=MaxHP、series=伤害、body=16B `TMessageBodyWL`）、`SM_HEALTHSPELLCHANGED`、`SM_DEATH`（body=8B `TCharDesc`）、`SM_WINEXP`（recog=总经验、param/tag=本次经验高低字）、`SM_ITEMSHOW/SM_ITEMHIDE/SM_ADDITEM`。
+- `bootstrap`：新增 `MIR2_MONSTER_COUNT`（0–1000）与 `MIR2_MONSTER_KIND`（`chicken`/`orc`），启动时围绕出生点成环布怪，便于真客户端直接验证打怪闭环。
+
+#### 验收证据
+
+- `world/WorldCombatTest`：虚拟时钟 + 固定种子随机数，覆盖击杀与经验、掉落与拾取、怪物追击与反击、动作间隔与坐标不符拒绝、怪物进图可见与尸体超时消失。
+- `gate/GameCombatProtocolTest`：覆盖三种攻击 ident 的入站与观察者广播、击杀链路的 `SM_STRUCK/HEALTHSPELLCHANGED/DEATH/WINEXP/ITEMSHOW` 字段、拾取的 `+GOOD` → `SM_ADDITEM` → `SM_ITEMHIDE` 顺序，以及纯出站事件映射。
+
+#### 明确未实现 / 注意事项
+
+- ~~**完整背包线上载荷仍未实现**~~（已由 W04 交付）：`BackpackItem` 现携带完整模板、`MakeIndex` 与耐久，`SM_ADDITEM/SM_BAGITEMS` 输出 76 字节 `TClientItem`；但未经真客户端对拍前仍不能视为「真客户端验证完成」。
+- 伤害公式是 Delphi 基础攻防区间的简化版，未包含幸运/诅咒、命中闪避、护身与麻痹等修正；等级提升、`SM_LEVELUP` 与属性成长也未实现。
+- 玩家死亡后仅广播 `SM_DEATH` 并禁止移动/攻击，尚无复活、掉落惩罚与 `SM_ALIVE`。
+- 掉落只有物品名与 `Looks`，没有完整 `TClientItem`（60 字节 `TStdItem` + 耐久），因此 `SM_ADDITEM` 目前只带名字，接入真实客户端前必须补物品数据库。
+- 怪物刷新点、刷怪计时、`MonGen` 配置文件解析均未实现，当前只能靠环境变量在启动时一次性布怪。
+
+### W03 本次交接明细（2026-09-18）
+
+#### 已落地代码
+
+- 新增 Maven 模块 `java-server/world`，根 Reactor 和 `bootstrap` 已接入；父 POM 统一启用 Surefire 3.2.5，确保各模块 JUnit 5 测试实际执行。
+- `WorldEngine`：50ms 默认固定 Tick、单 owner 线程、跨线程 FIFO 命令队列、每 Tick 最大 10,000 条命令；提供 `enterPlayer`、`leavePlayer`、`move`、`turn`、`snapshot`、`onlinePlayers`。
+- `Mir2MapLoader`：读取 Delphi `TMapHeader`（52B）和 `TMapUnitInfo`（12B），按 `x * height + y` 列优先布局生成碰撞数据；支持背景图/前景图 `$8000` 阻挡标志，地图上限与原数组一致为 1,000,000 单元。
+- `GameMap`：静态地形碰撞、动态移动对象占位、原子移动/移除及方形视野索引。
+- `Direction/MovementKind`：保持 `DR_UP=0 .. DR_UPLEFT=7`；走路 1 格、跑步 2 格，并校验目标坐标、沿途地形和对象占位。
+- `WorldEvent`：已定义 `MapEntered/MapLeft`、`ObjectAppeared/ObjectMoved/ObjectTurned/ObjectDisappeared`、移动/转向成功与拒绝事件；跨线程只暴露不可变 `WorldObjectSnapshot`。
+- 视野范围默认 12 格，移动前后计算可见集合差异，分别发送出现、移动和消失事件；事件接收器异常不会中断世界 Tick。
+- `Mir2Server` 会在 Gate 监听前启动世界线程，停服时按 Gate → World → SQLite 顺序关闭。支持 `MIR2_MAP_FILE`、`MIR2_MAP_ID`、`MIR2_WORLD_TICK_MS`；未配置地图文件时创建 256×256 空白 PoC 地图。
+
+#### 验收证据
+
+- 领域测试：`DirectionTest`、`GameMapTest`、`Mir2MapLoaderTest`、`WorldEngineTest`，覆盖方向值、列优先地图、静态/动态碰撞、Tick 串行化、走跑、视野广播、线程归属和离场清理。
+- 基线提交：`a493d2e71a5e1a3aaafb29a47c0ed1f855e516ff`。
+- GitHub Actions run `35335312828` 全绿：Maven 全量测试、可执行 JAR 三端口启动冒烟、Compose 校验及 Docker 镜像构建均通过。
+
+#### 明确未实现 / 注意事项
+
+- 7200 GAME 已接入 `WorldEngine` 并通过模拟 socket 验证进图和移动闭环；尚未获得真客户端抓包，因此亮度、外观、消息顺序等字段仍必须视为待对拍假设。
+- 仓库没有随附可加载的 `.map` 资源，运行默认使用空白 PoC 地图；真实地图需通过 `MIR2_MAP_FILE` 指定。出生点由 `MIR2_SPAWN_X/Y` 配置，占用时选择邻近空位。
+- `TCharDesc` 和 `TMessageBodyWL` 的结构及字节序已实现；角色性别、发型和衣服/武器外观现已持久化并生成 `Feature`。装备穿脱与状态效果未实现，因此 `Status` 仍为零。
+- 动作间隔、基础近战、怪物、经验、掉落、背包及世界存档已实现；防加速细化、门/传送点、完整物品/装备和技能仍未实现。
+- 当前跑步会严格检查两格路径上的地形和动态占位；与 Delphi `CanWalkEx/MoveToMovingObject` 的特殊放行语义仍需真实 golden 对拍，发现差异时先记录兼容 quirks，不要直接“优化”。
+
+### 未完成清单（明确边界）
+
+#### S0 PoC
+
+- ⬜ Delphi 实际 traffic recorder 与 20 组字节级 golden 对拍
+- ⬜ 真 `mir2.exe` 登录、选区、角色列表、建删角色、进入世界
+- 🟡 Tick/地图/碰撞/视野、7200 认证、进图与移动 socket 闭环已完成并有双会话集成测试；真 `mir2.exe` 广播验证未完成
+- ✅ 近战怪、击杀、掉落、拾取、**HP/MP/等级/经验/背包重登存档** 与 **完整 `TClientItem`/`SM_BAGITEMS` 载荷** 已有确定性及 SQLite 重启集成测试；真客户端对拍仍未完成
+- ✅ 50 机器人稳定性验证：bot-swarm 军团 50×5 分钟 embedded/remote 双模式 PASS（0 错误），CI 每 PR 跑 50×2 分钟；G0 口径的 50×1 小时可用 `--duration 1h` 复现
+- ⬜ G0 决策门评审与 v0.1 基线 tag
+
+#### P0/P1
+
+- ⬜ 完整 216 SM_ / 51 CM_ 协议字段规格和 golden 套件（wiretool 已具备捕获/回放能力，等 Delphi 实捕）
+- ⬜ Netty 正式接入、IP 黑名单、连接限制、限速、防加速校验
+- ⬜ 旧 IdDB/Hum.DB/Mir.DB 迁移器
+- ⬜ env-lint 与 Envir 资源扫描
+- ✅ traffic-recorder / replayer / bot-swarm 三件套：W05 交付 bot-swarm，W06 交付 recorder/replayer 骨架，均入 CI 门禁；Delphi 实捕 golden 待 Windows 环境
+- ⬜ Web 控制台
+
+#### P2–P4
+
+- 🟡 地图碰撞、玩家/近战怪生命周期、12 格视野、基础战斗/经验及协议实发已完成；门/传送和其他非玩家对象未完成
+- 🟡 掉落、拾取、46 格背包、状态存档、最小物品目录、`MakeIndex`/耐久与 76 字节 `TClientItem`/`SM_BAGITEMS` 已完成；装备穿脱、物品使用/丢弃与周期批量存档未完成
+- ⬜ 57 种怪物 AI、59 个技能、NPC 脚本
+- ⬜ 交易、组队、PK、红名、行会、攻城
+- ⬜ 500 机器人 × 4 小时压测、灰度、Docker 双架构、上线回滚演练
+
+> **当前已完成范围包括协议/账号/角色/SQLite、7200→World 的移动/近战/拾取闭环、重登存档及完整 `TClientItem`/`SM_BAGITEMS` 背包同步；尚未经过真实 `mir2.exe` 对拍，装备/技能等未完成项不得视为已支持。**
 
 ## 📑 目录
 
@@ -34,7 +343,7 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 计划版本 | v1.0（2026-09-18），基线：可行性评估报告 v1.1 |
+| 计划版本 | v1.0.10（2026-09-19），基线：可行性评估报告 v1.1 |
 | 交付物 | `mir2-server`：单 JVM 模块化单体（Netty + 单逻辑线程引擎 + SQLite + Web 控制台），Docker 镜像，旧档迁移工具，运维手册 |
 | 硬性约束 | mir2.exe 客户端**零改动**直连（12B 帧 / 6-bit 编码 / DES / GBK 逐字节兼容）；部署平台 Linux；非商业用途 |
 | 总体节奏 | 准备期 3 周（培训/环境）→ PoC 3 周 → P0–P4 共 27 周 → 上线 2027-05（目标，整体可平移） |
@@ -379,12 +688,28 @@ staging 从 P1 起常驻（对拍需要）；prod 在 W28 预备。**所有环�
 | 版本 | 日期 | 变更 |
 | --- | --- | --- |
 | `v1.0` | `2026-09-18` | 首次发布：基于可行性评估 v1.1 的 GO 结论编制；30 周计划 / 6 决策门 / 240 人日 |
+| `v1.0.1` | `2026-09-18` | 增加执行状态与会话交接记录：S0/W01 协议基座完成，W02 账号/角色领域服务完成，明确下一步为 gate + SQLite + 最小链路 |
+| `v1.0.2` | `2026-09-18` | 更新已完成/未完成矩阵：Gate 初版、会话路由、SQLite 注入与重启恢复已完成；明确真实客户端链路、W03 世界闭环及 P0–P4 未完成项 |
+| `v1.0.3` | `2026-09-18` | Gate 接入推进：实现真实 TCP 分帧、连接态认证桥接及登录/选服/角色操作初版字段映射；下一步调整为真客户端抓包验证、限速和 W03 |
+| `v1.0.4` | `2026-09-18` | 增加可执行 bootstrap、配置与优雅停机，交付 fat JAR、Dockerfile/Compose；CI 已验证 JAR 三端口启动与镜像构建 |
+| `v1.0.5` | `2026-09-18` | W03 world 内核交接：记录单线程 Tick、Delphi `.map`、碰撞占位、玩家生命周期、走跑转向及 12 格视野事件；固定下一步为 7200 RunLogin、移动 `CM_→world→SM_` 适配和真客户端验证；基线 `a493d2e`、CI run `35335312828` |
+| `v1.0.6` | `2026-09-19` | 完成 7200 headerless RunLogin 首包解析、认证码/账号/已选角色联合校验及非法登录拒绝；下一步调整为 GAME→World 移动协议适配 |
+| `v1.0.7` | `2026-09-19` | 完成移动协议适配器：`CM_TURN/WALK/RUN` 入站转换、`+GOOD/+FAIL` 动作确认及 `SM_TURN/WALK/RUN/DISAPPEAR` 观察者事件；下一步为进图消息与 GAME 会话生命周期接线 |
+| `v1.0.8` | `2026-09-19` | 完成 GAME→World 生命周期接线、最小进图消息、`TCharDesc/TMessageBodyWL`、可配置出生点及双 socket 进入/出现/走跑/离视野/断线集成测试；下一步为真客户端对拍 |
+| `v1.0.9` | `2026-09-19` | W03 战斗切片交接：近战攻击与动作间隔、伤害/击退消息、单种近战怪 AI、掉落表与拾取、经验结算全部落地；新增 `MIR2_MONSTER_COUNT/KIND` 配置与 `WorldCombatTest`、`GameCombatProtocolTest`；下一步固定为战斗与背包状态落库 |
+| `v1.0.10` | `2026-09-19` | 完成 Ability/46 格背包 SQLite 事务存档、进图恢复、W02 schema 原位升级及角色性别/发型/装备外观 Feature；新增跨 Store/World 重启闭环测试，CI run `35427011522` 全绿；下一步为完整 `TClientItem/SM_BAGITEMS` 与真客户端对拍 |
+| `v1.0.11` | `2026-09-19` | W04 物品目录与背包同步：完整 `StdItem`/`ItemDatabase`/SQLite `std_items`、`GetItemNumber` 语义的稳定 `MakeIndex`、耐久字段、76 字节 `TClientItem` 小端编解码（更正旧 "68 字节" 推导）、`CM_QUERYBAGITEMS → SM_BAGITEMS` 与 `SM_ADDITEM` 完整载荷、W03 背包原位升级；下一步为真客户端对拍 |
+| `v1.0.12` | `2026-09-19` | W05 bot 压测军团：新增 `loadtest` 模块（真实线上协议全链路 bot、embedded/remote 双模式、Markdown/CSV 报告、`--prepare-db`）；50 bots × 5 分钟双模式 PASS（0 错误），CI 每 PR 增跑 50×2 分钟；G0「50 机器人」本地项完成；recorder/replayer 仍待做 |
+| `v1.0.13` | `2026-09-20` | 固化受限沙箱工具链 Runbook：新增 `.github/workflows/java-server-dist.yml`（CI 编译 fat JAR 并 force-push 到 `dist` 孤儿分支，绕开被阻断的 Actions artifact 存储/Maven Central）；本 session 实测 run `35480880626` → git fetch → PyPI `jdk4py==21.0.8.2`（Temurin 21）→ `java -jar` 三端口启动全通；记录网络可达性矩阵与单分支克隆的显式 refspec 注意点 |
+| `v1.0.14` | `2026-09-20` | W06 交付 traffic recorder / replayer 骨架，**P0 三件套齐活**：新增 `java-server/wiretool` 模块（`.mrec` v1 录制格式、字节透传代理、节奏回放 + 五分类对拍、结构级/字节级双判定、`inspect` 逐帧注解 + `--verify`、中文 Markdown/CSV 报告）；7 个新测试类；CI 新增 `wiretool-smoke` 门禁（实捕 bot 登录 → 结构级 PASS / 字节级因认证码如期 FAIL）；dist 通道同时发布 server/loadtest/wiretool 三 JAR；补写 Windows+Delphi 侧 golden 实捕操作指引 |
 
 > [!WARNING]
 > **合规声明：**本计划仅用于技术学习与私密社区研究。传奇 IP 与美术资源版权归盛趣游戏 / Wemade 所有； 禁止商业运营、公开拉新与客户端资源分发。上线运营前请再次确认法律边界（详见评估报告第 09 节 R8）。
 
 ---
 
-*📋 MIR2 → JAVA · DEVELOPMENT PLAN v1.0*  
-基线：ivanmissu/MIR2 · 9 程序 / 142,007 行 Pascal → 单 JVM / Linux·Docker · 兼容 mir2.exe 零改动  
+*📋 MIR2 → JAVA · DEVELOPMENT PLAN v1.0.14*
+
+基线：ivanmissu/MIR2 · 9 程序 / 142,007 行 Pascal → 单 JVM / Linux·Docker · 兼容 mir2.exe 零改动
+
 2026-09-18 编制 · 计划假设 2026-10-12 启动（可整体平移） · 前置阅读：项目分析报告 / 可行性评估报告

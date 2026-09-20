@@ -1,0 +1,4 @@
+index,status,expected_len,actual_len,first_diff_offset,annotation
+0,CONTENT,16,38,1,"S→C SM_QUERYCHR(520) recog=0 p=0 t=1 s=0"
+1,CONTENT,16,16,1,"S→C SM_NEWCHR_SUCCESS(521) recog=1 p=0 t=0 s=0"
+2,IDENTICAL,36,36,-1,"S→C SM_STARTPLAY(525) recog=0 p=0 t=0 s=0 body=""127.0.0.1/17200"""

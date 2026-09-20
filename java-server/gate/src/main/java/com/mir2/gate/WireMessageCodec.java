@@ -1,0 +1,169 @@
+package com.mir2.gate;
+
+import com.mir2.protocol.ByteStrings;
+import com.mir2.protocol.DefaultMessage;
+import com.mir2.protocol.MessageCodec;
+import com.mir2.protocol.SixBitCodec;
+import java.io.ByteArrayOutputStream;
+import java.io.EOFException;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
+
+/** Codec for the legacy {@code #<sequence?><header><body>!} TCP packet format. */
+public final class WireMessageCodec {
+  public static final int WIRE_BYTES = 16;
+  public static final int MAX_PACKET_BYTES = 8 * 1024;
+  private static final byte START = '#';
+  private static final byte END = '!';
+
+  private WireMessageCodec() {}
+
+  /** Writes a bare 16-byte encoded header. Kept for protocol-level tools and golden tests. */
+  public static void write(OutputStream out, DefaultMessage message) throws IOException {
+    byte[] wire = encodedHeader(message);
+    out.write(wire);
+    out.flush();
+  }
+
+  /** Reads a bare 16-byte encoded header. */
+  public static DefaultMessage read(InputStream in) throws IOException {
+    byte[] wire = in.readNBytes(WIRE_BYTES);
+    if (wire.length == 0) return null;
+    if (wire.length != WIRE_BYTES) throw new EOFException("truncated MIR2 message");
+    return decodeHeader(wire);
+  }
+
+  /** Reads the next complete client packet, tolerating acknowledgements/noise before '#'. */
+  public static WirePacket readPacket(InputStream in) throws IOException {
+    byte[] bytes = readFrame(in);
+    if (bytes == null) return null;
+    int offset = payloadOffset(bytes);
+    if (bytes.length - offset < WIRE_BYTES) throw new IOException("MIR2 packet has no complete header");
+    byte[] header = java.util.Arrays.copyOfRange(bytes, offset, offset + WIRE_BYTES);
+    String body = new String(bytes, offset + WIRE_BYTES, bytes.length - offset - WIRE_BYTES,
+        StandardCharsets.ISO_8859_1);
+    return new WirePacket(decodeHeader(header), body);
+  }
+
+  /**
+   * Reads the GAME connection's headerless first packet. The Delphi client sends
+   * {@code #<sequence><EncodeString("**account/character/cert/version/code")>!}.
+   */
+  public static RunLogin readRunLogin(InputStream in) throws IOException {
+    byte[] frame = readFrame(in);
+    if (frame == null) return null;
+    int offset = payloadOffset(frame);
+    if (frame.length == offset) throw new IOException("empty RunLogin packet");
+
+    String encoded = new String(frame, offset, frame.length - offset, StandardCharsets.ISO_8859_1);
+    final String decoded;
+    try {
+      decoded = ByteStrings.fromGbk(SixBitCodec.decodeString(encoded));
+    } catch (RuntimeException error) {
+      throw new IOException("invalid RunLogin encoding", error);
+    }
+    if (!decoded.startsWith("**")) throw new IOException("invalid RunLogin prefix");
+    String[] fields = decoded.substring(2).split("/", -1);
+    if (fields.length != 5) throw new IOException("invalid RunLogin field count");
+    try {
+      return new RunLogin(fields[0], fields[1], parsePositive(fields[2], "certification"),
+          parsePositive(fields[3], "client version"), parseNonNegative(fields[4], "login code"));
+    } catch (IllegalArgumentException error) {
+      throw new IOException("invalid RunLogin fields", error);
+    }
+  }
+
+  /** Server responses do not need the client's rotating sequence digit. */
+  public static void writePacket(OutputStream out, WirePacket packet) throws IOException {
+    synchronized (out) {
+      out.write(START);
+      out.write(encodedHeader(packet.message()));
+      out.write(packet.encodedBody().getBytes(StandardCharsets.ISO_8859_1));
+      out.write(END);
+      out.flush();
+    }
+  }
+
+  /** Writes a GAME adapter output while serializing concurrent socket/world-thread sends. */
+  public static void writeGameOutbound(OutputStream out, GameOutbound outbound) throws IOException {
+    switch (outbound) {
+      case GameOutbound.Status status -> writeStatus(out, status);
+      case GameOutbound.Packet packet -> writePacket(out, packet.packet());
+    }
+  }
+
+  /** Writes the raw action acknowledgement consumed before normal 16-byte message decoding. */
+  public static void writeStatus(OutputStream out, GameOutbound.Status status) throws IOException {
+    String text = status.accepted() ? "+GOOD/" : "+FAIL/";
+    byte[] frame = ("#" + text + status.serverTick() + "!").getBytes(StandardCharsets.US_ASCII);
+    synchronized (out) {
+      out.write(frame);
+      out.flush();
+    }
+  }
+
+  public static String encodeBody(String text) {
+    return SixBitCodec.encodeString(ByteStrings.gbk(text));
+  }
+
+  public static String decodeBody(String encodedBody) {
+    return ByteStrings.fromGbk(SixBitCodec.decodeString(encodedBody));
+  }
+
+  private static byte[] readFrame(InputStream in) throws IOException {
+    int value;
+    do {
+      value = in.read();
+      if (value < 0) return null;
+    } while (value != START);
+
+    ByteArrayOutputStream payload = new ByteArrayOutputStream();
+    while ((value = in.read()) >= 0 && value != END) {
+      if (payload.size() >= MAX_PACKET_BYTES) throw new IOException("MIR2 packet exceeds 8192 bytes");
+      payload.write(value);
+    }
+    if (value < 0) throw new EOFException("truncated MIR2 packet");
+    return payload.toByteArray();
+  }
+
+  private static int payloadOffset(byte[] payload) {
+    return hasClientSequence(payload) ? 1 : 0;
+  }
+
+  private static boolean hasClientSequence(byte[] payload) {
+    // The Delphi client prefixes each request with a rotating ASCII digit 1..9.
+    return payload.length > 0 && payload[0] >= '1' && payload[0] <= '9';
+  }
+
+  private static int parsePositive(String value, String field) {
+    int parsed = parseInteger(value, field);
+    if (parsed <= 0) throw new IllegalArgumentException(field + " must be positive");
+    return parsed;
+  }
+
+  private static int parseNonNegative(String value, String field) {
+    int parsed = parseInteger(value, field);
+    if (parsed < 0) throw new IllegalArgumentException(field + " must not be negative");
+    return parsed;
+  }
+
+  private static int parseInteger(String value, String field) {
+    try {
+      return Integer.parseInt(value);
+    } catch (NumberFormatException error) {
+      throw new IllegalArgumentException("invalid " + field, error);
+    }
+  }
+
+  private static byte[] encodedHeader(DefaultMessage message) throws IOException {
+    byte[] wire = MessageCodec.encode(message).getBytes(StandardCharsets.ISO_8859_1);
+    if (wire.length != WIRE_BYTES) throw new IOException("unexpected encoded message length: " + wire.length);
+    return wire;
+  }
+
+  private static DefaultMessage decodeHeader(byte[] wire) {
+    return MessageCodec.decode(new String(wire, StandardCharsets.ISO_8859_1));
+  }
+}

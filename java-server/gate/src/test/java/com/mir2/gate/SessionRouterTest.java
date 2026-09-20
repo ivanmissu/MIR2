@@ -1,0 +1,3 @@
+package com.mir2.gate;
+import com.mir2.auth.AuthService; import com.mir2.character.CharacterService; import org.junit.jupiter.api.Test; import static org.junit.jupiter.api.Assertions.*;
+class SessionRouterTest { @Test void authenticatedSessionRoutesCharacterOperations(){var a=new AuthService();a.register("hero","pw");var r=new SessionRouter(a,new CharacterService());String s=r.login("hero","pw");var c=r.create(s,"战士",0);assertEquals(c,r.select(s,c.id()));assertEquals(1,r.characters(s).size());} @Test void invalidSessionCannotReachCharacters(){var r=new SessionRouter(new AuthService(),new CharacterService());assertThrows(SecurityException.class,()->r.characters("bad"));} }
