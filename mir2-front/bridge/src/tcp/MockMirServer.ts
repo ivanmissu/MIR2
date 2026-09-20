@@ -809,6 +809,33 @@ export class MockMirServer {
         }
         break;
       }
+
+      case ProtocolConstants.CM_SAY: {
+        const text = WireMessageCodec.decodeBody(packet.encodedBody) || '';
+        if (text.length > 0) {
+          const chatMsg = new DefaultMessage(playerId, ProtocolConstants.SM_HEAR, 0, 0, 1);
+          const body = WireMessageCodec.encodeBody(`${player.name}:${text}`);
+          this.sendPacket(socket, chatMsg, body, false);
+          this.broadcastToObservers(player, obs => this.sendPacket(obs, chatMsg, body, false));
+        }
+        break;
+      }
+
+      case ProtocolConstants.CM_OPENDOOR: {
+        const posX = packet.message.param;
+        const posY = packet.message.tag;
+        const openDoorMsg = new DefaultMessage(0, ProtocolConstants.SM_OPENDOOR_OK, posX, posY, 0);
+        this.sendPacket(socket, openDoorMsg);
+        this.broadcastToObservers(player, obs => this.sendPacket(obs, openDoorMsg));
+        break;
+      }
+    }
+  }
+
+  public broadcastDayChange(gameTime: number, dayBright: number) {
+    const packet = new DefaultMessage(0, ProtocolConstants.SM_DAYCHANGING, gameTime, dayBright, 0);
+    for (const conn of this.gameConnections.values()) {
+      this.sendPacket(conn.socket, packet);
     }
   }
 

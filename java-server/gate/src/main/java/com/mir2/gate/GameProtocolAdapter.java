@@ -22,7 +22,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 import java.util.function.LongSupplier;
 
-/** Converts the W03 movement, melee combat and map-entry subset between legacy packets and the world. */
+/** Converts the movement, melee combat, chat, doors, day/night and map-entry between legacy packets and the world. */
 public final class GameProtocolAdapter implements WorldEventSink {
   private final WorldEngine world;
   private final Consumer<GameOutbound> output;
@@ -51,7 +51,7 @@ public final class GameProtocolAdapter implements WorldEventSink {
     this.serverTick = Objects.requireNonNull(serverTick, "serverTick");
   }
 
-  /** Returns false for messages outside the movement, melee and pickup subset. */
+  /** Returns false for unhandled messages outside the supported gameplay subset. */
   public boolean handle(WirePacket packet) {
     Objects.requireNonNull(packet, "packet");
     DefaultMessage message = packet.message();
@@ -80,6 +80,13 @@ public final class GameProtocolAdapter implements WorldEventSink {
         case ProtocolConstants.CM_QUERYBAGITEMS -> reportExceptionalFailure(
             world.playerState(boundPlayer)
                 .thenAccept(state -> sendBagItems(state.backpack())));
+        // Chat from client: Delphi sends no +GOOD/+FAIL acknowledgement for CM_SAY.
+        case ProtocolConstants.CM_SAY -> {
+          String text = WireMessageCodec.decodeBody(packet.encodedBody());
+          if (!text.isBlank()) {
+            reportExceptionalFailure(world.say(boundPlayer, text));
+          }
+        }
         default -> throw new AssertionError("supported ident set changed after validation");
       }
       return true;
@@ -134,6 +141,20 @@ public final class GameProtocolAdapter implements WorldEventSink {
       case WorldEvent.DoorClosed closed -> output.accept(new GameOutbound.Packet(
           packet(ProtocolConstants.SM_CLOSEDOOR, 0, closed.position().x(), closed.position().y(), 0, "")));
       case WorldEvent.PlayerMapChanged changed -> sendMapChanged(changed);
+      case WorldEvent.ChatHeard chat -> output.accept(new GameOutbound.Packet(
+          packet(ProtocolConstants.SM_HEAR, chat.speakerId(), 0, 0, 1,
+              WireMessageCodec.encodeBody(chat.speakerName() + ":" + chat.message()))));
+      case WorldEvent.Whisper whisper -> output.accept(new GameOutbound.Packet(
+          packet(ProtocolConstants.SM_WHISPER, whisper.senderId(), 0x38FF, 0, 1,
+              WireMessageCodec.encodeBody(whisper.senderName() + "=> " + whisper.message()))));
+      case WorldEvent.Shout shout -> output.accept(new GameOutbound.Packet(
+          packet(ProtocolConstants.SM_HEAR, shout.speakerId(), 0x0097, 0, 1,
+              WireMessageCodec.encodeBody("(!)" + shout.speakerName() + ": " + shout.message()))));
+      case WorldEvent.SystemMessage sysMsg -> output.accept(new GameOutbound.Packet(
+          packet(ProtocolConstants.SM_SYSMESSAGE, 0, 0xFF, 0, 1,
+              WireMessageCodec.encodeBody(sysMsg.message()))));
+      case WorldEvent.DayChanging dayChanging -> output.accept(new GameOutbound.Packet(
+          packet(ProtocolConstants.SM_DAYCHANGING, 0, dayChanging.gameTime(), dayChanging.dayBright(), 0, "")));
       default -> {
         // MapLeft has no client packet; socket closure already ends the local session.
       }
@@ -153,7 +174,8 @@ public final class GameProtocolAdapter implements WorldEventSink {
         || ident == ProtocolConstants.CM_BIGHIT
         || ident == ProtocolConstants.CM_PICKUP
         || ident == ProtocolConstants.CM_OPENDOOR
-        || ident == ProtocolConstants.CM_QUERYBAGITEMS;
+        || ident == ProtocolConstants.CM_QUERYBAGITEMS
+        || ident == ProtocolConstants.CM_SAY;
   }
 
   private static AttackKind attackKind(int ident) {
@@ -179,7 +201,7 @@ public final class GameProtocolAdapter implements WorldEventSink {
     Position position = player.position();
 
     output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_NEWMAP, player.id(),
-        position.x(), position.y(), 0, WireMessageCodec.encodeBody(entered.map().id()))));
+        position.x(), position.y(), entered.dayBright(), WireMessageCodec.encodeBody(entered.map().id()))));
     output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_LOGON, player.id(),
         position.x(), position.y(), player.direction().code(), logonBody(player))));
     output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_MAPDESCRIPTION, -1,
@@ -201,10 +223,8 @@ public final class GameProtocolAdapter implements WorldEventSink {
     WorldObjectSnapshot player = changed.player();
     output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_CLEAROBJECTS, player.id(),
         0, 0, 0, "")));
-    // DayBright() rides in the series slot; with no day/night cycle or DARK/DAYLIGHT map
-    // flags implemented yet we keep the wire-stable value 0, as SM_NEWMAP already does.
     output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_CHANGEMAP, player.id(),
-        player.position().x(), player.position().y(), 0,
+        player.position().x(), player.position().y(), changed.dayBright(),
         WireMessageCodec.encodeBody(changed.map().id()))));
     output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_MAPDESCRIPTION, -1,
         0, 0, 0, WireMessageCodec.encodeBody(changed.map().title()))));

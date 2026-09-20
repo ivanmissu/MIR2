@@ -149,6 +149,7 @@ public final class Mir2Server implements AutoCloseable {
       }
       GameMap map = Mir2MapLoader.load(definition.id(), mapFile);
       if (!definition.description().isBlank()) map = map.withTitle(definition.description());
+      map = map.withFlags(definition.flags());
       unique.putIfAbsent(map.id(), map);
     }
     if (unique.isEmpty())

@@ -28,13 +28,19 @@ public sealed interface WorldEvent
         WorldEvent.PickupRejected,
         WorldEvent.DoorOpened,
         WorldEvent.DoorClosed,
-        WorldEvent.PlayerMapChanged {
+        WorldEvent.PlayerMapChanged,
+        WorldEvent.ChatHeard,
+        WorldEvent.Whisper,
+        WorldEvent.Shout,
+        WorldEvent.SystemMessage,
+        WorldEvent.DayChanging {
 
   record MapEntered(
       WorldObjectSnapshot player,
       GameMap.MapInfo map,
       List<WorldObjectSnapshot> visibleObjects,
-      List<GroundItem> visibleItems) implements WorldEvent {
+      List<GroundItem> visibleItems,
+      int dayBright) implements WorldEvent {
     public MapEntered {
       Objects.requireNonNull(player, "player");
       Objects.requireNonNull(map, "map");
@@ -43,8 +49,14 @@ public sealed interface WorldEvent
     }
 
     public MapEntered(
+        WorldObjectSnapshot player, GameMap.MapInfo map, List<WorldObjectSnapshot> visibleObjects,
+        List<GroundItem> visibleItems) {
+      this(player, map, visibleObjects, visibleItems, 0);
+    }
+
+    public MapEntered(
         WorldObjectSnapshot player, GameMap.MapInfo map, List<WorldObjectSnapshot> visibleObjects) {
-      this(player, map, visibleObjects, List.of());
+      this(player, map, visibleObjects, List.of(), 0);
     }
   }
 
@@ -216,10 +228,59 @@ public sealed interface WorldEvent
    * {@code TBaseObject.EnterAnotherMap}: the adapter must clear the client's object scene
    * and announce the new map before the fresh visibility batches arrive.
    */
-  record PlayerMapChanged(WorldObjectSnapshot player, GameMap.MapInfo map) implements WorldEvent {
+  record PlayerMapChanged(WorldObjectSnapshot player, GameMap.MapInfo map, int dayBright) implements WorldEvent {
     public PlayerMapChanged {
       Objects.requireNonNull(player, "player");
       Objects.requireNonNull(map, "map");
+    }
+
+    public PlayerMapChanged(WorldObjectSnapshot player, GameMap.MapInfo map) {
+      this(player, map, 0);
+    }
+  }
+
+  /** Normal chat spoken by a player: reaches all observers inside the 12-cell sight square. */
+  record ChatHeard(int speakerId, String speakerName, String message) implements WorldEvent {
+    public ChatHeard {
+      if (speakerId <= 0) throw new IllegalArgumentException("speaker id must be positive");
+      Objects.requireNonNull(speakerName, "speakerName");
+      Objects.requireNonNull(message, "message");
+    }
+  }
+
+  /** Whisper (/target text) sent from sender to recipient; echoed to sender. */
+  record Whisper(
+      int senderId, String senderName, int recipientId, String recipientName, String message)
+      implements WorldEvent {
+    public Whisper {
+      if (senderId <= 0 || recipientId <= 0) throw new IllegalArgumentException("player id must be positive");
+      Objects.requireNonNull(senderName, "senderName");
+      Objects.requireNonNull(recipientName, "recipientName");
+      Objects.requireNonNull(message, "message");
+    }
+  }
+
+  /** Shout (!text) broadcast to all players on the same map. */
+  record Shout(int speakerId, String speakerName, String message) implements WorldEvent {
+    public Shout {
+      if (speakerId <= 0) throw new IllegalArgumentException("speaker id must be positive");
+      Objects.requireNonNull(speakerName, "speakerName");
+      Objects.requireNonNull(message, "message");
+    }
+  }
+
+  /** System or hint message directed at a specific recipient. */
+  record SystemMessage(int recipientId, String message) implements WorldEvent {
+    public SystemMessage {
+      if (recipientId < 0) throw new IllegalArgumentException("recipient id must not be negative");
+      Objects.requireNonNull(message, "message");
+    }
+  }
+
+  /** Day/night transition broadcast (SM_DAYCHANGING). */
+  record DayChanging(int playerId, int gameTime, int dayBright) implements WorldEvent {
+    public DayChanging {
+      if (playerId < 0) throw new IllegalArgumentException("player id must not be negative");
     }
   }
 

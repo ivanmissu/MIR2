@@ -123,9 +123,92 @@ export function useMirWs() {
             mp: event.mp,
             maxMp: event.maxMp,
             feature: event.feature,
+            dayBright: event.dayBright ?? 0,
             visibleObjects: objMap,
             visibleItems: itemMap
           };
+        });
+        break;
+      }
+
+      case 'mapChanged': {
+        setState(prev => ({
+          ...prev,
+          mapId: event.mapId,
+          mapTitle: event.mapTitle,
+          x: event.x,
+          y: event.y,
+          dayBright: event.dayBright ?? prev.dayBright,
+          visibleObjects: new Map(),
+          visibleItems: new Map()
+        }));
+        addLog({
+          level: 'info',
+          message: `[地图切换] 进入 "${event.mapTitle}" (${event.mapId}) 坐标: (${event.x}, ${event.y})`,
+          timestamp: Date.now(),
+          gate: 'GAME'
+        });
+        break;
+      }
+
+      case 'dayChanging': {
+        setState(prev => ({
+          ...prev,
+          dayBright: event.dayBright
+        }));
+        addLog({
+          level: 'info',
+          message: `[昼夜] 昼夜变化: gameTime=${event.gameTime}, 亮暗=${event.dayBright === 0 ? '白天' : event.dayBright === 1 ? '黑夜' : '黄昏'}`,
+          timestamp: Date.now(),
+          gate: 'GAME'
+        });
+        break;
+      }
+
+      case 'doorOpened': {
+        addLog({
+          level: 'info',
+          message: `[门] 门已开启: (${event.x}, ${event.y})`,
+          timestamp: Date.now(),
+          gate: 'GAME'
+        });
+        break;
+      }
+
+      case 'doorClosed': {
+        addLog({
+          level: 'info',
+          message: `[门] 门已关闭: (${event.x}, ${event.y})`,
+          timestamp: Date.now(),
+          gate: 'GAME'
+        });
+        break;
+      }
+
+      case 'chat': {
+        setState(prev => {
+          const nextObjects = new Map(prev.visibleObjects);
+          if (event.speakerId !== prev.playerId) {
+            const obj = nextObjects.get(event.speakerId);
+            if (obj) {
+              nextObjects.set(event.speakerId, {
+                ...obj,
+                saying: event.message,
+                sayingUntil: Date.now() + 4000
+              });
+            }
+          }
+          return {
+            ...prev,
+            visibleObjects: nextObjects,
+            chatMessages: [...prev.chatMessages, event]
+          };
+        });
+        addLog({
+          level: 'info',
+          message: `[${event.scope.toUpperCase()}] ${event.speakerName}: ${event.message}`,
+          timestamp: event.timestamp || Date.now(),
+          gate: 'CHAT'
         });
         break;
       }
@@ -480,6 +563,15 @@ export function useMirWs() {
     sendCommand({ type: 'pickup' });
   }, [sendCommand]);
 
+  const say = useCallback((message: string) => {
+    if (!message.trim()) return;
+    sendCommand({ type: 'say', message });
+  }, [sendCommand]);
+
+  const openDoor = useCallback((x: number, y: number) => {
+    sendCommand({ type: 'openDoor', x, y });
+  }, [sendCommand]);
+
   const queryBagItems = useCallback(() => {
     sendCommand({ type: 'queryBagItems' });
   }, [sendCommand]);
@@ -522,6 +614,8 @@ export function useMirWs() {
     turn,
     attack,
     pickup,
+    say,
+    openDoor,
     queryBagItems,
     disconnect,
     setLogFilter,

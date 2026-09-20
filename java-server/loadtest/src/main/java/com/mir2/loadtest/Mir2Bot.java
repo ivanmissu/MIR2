@@ -735,6 +735,28 @@ final class Mir2Bot implements Runnable {
         }
       }
       case ProtocolConstants.SM_WINEXP -> metrics.count(BotMetrics.Key.EXPERIENCE_UPDATES);
+      case ProtocolConstants.SM_CLEAROBJECTS -> {
+        synchronized (stateLock) {
+          objects.clear();
+          groundItems.clear();
+        }
+      }
+      case ProtocolConstants.SM_CHANGEMAP -> {
+        synchronized (stateLock) {
+          position = new Position(param, tag);
+          anchor = position;
+          objects.clear();
+          groundItems.clear();
+          consecutiveFailures = 0;
+        }
+        metrics.count(BotMetrics.Key.GAME_ENTRIES);
+      }
+      case ProtocolConstants.SM_DAYCHANGING -> {
+        // Day/night cycle update
+      }
+      case ProtocolConstants.SM_HEAR, ProtocolConstants.SM_WHISPER, ProtocolConstants.SM_SYSMESSAGE -> {
+        // Chat messages
+      }
       case ProtocolConstants.SM_ITEMSHOW -> {
         synchronized (stateLock) {
           groundItems.put(recog, new Position(param, tag));

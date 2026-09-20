@@ -20,8 +20,7 @@ import java.util.Objects;
  *   <li>{@code [id description serverIndex flags...]} defines a map. Optional {@code |}
  *       aliasing ({@code [D016|D015 半兽古墓三层]}) names the logical id before the pipe and
  *       the {@code .map} file alias after it; quoted descriptions keep embedded spaces;
- *       unknown flags are consumed and discarded — they belong to later slices (SAFE, DAY,
- *       FIGHT, NORECONNECT, ...). Traffic between maps is what this slice cares about;
+ *       flags (SAFE, DARK, DAY, FIGHT, NORECONNECT, NOCHAT, QUIZ, ...) are parsed into {@link MapFlags};
  *   <li>any other non-empty line is a route
  *       {@code srcMap srcX srcY -> dstMap dstX dstY}, tokenised exactly like the Delphi
  *       {@code GetValidStr3} chains: the first three fields split on space/comma/tab, the
@@ -38,10 +37,15 @@ public final class MapInfoLoader {
   private MapInfoLoader() {}
 
   /** One {@code [...]} map-definition row. */
-  public record MapDefinition(String id, String fileAlias, String description) {
+  public record MapDefinition(String id, String fileAlias, String description, MapFlags flags) {
     public MapDefinition {
       if (id == null || id.isBlank()) throw new IllegalArgumentException("map id must not be blank");
       Objects.requireNonNull(description, "description");
+      Objects.requireNonNull(flags, "flags");
+    }
+
+    public MapDefinition(String id, String fileAlias, String description) {
+      this(id, fileAlias, description, MapFlags.DEFAULT);
     }
 
     /** Name of the {@code .map} file this definition loads (alias wins, like the classic alias form). */
@@ -123,9 +127,9 @@ public final class MapInfoLoader {
   }
 
   /**
-   * {@code [id description serverIndex flags...]}: identical bracket capture as
-   * {@code ArrestStringEx(line, '[', ']', ...)} with the {@code |} alias split. The rest of
-   * the header (index, flags) is consumed but ignored by this slice.
+   * {@code [id description serverIndex flags...]}: bracket capture mirroring
+   * {@code ArrestStringEx(line, '[', ']', ...)} with the {@code |} alias split.
+   * Trailing tokens (inside or outside brackets) are parsed into {@link MapFlags}.
    */
   private static void parseMapDefinition(String line, List<MapDefinition> maps,
       List<String> diagnostics) {
@@ -134,9 +138,9 @@ public final class MapInfoLoader {
       diagnostics.add("map definition without closing ']': " + line);
       return;
     }
-    // Server index and flags trail the bracket in Delphi (the s30 returned by
-    // ArrestStringEx); this slice deliberately ignores flags.
     String content = line.substring(1, close).strip();
+    String trailing = close + 1 < line.length() ? line.substring(close + 1).strip() : "";
+
     String id;
     String fileAlias = null;
     List<String> tokens;
@@ -163,7 +167,85 @@ public final class MapInfoLoader {
       diagnostics.add("map definition without an id: " + line);
       return;
     }
-    maps.add(new MapDefinition(id, fileAlias, description));
+
+    // Combine remaining bracket tokens and trailing tokens after ']'
+    List<String> flagTokens = new ArrayList<>(tokens);
+    if (!trailing.isEmpty()) {
+      flagTokens.addAll(tokens(trailing, " ,\t"));
+    }
+    MapFlags flags = parseFlags(flagTokens);
+
+    maps.add(new MapDefinition(id, fileAlias, description, flags));
+  }
+
+  private static MapFlags parseFlags(List<String> tokens) {
+    boolean safeZone = false;
+    boolean darkness = false;
+    boolean dayLight = false;
+    boolean fightZone = false;
+    boolean fight3Zone = false;
+    boolean quiz = false;
+    boolean noReconnect = false;
+    String noReconnectMap = "";
+    boolean noChat = false;
+    boolean runHuman = true;
+    boolean runMon = false;
+    int musicId = -1;
+    int expRate = -1;
+
+    for (String token : tokens) {
+      String upper = token.toUpperCase();
+      if (upper.equals("SAFE")) {
+        safeZone = true;
+      } else if (upper.equals("DARK")) {
+        darkness = true;
+      } else if (upper.equals("DAY") || upper.equals("DAYLIGHT")) {
+        dayLight = true;
+      } else if (upper.equals("FIGHT")) {
+        fightZone = true;
+      } else if (upper.equals("FIGHT3")) {
+        fight3Zone = true;
+      } else if (upper.equals("QUIZ")) {
+        quiz = true;
+      } else if (upper.equals("NOCHAT")) {
+        noChat = true;
+      } else if (upper.equals("RUNHUMAN")) {
+        runHuman = true;
+      } else if (upper.equals("RUNMON")) {
+        runMon = true;
+      } else if (upper.startsWith("NORECONNECT")) {
+        noReconnect = true;
+        String param = extractParentheses(token);
+        if (!param.isBlank()) noReconnectMap = param;
+      } else if (upper.startsWith("MUSIC")) {
+        String param = extractParentheses(token);
+        musicId = parseIntOrNegative(param);
+      } else if (upper.startsWith("EXPRATE")) {
+        String param = extractParentheses(token);
+        expRate = parseIntOrNegative(param);
+      }
+    }
+
+    return new MapFlags(
+        safeZone, darkness, dayLight, fightZone, fight3Zone, quiz,
+        noReconnect, noReconnectMap, noChat, runHuman, runMon, musicId, expRate);
+  }
+
+  private static String extractParentheses(String token) {
+    int start = token.indexOf('(');
+    int end = token.lastIndexOf(')');
+    if (start >= 0 && end > start) {
+      return token.substring(start + 1, end).trim();
+    }
+    return "";
+  }
+
+  private static int parseIntOrNegative(String token) {
+    try {
+      return Integer.parseInt(token.strip());
+    } catch (NumberFormatException e) {
+      return -1;
+    }
   }
 
   /** Takes the description token, honouring the legacy "quoted description" form. */

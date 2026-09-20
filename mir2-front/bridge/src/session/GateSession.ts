@@ -65,6 +65,7 @@ export class GateSession extends EventEmitter {
   public status = 0;
   public level = 1;
   public exp = 0;
+  public dayBright = 0;
 
   public readonly visibleObjects = new Map<number, WorldObjectSnapshot>();
   public readonly visibleItems = new Map<number, GroundItem>();
@@ -397,10 +398,11 @@ export class GateSession extends EventEmitter {
         this.playerId = recog;
         this.x = param;
         this.y = tag;
+        this.dayBright = series;
         this.mapId = WireMessageCodec.decodeBody(packet.encodedBody) || '0';
         this.visibleObjects.clear();
         this.visibleItems.clear();
-        this.log('info', `[7200] 进入地图: id=${this.mapId}, 初始坐标: (${this.x}, ${this.y}), 玩家ID: ${this.playerId}`, 'GAME');
+        this.log('info', `[7200] 进入地图: id=${this.mapId}, 初始坐标: (${this.x}, ${this.y}), 玩家ID: ${this.playerId}, 亮暗: ${this.dayBright}`, 'GAME');
         break;
       }
 
@@ -439,12 +441,131 @@ export class GateSession extends EventEmitter {
           mp: this.mp,
           maxMp: this.maxMp,
           feature: this.feature,
+          dayBright: this.dayBright,
           visibleObjects: Array.from(this.visibleObjects.values()),
           visibleItems: Array.from(this.visibleItems.values())
         });
 
         // Automatically query backpack items on map enter
         this.queryBagItems();
+        break;
+      }
+
+      case ProtocolConstants.SM_CLEAROBJECTS: {
+        this.visibleObjects.clear();
+        this.visibleItems.clear();
+        this.log('debug', '[7200] 收到 SM_CLEAROBJECTS，清空本地视野对象', 'GAME');
+        break;
+      }
+
+      case ProtocolConstants.SM_CHANGEMAP: {
+        this.x = param;
+        this.y = tag;
+        this.dayBright = series;
+        this.mapId = WireMessageCodec.decodeBody(packet.encodedBody) || '0';
+        this.visibleObjects.clear();
+        this.visibleItems.clear();
+        this.log('info', `[7200] 切换地图: id=${this.mapId}, 坐标: (${this.x}, ${this.y}), 亮暗度: ${this.dayBright}`, 'GAME');
+        this.emitEvent({
+          type: 'mapChanged',
+          mapId: this.mapId,
+          mapTitle: this.mapTitle,
+          x: this.x,
+          y: this.y,
+          dayBright: this.dayBright
+        });
+        break;
+      }
+
+      case ProtocolConstants.SM_DAYCHANGING: {
+        const gameTime = param;
+        const dayBright = tag;
+        this.dayBright = dayBright;
+        this.log('info', `[7200] 昼夜变化: gameTime=${gameTime}, dayBright=${dayBright}`, 'GAME');
+        this.emitEvent({ type: 'dayChanging', gameTime, dayBright });
+        break;
+      }
+
+      case ProtocolConstants.SM_OPENDOOR_OK: {
+        const doorX = param;
+        const doorY = tag;
+        this.log('info', `[7200] 门已开启: (${doorX}, ${doorY})`, 'GAME');
+        this.emitEvent({ type: 'doorOpened', mapId: this.mapId, x: doorX, y: doorY });
+        break;
+      }
+
+      case ProtocolConstants.SM_CLOSEDOOR: {
+        const doorX = param;
+        const doorY = tag;
+        this.log('info', `[7200] 门已关闭: (${doorX}, ${doorY})`, 'GAME');
+        this.emitEvent({ type: 'doorClosed', mapId: this.mapId, x: doorX, y: doorY });
+        break;
+      }
+
+      case ProtocolConstants.SM_HEAR:
+      case ProtocolConstants.SM_WHISPER:
+      case ProtocolConstants.SM_CRY:
+      case ProtocolConstants.SM_SYSMESSAGE: {
+        const rawBody = WireMessageCodec.decodeBody(packet.encodedBody) || '';
+        let speakerName = '系统';
+        let msgText = rawBody;
+        let scope: 'normal' | 'whisper' | 'shout' | 'system' = 'normal';
+
+        if (ident === ProtocolConstants.SM_SYSMESSAGE) {
+          scope = 'system';
+          speakerName = '系统';
+          msgText = rawBody;
+        } else if (ident === ProtocolConstants.SM_WHISPER) {
+          scope = 'whisper';
+          const arrow = rawBody.indexOf('=>');
+          if (arrow >= 0) {
+            speakerName = rawBody.substring(0, arrow).trim();
+            msgText = rawBody.substring(arrow + 2).trim();
+          } else {
+            speakerName = '私聊';
+            msgText = rawBody;
+          }
+        } else if (ident === ProtocolConstants.SM_CRY || param === 0x0097 || rawBody.startsWith('(!)')) {
+          scope = 'shout';
+          let clean = rawBody;
+          if (clean.startsWith('(!)')) clean = clean.substring(3);
+          const colon = clean.indexOf(':');
+          if (colon >= 0) {
+            speakerName = clean.substring(0, colon).trim();
+            msgText = clean.substring(colon + 1).trim();
+          } else {
+            speakerName = '大喊';
+            msgText = clean;
+          }
+        } else {
+          scope = 'normal';
+          const colon = rawBody.indexOf(':');
+          if (colon >= 0) {
+            speakerName = rawBody.substring(0, colon).trim();
+            msgText = rawBody.substring(colon + 1).trim();
+          } else {
+            speakerName = '玩家';
+            msgText = rawBody;
+          }
+        }
+
+        if (recog !== this.playerId) {
+          const obj = this.visibleObjects.get(recog);
+          if (obj) {
+            obj.saying = msgText;
+            obj.sayingUntil = Date.now() + 4000;
+          }
+        }
+
+        this.log('info', `[7200] [${scope.toUpperCase()}] ${speakerName}: ${msgText}`, 'GAME');
+        this.emitEvent({
+          type: 'chat',
+          speakerId: recog,
+          speakerName,
+          message: msgText,
+          scope,
+          timestamp: Date.now()
+        });
         break;
       }
 
@@ -812,6 +933,20 @@ export class GateSession extends EventEmitter {
     await this.gameClient.sendPacket(
       new DefaultMessage(0, ProtocolConstants.CM_QUERYBAGITEMS, 0, 0, 0)
     );
+  }
+
+  public async say(message: string): Promise<void> {
+    if (!this.gameClient || !this.gameClient.isOpen) return;
+    const defMsg = new DefaultMessage(0, ProtocolConstants.CM_SAY, 0, 0, 0);
+    await this.gameClient.sendPacket(defMsg, message);
+    this.log('debug', `[7200] 发送发言: "${message}"`, 'GAME');
+  }
+
+  public async openDoor(x: number, y: number): Promise<void> {
+    if (!this.gameClient || !this.gameClient.isOpen) return;
+    const defMsg = new DefaultMessage(1, ProtocolConstants.CM_OPENDOOR, x, y, 0);
+    await this.gameClient.sendPacket(defMsg);
+    this.log('debug', `[7200] 发送开门: (${x}, ${y})`, 'GAME');
   }
 
   public disconnect(): void {

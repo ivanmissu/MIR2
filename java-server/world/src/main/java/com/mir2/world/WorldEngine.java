@@ -1,6 +1,7 @@
 package com.mir2.world;
 
 import java.time.Duration;
+import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -22,6 +23,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.IntSupplier;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 import java.util.logging.Level;
@@ -100,6 +102,8 @@ public final class WorldEngine implements AutoCloseable {
   private final Random random;
   private final PlayerStateStore playerStateStore;
   private final ItemDatabase itemDatabase;
+  private final IntSupplier hourSupplier;
+  private int gameTime;
   private int nextObjectId = 1;
   private int nextItemMakeIndex = 1;
 
@@ -146,11 +150,24 @@ public final class WorldEngine implements AutoCloseable {
       Random random,
       PlayerStateStore playerStateStore,
       ItemDatabase itemDatabase) {
+    this(config, maps, clock, random, playerStateStore, itemDatabase, () -> LocalTime.now().getHour());
+  }
+
+  public WorldEngine(
+      Config config,
+      Collection<GameMap> maps,
+      LongSupplier clock,
+      Random random,
+      PlayerStateStore playerStateStore,
+      ItemDatabase itemDatabase,
+      IntSupplier hourSupplier) {
     this.config = Objects.requireNonNull(config);
     this.clock = Objects.requireNonNull(clock, "clock");
     this.random = Objects.requireNonNull(random, "random");
     this.playerStateStore = Objects.requireNonNull(playerStateStore, "playerStateStore");
     this.itemDatabase = Objects.requireNonNull(itemDatabase, "itemDatabase");
+    this.hourSupplier = Objects.requireNonNull(hourSupplier, "hourSupplier");
+    this.gameTime = gameTimeFromHour(hourSupplier.getAsInt());
     this.nextItemMakeIndex = seedMakeIndex(playerStateStore.itemMakeIndexHighWater());
     if (maps.isEmpty()) throw new IllegalArgumentException("at least one map is required");
     for (GameMap map : maps) {
@@ -248,12 +265,17 @@ public final class WorldEngine implements AutoCloseable {
     Objects.requireNonNull(sink, "sink");
     return submit(() -> {
       GameMap map = requireMap(mapId);
-      return enter(characterId, name, mapId, nearestAvailable(map, preferredPosition),
+      if (map.flags().noReconnect() && !map.flags().noReconnectMap().isBlank()) {
+        String redirectId = map.flags().noReconnectMap();
+        if (maps.containsKey(redirectId)) {
+          map = maps.get(redirectId);
+        }
+      }
+      return enter(characterId, name, map.id(), nearestAvailable(map, preferredPosition),
           direction, feature, status, sink);
     });
   }
 
-  /** Spawns a melee monster; monsters have no sink and are only observed through player events. */
   public CompletableFuture<WorldObjectSnapshot> spawnMonster(
       MonsterTemplate template, String mapId, Position position, Direction direction) {
     Objects.requireNonNull(template, "template");
@@ -264,20 +286,20 @@ public final class WorldEngine implements AutoCloseable {
   }
 
   /**
-   * Registers a self-replenishing spawn area, mirroring one {@code TMonGenInfo} row: the world
-   * keeps {@code count} monsters of the template alive inside the square around
-   * ({@code x},{@code y}), re-rolling random cells like {@code TUserEngine.RegenMonsters}, and
-   * refills losses once {@code respawnMillis} has elapsed since the previous regeneration.
-   * The initial population is materialised on the next tick.
+   * Registers a MonGen auto-respawn definition on {@code mapId}. The world evaluates spawners
+   * every {@code regenIntervalMillis} (dwRegenMonstersTime, 200ms default) and replenishes
+   * losses when their respawn window has elapsed, mirroring {@code TUserEngine.RegenMonsters}.
    */
   public CompletableFuture<Void> addSpawner(MonsterTemplate template, String mapId,
-      MonsterSpawnDefinition definition) {
+      Position center, int radius, int count, Duration respawnInterval) {
     Objects.requireNonNull(template, "template");
     Objects.requireNonNull(mapId, "mapId");
-    Objects.requireNonNull(definition, "definition");
+    Objects.requireNonNull(center, "center");
+    Objects.requireNonNull(respawnInterval, "respawnInterval");
+    if (count <= 0) throw new IllegalArgumentException("spawner count must be positive");
     return submit(() -> {
-      requireMap(mapId);
-      spawners.add(new Spawner(template, mapId, definition));
+      GameMap map = requireMap(mapId);
+      spawners.add(new Spawner(template, map, center, radius, count, respawnInterval.toMillis()));
       return null;
     });
   }
@@ -290,7 +312,6 @@ public final class WorldEngine implements AutoCloseable {
     return submit(() -> movePlayer(playerId, target, direction, movement));
   }
 
-  /** The claimed position is checked to reject stale or accelerated client actions. */
   public CompletableFuture<Boolean> turn(int playerId, Position claimedPosition, Direction direction) {
     Objects.requireNonNull(claimedPosition, "claimedPosition");
     Objects.requireNonNull(direction, "direction");
@@ -306,17 +327,15 @@ public final class WorldEngine implements AutoCloseable {
     return submit(() -> attackWith(playerId, claimedPosition, direction, attack));
   }
 
-  /** Picks up the newest item lying on the player's own cell, as {@code ClientPickUpItem} does. */
   public CompletableFuture<Boolean> pickUp(int playerId, Position claimedPosition) {
     Objects.requireNonNull(claimedPosition, "claimedPosition");
     return submit(() -> pickUpItem(playerId, claimedPosition));
   }
 
   /**
-   * Handles {@code CM_OPENDOOR}: opens the door anchored at {@code claimed} on the player's
-   * map and broadcasts {@code DoorOpened} to every player inside the +/-12 client square,
-   * mirroring {@code TUserEngine.OpenDoor}. Unknown cells and already-open doors answer
-   * silently {@code false}, as the Delphi handler does (no acknowledgement is sent).
+   * Opens the door at {@code claimed} if its anchor matches {@code claimed} and it is currently
+   * closed, broadcasting {@code SM_OPENDOOR_OK} to observers inside +/-12 cells (UsrEngn.OpenDoor).
+   * Like Delphi, the server returns no direct acknowledgment packet to the opener.
    */
   public CompletableFuture<Boolean> openDoor(int playerId, Position claimed) {
     Objects.requireNonNull(claimed, "claimed");
@@ -324,18 +343,17 @@ public final class WorldEngine implements AutoCloseable {
   }
 
   /**
-   * Links a gate cell into its source map, mirroring {@code TMapManager.AddMapRoute}: the
-   * route is registered only when both maps are loaded, and the returned future reports
-   * whether the link was installed (a route naming an unknown map is dropped, like the
-   * Delphi loader).
+   * Installs an inter-map connection point, sourced from a {@code MapInfo.txt} route line.
+   * Silently ignored when either map is not registered in this world engine instance,
+   * mirroring {@code TMapManager.AddMapRoute}.
    */
   public CompletableFuture<Boolean> addRoute(TeleportRoute route) {
     Objects.requireNonNull(route, "route");
     return submit(() -> {
-      if (!maps.containsKey(route.sourceMapId()) || !maps.containsKey(route.destinationMapId())) {
-        return false;
-      }
-      maps.get(route.sourceMapId()).addGate(route);
+      GameMap source = maps.get(route.sourceMapId());
+      GameMap destination = maps.get(route.destinationMapId());
+      if (source == null || destination == null) return false;
+      source.addGate(route);
       return true;
     });
   }
@@ -371,6 +389,82 @@ public final class WorldEngine implements AutoCloseable {
   }
 
   /**
+   * Speaks a message from the specified player, mirroring {@code TPlayObject.ProcessUserLineMsg}.
+   * Supports normal chat (12-cell sight broadcast), whisper (/target msg), shout (!msg),
+   * and system queries (@who / /who).
+   */
+  public CompletableFuture<Boolean> say(int playerId, String message) {
+    Objects.requireNonNull(message, "message");
+    return submit(() -> processSay(playerId, message));
+  }
+
+  public CompletableFuture<Boolean> say(String characterName, String message) {
+    Objects.requireNonNull(characterName, "characterName");
+    Objects.requireNonNull(message, "message");
+    return submit(() -> {
+      Integer playerId = playersByName.get(characterName);
+      if (playerId == null) return false;
+      return processSay(playerId, message);
+    });
+  }
+
+  public int gameTime() {
+    return gameTime;
+  }
+
+  public int dayBright(GameMap map) {
+    return calculateDayBright(map != null ? map.flags() : MapFlags.DEFAULT, this.gameTime);
+  }
+
+  public CompletableFuture<Void> setGameTime(int newGameTime) {
+    return submit(() -> {
+      updateGameTime(newGameTime);
+      return null;
+    });
+  }
+
+  /**
+   * Maps an hour (0..23) to Delphi {@code g_nGameTime} (FrnEngn.pas:GetGameTime):
+   * <ul>
+   *   <li>5..10, 16..22: 1 (daytime)</li>
+   *   <li>11, 23: 2 (twilight)</li>
+   *   <li>4, 15: 0 (dawn / transition)</li>
+   *   <li>0..3, 12..14: 3 (night)</li>
+   * </ul>
+   */
+  public static int gameTimeFromHour(int hour) {
+    int h = Math.floorMod(hour, 24);
+    return switch (h) {
+      case 5, 6, 7, 8, 9, 10, 16, 17, 18, 19, 20, 21, 22 -> 1;
+      case 11, 23 -> 2;
+      case 4, 15 -> 0;
+      default -> 3; // 0, 1, 2, 3, 12, 13, 14
+    };
+  }
+
+  /**
+   * Delphi {@code TPlayObject.DayBright}:
+   * 0 = Bright / Day, 1 = Dark / Night, 2 = Twilight.
+   * Darkness map flag forces 1; DayLight map flag forces 0.
+   */
+  public static int calculateDayBright(MapFlags flags, int gameTime) {
+    int bright;
+    if (flags != null && flags.darkness()) {
+      bright = 1;
+    } else if (gameTime == 1) {
+      bright = 0;
+    } else if (gameTime == 3) {
+      bright = 1;
+    } else {
+      bright = 2;
+    }
+    if (flags != null && flags.dayLight()) {
+      bright = 0;
+    }
+    return bright;
+  }
+
+  /**
    * Executes one world tick on the current thread. The first caller becomes the permanent owner;
    * concurrent or cross-thread mutation is rejected.
    */
@@ -387,7 +481,25 @@ public final class WorldEngine implements AutoCloseable {
     expireGroundItems();
     closeDoorsPeriodically();
     savePlayersPeriodically();
+    checkGameTime();
     tickCount.incrementAndGet();
+  }
+
+  private void checkGameTime() {
+    int current = gameTimeFromHour(hourSupplier.getAsInt());
+    if (current != this.gameTime) {
+      updateGameTime(current);
+    }
+  }
+
+  private void updateGameTime(int newGameTime) {
+    if (this.gameTime != newGameTime) {
+      this.gameTime = newGameTime;
+      for (Player player : players.values()) {
+        int bright = dayBright(player.map);
+        emit(player, new WorldEvent.DayChanging(player.id, this.gameTime, bright));
+      }
+    }
   }
 
   private void scheduledTick() {
@@ -405,6 +517,15 @@ public final class WorldEngine implements AutoCloseable {
     if (name.isBlank()) throw new IllegalArgumentException("player name must not be blank");
     if (playersByName.containsKey(name)) throw new IllegalStateException("player is already online: " + name);
     GameMap map = requireMap(mapId);
+    if (map.flags().noReconnect() && !map.flags().noReconnectMap().isBlank()) {
+      String redirectId = map.flags().noReconnectMap();
+      if (maps.containsKey(redirectId)) {
+        map = maps.get(redirectId);
+        if (!map.canWalk(position)) {
+          position = nearestAvailable(map, new Position(map.width() / 2, map.height() / 2));
+        }
+      }
+    }
     if (!map.canWalk(position)) throw new IllegalStateException("spawn cell is not available: " + position);
 
     PlayerState restored = playerStateStore.load(characterId)
@@ -430,7 +551,7 @@ public final class WorldEngine implements AutoCloseable {
         .map(WorldObject::snapshot)
         .toList();
     emit(player, new WorldEvent.MapEntered(
-        player.snapshot(), map.info(), visible, visibleItems(map, position)));
+        player.snapshot(), map.info(), visible, visibleItems(map, position), dayBright(map)));
     WorldEvent appeared = new WorldEvent.ObjectAppeared(player.snapshot());
     for (int viewerId : visibleIds) emit(players.get(viewerId), appeared);
     return player.snapshot();
@@ -580,7 +701,7 @@ public final class WorldEngine implements AutoCloseable {
   private boolean openDoorAt(int playerId, Position claimed) {
     Player player = requirePlayer(playerId);
     // TPlayObject.ClientOpenDoor checks only the door record itself — castle doors aside, the
-    // Delphi handler does not gate on zone or alive state. The γ01 (castle-taken) flag has no
+    // Delphi handler does not gate on zone or alive state. The bo01 (castle-taken) flag has no
     // castle subsystem behind it yet, so it stays false and every found door may open.
     DoorInfo door = player.map.doorAt(claimed);
     if (door == null || door.status().opened()) return false;
@@ -620,7 +741,7 @@ public final class WorldEngine implements AutoCloseable {
     for (int viewerId : originObservers) emit(players.get(viewerId), disappeared);
     // SM_CLEAROBJECTS + SM_CHANGEMAP order is fixed: the client drops its scene first and
     // rebuilds it from the events that follow (appearances, items).
-    emit(player, new WorldEvent.PlayerMapChanged(snapshot, destination.info()));
+    emit(player, new WorldEvent.PlayerMapChanged(snapshot, destination.info(), dayBright(destination)));
     List<Integer> destinationObservers = visibleIds(destination, player.position, player.id);
     WorldEvent appeared = new WorldEvent.ObjectAppeared(snapshot);
     for (int viewerId : destinationObservers) emit(players.get(viewerId), appeared);
@@ -634,22 +755,86 @@ public final class WorldEngine implements AutoCloseable {
     return MoveResult.accepted(snapshot);
   }
 
+  private boolean processSay(int playerId, String rawText) {
+    Player speaker = requirePlayer(playerId);
+    if (speaker.map.flags().noChat()) {
+      emit(speaker, new WorldEvent.SystemMessage(speaker.id, "当前地图禁止发言"));
+      return false;
+    }
+    String text = rawText.strip();
+    if (text.isEmpty()) return false;
+
+    if (text.startsWith("@")) {
+      if (text.equalsIgnoreCase("@who") || text.equalsIgnoreCase("@在线") || text.equalsIgnoreCase("@total")) {
+        emit(speaker, new WorldEvent.SystemMessage(speaker.id, "当前在线玩家: " + players.size() + " 人"));
+        return true;
+      }
+      return true;
+    }
+
+    if (text.startsWith("/")) {
+      if (text.equalsIgnoreCase("/who") || text.equalsIgnoreCase("/total")) {
+        emit(speaker, new WorldEvent.SystemMessage(speaker.id, "当前在线玩家: " + players.size() + " 人"));
+        return true;
+      }
+      String targetAndMsg = text.substring(1).stripLeading();
+      int space = targetAndMsg.indexOf(' ');
+      if (space <= 0) return false;
+      String targetName = targetAndMsg.substring(0, space).trim();
+      String whisperMsg = targetAndMsg.substring(space + 1).trim();
+      if (whisperMsg.isEmpty()) return false;
+      Integer targetId = playersByName.get(targetName);
+      if (targetId != null && players.containsKey(targetId)) {
+        Player target = players.get(targetId);
+        WorldEvent whisperEvent = new WorldEvent.Whisper(speaker.id, speaker.name, target.id, target.name, whisperMsg);
+        emit(target, whisperEvent);
+        if (target.id != speaker.id) {
+          emit(speaker, whisperEvent);
+        }
+        return true;
+      } else {
+        emit(speaker, new WorldEvent.SystemMessage(speaker.id, targetName + " 当前不在线或不存在"));
+        return false;
+      }
+    }
+
+    if (text.startsWith("!")) {
+      if (speaker.map.flags().quiz()) {
+        emit(speaker, new WorldEvent.SystemMessage(speaker.id, "当前地图禁止大喊"));
+        return false;
+      }
+      String shoutMsg = text.substring(1).trim();
+      if (shoutMsg.isEmpty()) return false;
+      WorldEvent shoutEvent = new WorldEvent.Shout(speaker.id, speaker.name, shoutMsg);
+      for (Player p : players.values()) {
+        if (p.map.id().equals(speaker.map.id())) {
+          emit(p, shoutEvent);
+        }
+      }
+      return true;
+    }
+
+    // Normal chat: broadcast to all observers inside 12-cell square (including speaker)
+    WorldEvent chatEvent = new WorldEvent.ChatHeard(speaker.id, speaker.name, text);
+    List<Integer> viewers = visibleIds(speaker.map, speaker.position, 0);
+    for (int viewerId : viewers) {
+      Player viewer = players.get(viewerId);
+      if (viewer != null) emit(viewer, chatEvent);
+    }
+    return true;
+  }
+
   private void leave(int playerId) {
     Player player = requirePlayer(playerId);
     persist(player);
     List<Integer> visibleIds = visibleIds(player.map, player.position, player.id);
     player.map.remove(player.id, player.position);
-    players.remove(player.id);
+    players.remove(playerId);
     playersByName.remove(player.name);
-    for (Monster monster : monsters.values()) {
-      if (monster.targetId == player.id) monster.targetId = 0;
-    }
-    WorldEvent disappeared = new WorldEvent.ObjectDisappeared(player.id);
+    emit(player, new WorldEvent.MapLeft(playerId));
+    WorldEvent disappeared = new WorldEvent.ObjectDisappeared(playerId);
     for (int viewerId : visibleIds) emit(players.get(viewerId), disappeared);
-    emit(player, new WorldEvent.MapLeft(player.id));
   }
-
-  // ---------------------------------------------------------------- combat
 
   private int rollDamage(Ability attacker, Ability defender) {
     int attack = randomBetween(attacker.minDc(), attacker.maxDc());
@@ -657,9 +842,9 @@ public final class WorldEngine implements AutoCloseable {
     return Math.max(0, attack - defence);
   }
 
-  private int randomBetween(int low, int high) {
-    if (high <= low) return low;
-    return low + random.nextInt(high - low + 1);
+  private int randomBetween(int min, int max) {
+    if (min >= max) return min;
+    return min + random.nextInt(max - min + 1);
   }
 
   private void applyDamage(WorldObject victim, WorldObject attacker, int damage) {
@@ -667,211 +852,200 @@ public final class WorldEngine implements AutoCloseable {
       broadcastStruck(victim, attacker.id(), 0);
       return;
     }
-    Ability previous = victim.ability();
-    victim.setAbility(previous.withHp(previous.hp() - damage));
+    Ability before = victim.ability();
+    int nextHp = Math.max(0, before.hp() - damage);
+    Ability updated = before.withHp(nextHp);
+    victim.setAbility(updated);
     if (victim instanceof Player player) {
       try {
         persist(player);
       } catch (RuntimeException failure) {
-        victim.setAbility(previous);
+        player.setAbility(before);
         throw failure;
       }
     }
     broadcastStruck(victim, attacker.id(), damage);
-    if (victim.ability().alive()) return;
-    handleDeath(victim, attacker);
+    if (updated.alive()) {
+      WorldEvent health = new WorldEvent.HealthChanged(victim.snapshot());
+      emitToObserversAndSelf(victim, health);
+    } else {
+      handleDeath(victim, attacker);
+    }
   }
 
   private void broadcastStruck(WorldObject victim, int attackerId, int damage) {
     WorldEvent struck = new WorldEvent.ObjectStruck(victim.snapshot(), attackerId, damage);
-    WorldEvent health = new WorldEvent.HealthChanged(victim.snapshot());
-    for (int viewerId : visibleIds(victim.map(), victim.position(), 0)) {
-      Player viewer = players.get(viewerId);
-      emit(viewer, struck);
-      emit(viewer, health);
+    emitToObserversAndSelf(victim, struck);
+  }
+
+  private void emitToObserversAndSelf(WorldObject center, WorldEvent event) {
+    if (center instanceof Player p) emit(p, event);
+    for (int viewerId : visibleIds(center.map(), center.position(), center.id())) {
+      emit(players.get(viewerId), event);
     }
   }
 
   private void handleDeath(WorldObject victim, WorldObject killer) {
-    long now = clock.getAsLong();
-    WorldEvent died = new WorldEvent.ObjectDied(victim.snapshot(), killer.id());
-    for (int viewerId : visibleIds(victim.map(), victim.position(), 0)) emit(players.get(viewerId), died);
-
+    WorldEvent death = new WorldEvent.ObjectDied(victim.snapshot(), killer.id());
+    emitToObserversAndSelf(victim, death);
     if (victim instanceof Monster monster) {
-      monster.diedAt = now;
+      monster.diedAt = clock.getAsLong();
       monster.targetId = 0;
       dropLoot(monster);
-      if (killer instanceof Player player) awardExperience(player, monster.template.experience());
+      if (killer instanceof Player player) {
+        awardExperience(player, monster.template.experience());
+      }
     }
-    // Player corpses stay on the map until the socket session leaves, matching the Delphi flow
-    // where TPlayObject remains in the environment until revival or logout.
   }
 
   private void awardExperience(Player player, long experience) {
     if (experience <= 0) return;
-    Ability previous = player.ability;
-    player.ability = previous.addExperience(experience);
+    Ability before = player.ability;
+    long nextTotal = before.exp() + experience;
+    Ability updated = before.withExp(nextTotal);
+    player.setAbility(updated);
     try {
       persist(player);
     } catch (RuntimeException failure) {
-      player.ability = previous;
+      player.setAbility(before);
       throw failure;
     }
-    emit(player, new WorldEvent.ExperienceGained(player.id, experience, player.ability.experience()));
+    emit(player, new WorldEvent.ExperienceGained(player.id, experience, nextTotal));
   }
 
   private void dropLoot(Monster monster) {
     for (ItemDrop drop : monster.template.drops()) {
-      if (!drop.always() && random.nextInt(drop.oneIn()) != 0) continue;
-      Position cell = freeItemCell(monster.map, monster.position);
-      if (cell == null) continue;
-      // The catalog Looks is canonical when a template exists; the drop entry keeps it
-      // for items the catalog does not know.
-      int looks = itemDatabase.find(drop.name()).map(StdItem::looks).orElse(drop.looks());
-      GroundItem item = new GroundItem(allocateObjectId(), drop.name(), looks, monster.map.id(), cell);
-      groundItems.put(item.id(), item);
-      itemDropTimes.put(item.id(), clock.getAsLong());
-      monster.droppedItemIds.add(item.id());
-      WorldEvent shown = new WorldEvent.ItemAppeared(item);
-      for (int viewerId : visibleIds(monster.map, cell, 0)) emit(players.get(viewerId), shown);
+      if (random.nextInt(drop.oneInChance()) != 0) continue;
+      Position dropPosition = findDropPosition(monster.map, monster.position);
+      if (dropPosition == null) continue;
+      int itemId = allocateObjectId();
+      int looks = itemDatabase.find(drop.itemName())
+          .map(StdItem::looks)
+          .orElse(drop.looks());
+      GroundItem item = new GroundItem(itemId, drop.itemName(), looks, monster.map.id(), dropPosition);
+      groundItems.put(itemId, item);
+      itemDropTimes.put(itemId, clock.getAsLong());
+      monster.droppedItemIds.add(itemId);
+      WorldEvent appeared = new WorldEvent.ItemAppeared(item);
+      for (int viewerId : visibleIds(monster.map, dropPosition, 0)) {
+        emit(players.get(viewerId), appeared);
+      }
     }
   }
 
-  /** Delphi drops on the death cell first, then scans the surrounding ring for a free cell. */
-  private Position freeItemCell(GameMap map, Position center) {
-    if (itemsOn(map.id(), center).isEmpty() && map.isTerrainWalkable(center)) return center;
-    for (Direction direction : Direction.values()) {
-      Position candidate = center.translate(direction, 1);
-      if (map.isTerrainWalkable(candidate) && itemsOn(map.id(), candidate).isEmpty()) return candidate;
+  private Position findDropPosition(GameMap map, Position center) {
+    if (map.isTerrainWalkable(center)) return center;
+    for (int radius = 1; radius <= 2; radius++) {
+      for (int dx = -radius; dx <= radius; dx++) {
+        for (int dy = -radius; dy <= radius; dy++) {
+          Position candidate = new Position(center.x() + dx, center.y() + dy);
+          if (map.isTerrainWalkable(candidate)) return candidate;
+        }
+      }
     }
     return null;
   }
 
-  // ------------------------------------------------------------ monster AI
-
   /**
-   * One {@code TMonGenInfo} equivalent. {@code spawnedIds} mirrors the Delphi {@code CertList}:
-   * {@code GetGenMonCount} counts its non-dead members to decide how many to regenerate.
+   * Scans every registered door on every loaded map and closes those whose 5-second
+   * open duration has elapsed, mirroring {@code TUserEngine.ProcessMapDoor} (500ms timer).
+   * Broadcasts {@code SM_CLOSEDOOR} to observers within +/-12 cells of the closed anchor.
    */
-  private static final class Spawner {
-    private final MonsterTemplate template;
-    private final String mapId;
-    private final MonsterSpawnDefinition definition;
-    private final List<Integer> spawnedIds = new ArrayList<>();
-    private long startTick;
-
-    private Spawner(MonsterTemplate template, String mapId, MonsterSpawnDefinition definition) {
-      this.template = template;
-      this.mapId = mapId;
-      this.definition = definition;
-    }
-  }
-
-  /** Delphi paces one MonGen per {@code dwRegenMonstersTime} (200ms) pass; we do the same. */
-  private long lastRegenAt = Long.MIN_VALUE / 4;
-  private int currentSpawner;
-
-  // TUserEngine.ProcessMapDoor runs off its own 500ms cadence (dwProcessMapDoorTick) and
-  // closes any door once 5 seconds have passed since dwOpenTick.
-  private static final long DOOR_SWEEP_MILLIS = 500;
-  private static final long DOOR_CLOSE_AFTER_MILLIS = 5_000;
-  private long lastDoorSweepAt = Long.MIN_VALUE / 4;
-
-  /** The 500ms door sweep: closes doors opened for more than 5 seconds and broadcasts it. */
   private void closeDoorsPeriodically() {
     long now = clock.getAsLong();
-    if (now - lastDoorSweepAt < DOOR_SWEEP_MILLIS) return;
-    lastDoorSweepAt = now;
     for (GameMap map : maps.values()) {
-      if (!map.hasDoors()) continue;
       for (DoorInfo door : map.doors()) {
-        DoorInfo.DoorStatus status = door.status();
-        if (status.opened() && now - status.openedAtMillis() > DOOR_CLOSE_AFTER_MILLIS) {
-          status.close();
-          // The client re-closes every map cell sharing this door index (MapUnit.pas scans an
-          // index-symmetric window), so one broadcast per linked anchor is enough — matching
-          // Delphi's per-record CloseDoor over its m_DoorList iteration order.
-          WorldEvent closed = new WorldEvent.DoorClosed(map.id(), door.anchor());
-          for (int viewerId : playersInSquare(map, door.anchor())) emit(players.get(viewerId), closed);
+        if (door.status().opened() && (now - door.status().openedAt() >= DoorInfo.AUTO_CLOSE_MILLIS)) {
+          door.status().close();
+          WorldEvent closedEvent = new WorldEvent.DoorClosed(map.id(), door.anchor());
+          for (int viewerId : playersInSquare(map, door.anchor())) {
+            emit(players.get(viewerId), closedEvent);
+          }
         }
       }
     }
   }
 
+  /**
+   * Processes registered MonGen spawners, replenishing missing monsters when the row's
+   * respawn interval has elapsed, mirroring {@code TUserEngine.RegenMonsters}.
+   */
   private void regenSpawners() {
     if (spawners.isEmpty()) return;
     long now = clock.getAsLong();
-    if (now - lastRegenAt < config.regenIntervalMillis()) return;
-    lastRegenAt = now;
-    Spawner spawner = spawners.get(currentSpawner);
-    currentSpawner = (currentSpawner + 1) % spawners.size();
-    if (spawner.startTick != 0 && now - spawner.startTick <= spawner.definition.respawnMillis()) return;
-
-    spawner.spawnedIds.removeIf(id -> {
-      Monster monster = monsters.get(id);
-      return monster == null || !monster.ability.alive();
-    });
-    int missing = spawner.definition.count() - spawner.spawnedIds.size();
-    if (missing <= 0) {
-      spawner.startTick = now;
-      return;
-    }
-    GameMap map = maps.get(spawner.mapId);
-    if (map == null) return;
-    int range = spawner.definition.range();
-    boolean regenerated = false;
-    for (int i = 0; i < missing; i++) {
-      // RegenMonsters rolls a random cell inside the square and simply skips blocked ones.
-      Position candidate = null;
-      for (int attempt = 0; attempt < 10 && candidate == null; attempt++) {
-        Position roll = new Position(
-            spawner.definition.x() - range + random.nextInt(range * 2 + 1),
-            spawner.definition.y() - range + random.nextInt(range * 2 + 1));
-        if (map.canWalk(roll)) candidate = roll;
+    for (Spawner spawner : spawners) {
+      if (now - spawner.lastRegenAt < spawner.respawnIntervalMillis) continue;
+      int alive = 0;
+      for (int id : spawner.spawnedMonsterIds) {
+        Monster m = monsters.get(id);
+        if (m != null && m.ability.alive()) alive++;
       }
-      if (candidate == null) continue;
-      WorldObjectSnapshot spawned = spawn(spawner.template, spawner.mapId, candidate,
-          Direction.fromCode(random.nextInt(8)));
-      spawner.spawnedIds.add(spawned.id());
-      regenerated = true;
+      spawner.spawnedMonsterIds.removeIf(id -> {
+        Monster m = monsters.get(id);
+        return m == null || !m.ability.alive();
+      });
+      int missing = spawner.count - alive;
+      if (missing <= 0) continue;
+      spawner.lastRegenAt = now;
+      for (int i = 0; i < missing; i++) {
+        Position pos = pickSpawnerCell(spawner.map, spawner.center, spawner.radius);
+        if (pos == null) break;
+        Direction dir = Direction.fromCode(random.nextInt(8));
+        WorldObjectSnapshot snapshot = spawn(spawner.template, spawner.map.id(), pos, dir);
+        spawner.spawnedMonsterIds.add(snapshot.id());
+      }
     }
-    if (regenerated || missing <= 0) spawner.startTick = now;
+  }
+
+  private Position pickSpawnerCell(GameMap map, Position center, int radius) {
+    if (radius <= 0) {
+      return map.canWalk(center) ? center : null;
+    }
+    for (int attempt = 0; attempt < 30; attempt++) {
+      int x = center.x() + random.nextInt(2 * radius + 1) - radius;
+      int y = center.y() + random.nextInt(2 * radius + 1) - radius;
+      Position candidate = new Position(x, y);
+      if (map.canWalk(candidate)) return candidate;
+    }
+    return null;
   }
 
   /**
-   * Periodic online save, mirroring the {@code ProcessHumans} branch that calls
-   * {@code SaveHumanRcd} once {@code dwSaveHumanRcdTime} has elapsed per player. Event-driven
-   * saves (damage, pickup, leave) already persist eagerly; this catches slow-changing state.
+   * Persists online players whose last save was at least {@code saveIntervalMillis} ago,
+   * mirroring {@code TUserEngine.ProcessHumans} -> {@code SaveHumanRcd} (10-minute default).
    */
   private void savePlayersPeriodically() {
-    if (players.isEmpty()) return;
     long now = clock.getAsLong();
     for (Player player : players.values()) {
-      if (now - player.lastSavedAt < config.saveIntervalMillis()) continue;
-      try {
-        persist(player);
-        player.lastSavedAt = now;
-      } catch (RuntimeException failure) {
-        // Never let a storage hiccup kill the tick loop; the next interval retries.
-        LOG.log(Level.WARNING, "periodic save failed for " + player.name, failure);
+      if (now - player.lastSavedAt >= config.saveIntervalMillis()) {
+        try {
+          persist(player);
+          player.lastSavedAt = now;
+        } catch (RuntimeException error) {
+          LOG.log(Level.WARNING, "periodic player save failed for " + player.name, error);
+        }
       }
     }
   }
 
   private void updateMonsters() {
-    if (monsters.isEmpty()) return;
     long now = clock.getAsLong();
     List<Monster> snapshot = new ArrayList<>(monsters.values());
     for (Monster monster : snapshot) {
       if (!monster.ability.alive()) {
-        if (now - monster.diedAt >= config.corpseLingerMillis()) removeMonster(monster);
+        if (now - monster.diedAt >= config.corpseLingerMillis()) {
+          removeMonster(monster);
+        }
         continue;
       }
       Player target = acquireTarget(monster);
       if (target == null) continue;
+      int distance = monster.position.distanceTo(target.position);
       if (monster.template.behavior() == MonsterBehavior.PASSIVE_FLEE) {
         monsterFlee(monster, target, now);
-      } else if (monster.position.distanceTo(target.position) <= 1) {
+        continue;
+      }
+      if (distance == 1) {
         monsterAttack(monster, target, now);
       } else {
         monsterChase(monster, target, now);
@@ -881,105 +1055,99 @@ public final class WorldEngine implements AutoCloseable {
 
   private Player acquireTarget(Monster monster) {
     Player current = players.get(monster.targetId);
-    if (current != null && current.ability.alive()
-        && current.map == monster.map
-        && current.position.distanceTo(monster.position) <= monster.template.viewRange()) {
+    if (current != null && current.ability.alive() && current.map.id().equals(monster.map.id())
+        && monster.position.distanceTo(current.position) <= config.viewRange()) {
       return current;
     }
     monster.targetId = 0;
-    Player best = null;
-    for (int candidateId : visibleIds(monster.map, monster.position, monster.id)) {
-      Player candidate = players.get(candidateId);
+    Player closest = null;
+    int closestDistance = Integer.MAX_VALUE;
+    for (int viewerId : visibleIds(monster.map, monster.position, monster.id)) {
+      Player candidate = players.get(viewerId);
       if (candidate == null || !candidate.ability.alive()) continue;
-      if (candidate.position.distanceTo(monster.position) > monster.template.viewRange()) continue;
-      if (best == null || candidate.position.distanceTo(monster.position)
-          < best.position.distanceTo(monster.position)) {
-        best = candidate;
+      int distance = monster.position.distanceTo(candidate.position);
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closest = candidate;
       }
     }
-    if (best != null) monster.targetId = best.id;
-    return best;
+    if (closest != null) monster.targetId = closest.id;
+    return closest;
   }
 
   private void monsterAttack(Monster monster, Player target, long now) {
     if (now - monster.lastAttackAt < monster.template.attackIntervalMillis()) return;
     monster.lastAttackAt = now;
-    monster.direction = Direction.toward(monster.position, target.position);
+    monster.direction = monster.position.directionTo(target.position);
     WorldObjectSnapshot attacker = monster.snapshot();
     WorldEvent swing = new WorldEvent.ObjectAttacked(attacker, AttackKind.HIT);
-    for (int viewerId : visibleIds(monster.map, monster.position, monster.id)) emit(players.get(viewerId), swing);
-    applyDamage(target, monster, rollDamage(monster.ability, target.ability));
+    emitToObserversAndSelf(monster, swing);
+    int damage = rollDamage(monster.ability, target.ability);
+    applyDamage(target, monster, damage);
   }
 
   /**
-   * TChickenDeer run-away mode: walk in the direction opposite to the nearest player, falling
-   * back to the neighbouring directions when the straight line is blocked. Fleeing animals
-   * never attack.
+   * Chicken/deer flee AI: moves away from the nearest player in the opposite direction;
+   * never attacks.
    */
   private void monsterFlee(Monster monster, Player target, long now) {
     if (now - monster.lastWalkAt < monster.template.walkIntervalMillis()) return;
-    if (monster.position.equals(target.position)) return;
-    Direction away = Direction.toward(target.position, monster.position);
-    Direction chosen = null;
-    Position next = null;
-    for (Direction candidateDirection : new Direction[] {away, rotate(away, 1), rotate(away, -1)}) {
-      Position candidate = monster.position.translate(candidateDirection, 1);
-      if (monster.map.canWalk(candidate)) {
-        chosen = candidateDirection;
-        next = candidate;
-        break;
-      }
-    }
-    if (chosen == null) return;
     monster.lastWalkAt = now;
-    Position source = monster.position;
-    Set<Integer> visibleBefore = new LinkedHashSet<>(visibleIds(monster.map, source, monster.id));
-    monster.map.move(monster.id, source, next);
-    monster.position = next;
-    monster.direction = chosen;
-    Set<Integer> visibleAfter = new LinkedHashSet<>(visibleIds(monster.map, next, monster.id));
-    emitMovementToObservers(monster.snapshot(), source, MovementKind.WALK, visibleBefore, visibleAfter);
+    Direction away = target.position.directionTo(monster.position);
+    Position step = monster.position.translate(away, 1);
+    if (monster.map.canWalk(step)) {
+      stepMonster(monster, step, away);
+      return;
+    }
+    Direction left = away.rotateLeft();
+    Position stepLeft = monster.position.translate(left, 1);
+    if (monster.map.canWalk(stepLeft)) {
+      stepMonster(monster, stepLeft, left);
+      return;
+    }
+    Direction right = away.rotateRight();
+    Position stepRight = monster.position.translate(right, 1);
+    if (monster.map.canWalk(stepRight)) {
+      stepMonster(monster, stepRight, right);
+    }
   }
 
   private void monsterChase(Monster monster, Player target, long now) {
     if (now - monster.lastWalkAt < monster.template.walkIntervalMillis()) return;
-    Direction direction = Direction.toward(monster.position, target.position);
-    Position next = monster.position.translate(direction, 1);
-    if (!monster.map.canWalk(next)) {
-      // A blocked straight line falls back to the two neighbouring directions, as TMonster does.
-      Direction[] alternatives = {rotate(direction, 1), rotate(direction, -1)};
-      Position chosen = null;
-      for (Direction alternative : alternatives) {
-        Position candidate = monster.position.translate(alternative, 1);
-        if (monster.map.canWalk(candidate)) {
-          direction = alternative;
-          chosen = candidate;
-          break;
-        }
-      }
-      if (chosen == null) return;
-      next = chosen;
-    }
     monster.lastWalkAt = now;
-    Position source = monster.position;
-    Set<Integer> visibleBefore = new LinkedHashSet<>(visibleIds(monster.map, source, monster.id));
-    monster.map.move(monster.id, source, next);
-    monster.position = next;
-    monster.direction = direction;
-    Set<Integer> visibleAfter = new LinkedHashSet<>(visibleIds(monster.map, next, monster.id));
-    emitMovementToObservers(monster.snapshot(), source, MovementKind.WALK, visibleBefore, visibleAfter);
+    Direction direction = monster.position.directionTo(target.position);
+    Position step = monster.position.translate(direction, 1);
+    if (monster.map.canWalk(step)) {
+      stepMonster(monster, step, direction);
+      return;
+    }
+    Direction left = direction.rotateLeft();
+    Position stepLeft = monster.position.translate(left, 1);
+    if (monster.map.canWalk(stepLeft)) {
+      stepMonster(monster, stepLeft, left);
+      return;
+    }
+    Direction right = direction.rotateRight();
+    Position stepRight = monster.position.translate(right, 1);
+    if (monster.map.canWalk(stepRight)) {
+      stepMonster(monster, stepRight, right);
+    }
   }
 
-  private static Direction rotate(Direction direction, int steps) {
-    Direction[] values = Direction.values();
-    return values[Math.floorMod(direction.code() + steps, values.length)];
+  private void stepMonster(Monster monster, Position target, Direction direction) {
+    Position source = monster.position;
+    Set<Integer> visibleBefore = new LinkedHashSet<>(visibleIds(monster.map, source, monster.id));
+    monster.map.move(monster.id, source, target);
+    monster.position = target;
+    monster.direction = direction;
+    Set<Integer> visibleAfter = new LinkedHashSet<>(visibleIds(monster.map, target, monster.id));
+    WorldObjectSnapshot snapshot = monster.snapshot();
+    emitMovementToObservers(snapshot, source, MovementKind.WALK, visibleBefore, visibleAfter);
   }
 
   private void removeMonster(Monster monster) {
+    monster.map.remove(monster.id, monster.position);
     monsters.remove(monster.id);
-    if (monster.map.objectAt(monster.position) == monster.id) {
-      monster.map.remove(monster.id, monster.position);
-    }
     WorldEvent disappeared = new WorldEvent.ObjectDisappeared(monster.id);
     for (int viewerId : visibleIds(monster.map, monster.position, monster.id)) {
       emit(players.get(viewerId), disappeared);
@@ -987,83 +1155,57 @@ public final class WorldEngine implements AutoCloseable {
   }
 
   private void expireGroundItems() {
-    if (groundItems.isEmpty() || config.itemLingerMillis() == 0) return;
     long now = clock.getAsLong();
     List<GroundItem> expired = new ArrayList<>();
-    for (Map.Entry<Integer, GroundItem> entry : groundItems.entrySet()) {
-      Long droppedAt = itemDropTimes.get(entry.getKey());
-      if (droppedAt != null && now - droppedAt >= config.itemLingerMillis()) expired.add(entry.getValue());
+    for (Map.Entry<Integer, Long> entry : itemDropTimes.entrySet()) {
+      if (now - entry.getValue() >= config.itemLingerMillis()) {
+        GroundItem item = groundItems.get(entry.getKey());
+        if (item != null) expired.add(item);
+      }
     }
     for (GroundItem item : expired) {
       groundItems.remove(item.id());
       itemDropTimes.remove(item.id());
+      WorldEvent disappeared = new WorldEvent.ItemDisappeared(item);
       GameMap map = maps.get(item.mapId());
-      if (map == null) continue;
-      WorldEvent hidden = new WorldEvent.ItemDisappeared(item);
-      for (int viewerId : visibleIds(map, item.position(), 0)) emit(players.get(viewerId), hidden);
+      if (map != null) {
+        for (int viewerId : visibleIds(map, item.position(), 0)) {
+          emit(players.get(viewerId), disappeared);
+        }
+      }
     }
   }
-
-  // ---------------------------------------------------------------- shared
 
   private void persist(Player player) {
     playerStateStore.save(player.state());
   }
 
-  /** W03 rows were saved without make indexes; assign stable ones while restoring. */
-  private PlayerState withStableMakeIndexes(PlayerState state) {
-    boolean needsRenumber = state.backpack().stream().anyMatch(item -> item.makeIndex() <= 0);
-    if (!needsRenumber) return state;
-    List<BackpackItem> normalised = state.backpack().stream()
-        .map(item -> item.makeIndex() > 0 ? item : item.withMakeIndex(allocateMakeIndex()))
-        .toList();
-    return new PlayerState(state.characterId(), state.ability(), normalised);
-  }
-
-  /**
-   * Per-instance item id, mirroring M2Share {@code GetItemNumber}: increments and wraps
-   * back to 1 once it passes {@code High(Integer) / 2 - 1}. Seeded from the persisted
-   * high-water mark so ids stay unique across restarts.
-   */
-  private int allocateMakeIndex() {
-    if (nextItemMakeIndex > Integer.MAX_VALUE / 2 - 1) nextItemMakeIndex = 1;
-    return nextItemMakeIndex++;
-  }
-
-  private static int seedMakeIndex(long highWater) {
-    if (highWater < 0) throw new IllegalArgumentException("make-index high water must not be negative");
-    return (int) Math.min(Math.max(highWater + 1, 1), Integer.MAX_VALUE / 2 - 1);
-  }
-
-  private static UUID transientCharacterId(String name) {
-    Objects.requireNonNull(name, "name");
-    return UUID.nameUUIDFromBytes(name.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-  }
-
-  private MoveResult rejectMove(
-      Player player, Position target, WorldEvent.MoveRejection reason) {
+  private MoveResult rejectMove(Player player, Position target, WorldEvent.MoveRejection reason) {
     emit(player, new WorldEvent.MoveRejected(player.id, target, reason));
-    return MoveResult.rejected(player.snapshot(), reason);
+    return MoveResult.rejected(reason);
   }
 
   private AttackResult rejectAttack(Player player, WorldEvent.AttackRejection reason) {
     emit(player, new WorldEvent.AttackRejected(player.id, reason));
-    return AttackResult.rejected(player.snapshot(), reason);
+    return AttackResult.rejected(reason);
   }
 
   private void emitOwnVisibilityChanges(
-      Player movingPlayer, Set<Integer> visibleBefore, Set<Integer> visibleAfter) {
-    for (int oldObject : difference(visibleBefore, visibleAfter))
-      emit(movingPlayer, new WorldEvent.ObjectDisappeared(oldObject));
-    for (int newObject : difference(visibleAfter, visibleBefore))
-      emit(movingPlayer, new WorldEvent.ObjectAppeared(requireObject(newObject).snapshot()));
+      Player player, Set<Integer> visibleBefore, Set<Integer> visibleAfter) {
+    for (int enteredId : difference(visibleAfter, visibleBefore)) {
+      WorldObject entered = findObject(enteredId);
+      if (entered != null) emit(player, new WorldEvent.ObjectAppeared(entered.snapshot()));
+    }
+    for (int leftId : difference(visibleBefore, visibleAfter)) {
+      emit(player, new WorldEvent.ObjectDisappeared(leftId));
+    }
   }
 
   private void emitItemVisibilityChanges(Player player, Position source, Position target) {
-    Set<GroundItem> before = new LinkedHashSet<>(visibleItems(player.map, source));
-    Set<GroundItem> after = new LinkedHashSet<>(visibleItems(player.map, target));
-    for (GroundItem gone : before) {
-      if (!after.contains(gone)) emit(player, new WorldEvent.ItemDisappeared(gone));
+    List<GroundItem> before = visibleItems(player.map, source);
+    List<GroundItem> after = visibleItems(player.map, target);
+    for (GroundItem hidden : before) {
+      if (!after.contains(hidden)) emit(player, new WorldEvent.ItemDisappeared(hidden));
     }
     for (GroundItem shown : after) {
       if (!before.contains(shown)) emit(player, new WorldEvent.ItemAppeared(shown));
@@ -1196,6 +1338,35 @@ public final class WorldEngine implements AutoCloseable {
     return nextObjectId++;
   }
 
+  private int allocateMakeIndex() {
+    int current = nextItemMakeIndex;
+    if (nextItemMakeIndex >= Integer.MAX_VALUE / 2 - 1) nextItemMakeIndex = 1;
+    else nextItemMakeIndex++;
+    return current;
+  }
+
+  private static int seedMakeIndex(int highWater) {
+    return highWater <= 0 ? 1 : highWater + 1;
+  }
+
+  private PlayerState withStableMakeIndexes(PlayerState state) {
+    List<BackpackItem> updated = new ArrayList<>(state.backpack().size());
+    boolean modified = false;
+    for (BackpackItem item : state.backpack()) {
+      if (item.makeIndex() <= 0) {
+        updated.add(new BackpackItem(item.item(), allocateMakeIndex(), item.dura(), item.duraMax()));
+        modified = true;
+      } else {
+        updated.add(item);
+      }
+    }
+    return modified ? new PlayerState(state.characterId(), state.ability(), updated) : state;
+  }
+
+  private static UUID transientCharacterId(String name) {
+    return UUID.nameUUIDFromBytes(("transient:" + name).getBytes());
+  }
+
   private void claimOwnership() {
     Thread current = Thread.currentThread();
     Thread owner = ownerThread.get();
@@ -1240,6 +1411,27 @@ public final class WorldEngine implements AutoCloseable {
 
     private void cancel() {
       future.completeExceptionally(new CancellationException("world engine stopped"));
+    }
+  }
+
+  private static final class Spawner {
+    private final MonsterTemplate template;
+    private final GameMap map;
+    private final Position center;
+    private final int radius;
+    private final int count;
+    private final long respawnIntervalMillis;
+    private final List<Integer> spawnedMonsterIds = new ArrayList<>();
+    private long lastRegenAt;
+
+    private Spawner(MonsterTemplate template, GameMap map, Position center, int radius,
+        int count, long respawnIntervalMillis) {
+      this.template = template;
+      this.map = map;
+      this.center = center;
+      this.radius = radius;
+      this.count = count;
+      this.respawnIntervalMillis = respawnIntervalMillis;
     }
   }
 

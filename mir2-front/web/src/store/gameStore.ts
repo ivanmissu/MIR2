@@ -3,7 +3,8 @@ import {
   Direction,
   GroundItem,
   BackpackItem,
-  WorldObjectSnapshot
+  WorldObjectSnapshot,
+  ChatMessage
 } from '@mir2/shared';
 
 export interface LogEntry {
@@ -61,11 +62,13 @@ export interface GameState {
   level: number;
   exp: number;
   feature: number;
+  dayBright: number;
 
   // Visible entities
   visibleObjects: Map<number, WorldObjectSnapshot>;
   visibleItems: Map<number, GroundItem>;
   backpack: BackpackItem[];
+  chatMessages: ChatMessage[];
 
   // Visual effects & combat feedback
   damageNumbers: DamageNumber[];
@@ -106,10 +109,12 @@ export const initialGameState: GameState = {
   level: 1,
   exp: 0,
   feature: 0,
+  dayBright: 0,
 
   visibleObjects: new Map(),
   visibleItems: new Map(),
   backpack: [],
+  chatMessages: [],
 
   damageNumbers: [],
   attackEffects: [],

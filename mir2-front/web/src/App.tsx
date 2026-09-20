@@ -25,6 +25,8 @@ export const App: React.FC = () => {
     turn,
     attack,
     pickup,
+    say,
+    openDoor,
     queryBagItems,
     disconnect,
     setLogFilter,
@@ -185,6 +187,8 @@ export const App: React.FC = () => {
                   onTurn={turn}
                   onAttack={attack}
                   onPickup={pickup}
+                  onOpenDoor={openDoor}
+                  onSay={say}
                   onQueryBag={queryBagItems}
                 />
               </div>
