@@ -236,6 +236,7 @@ $JAVA --enable-native-access=ALL-UNNAMED -XX:MaxRAMPercentage=75 \
 | `MIR2_WORLD_TICK_MS` | `50` | 世界逻辑 Tick 间隔，1–10000ms |
 | `MIR2_MONSTER_COUNT` | `0` | 启动时在出生点四周生成的怪物数，0–1000 |
 | `MIR2_MONSTER_KIND` | `chicken` | `chicken`（鸡）或 `orc`（半兽人） |
+| `MIR2_MONGEN_FILE` | 未设置 | 可选的经典 `MonGen.txt` 路径；支持 `loadgen`、引号怪物名、范围/数量/分钟/刷新率字段；当前启动时生成首批，刷新调度随后实现 |
 
 ### 5.4 账号引导
 

@@ -19,6 +19,7 @@ public record ServerConfig(
     int worldTickMillis,
     int monsterCount,
     String monsterKind,
+    Path monGenFile,
     String bootstrapUser,
     String bootstrapPassword,
     int maxConnectionsPerIp,
@@ -31,7 +32,7 @@ public record ServerConfig(
       Path mapFile, String mapId, int spawnX, int spawnY, int worldTickMillis, int monsterCount,
       String monsterKind, String bootstrapUser, String bootstrapPassword) {
     this(database, ports, advertisedHost, serverName, mapFile, mapId, spawnX, spawnY,
-        worldTickMillis, monsterCount, monsterKind, bootstrapUser, bootstrapPassword,
+        worldTickMillis, monsterCount, monsterKind, null, bootstrapUser, bootstrapPassword,
         128, 300, 60, 900);
   }
 
@@ -80,6 +81,7 @@ public record ServerConfig(
         positiveInt(environment, "MIR2_WORLD_TICK_MS", 50),
         nonNegativeInt(environment, "MIR2_MONSTER_COUNT", 0),
         value(environment, "MIR2_MONSTER_KIND", "chicken"),
+        nullablePath(environment.get("MIR2_MONGEN_FILE")),
         nullable(environment.get("MIR2_BOOTSTRAP_USER")),
         nullable(environment.get("MIR2_BOOTSTRAP_PASSWORD")),
         positiveInt(environment, "MIR2_MAX_CONNECTIONS_PER_IP", 128),
