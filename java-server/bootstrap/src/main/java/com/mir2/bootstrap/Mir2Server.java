@@ -109,8 +109,8 @@ public final class Mir2Server implements AutoCloseable {
   private void spawnMonGen(GameMap map, Path monGenFile) throws IOException {
     int placed = 0;
     for (MonsterSpawnDefinition definition : MonGenLoader.load(monGenFile)) {
-      if (!definition.mapName().equalsIgnoreCase(map.name())
-          && !definition.mapName().equalsIgnoreCase(Integer.toString(map.id()))) continue;
+      if (!definition.mapName().equalsIgnoreCase(map.title())
+          && !definition.mapName().equalsIgnoreCase(map.id())) continue;
       MonsterTemplate template;
       try {
         template = MonsterTemplate.forName(definition.monsterName());
