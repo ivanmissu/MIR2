@@ -115,7 +115,11 @@ public final class RecorderProxy implements AutoCloseable {
           break; // listener closed by close()
         }
         if (completedConnections.get() >= config.maxConnections()) {
-          client.close();
+          try {
+            client.close();
+          } catch (IOException ignored) {
+            // Rejected connection; nothing else to clean up.
+          }
           break;
         }
         openSockets.add(client);
@@ -197,8 +201,14 @@ public final class RecorderProxy implements AutoCloseable {
     FrameSplitter splitter = new FrameSplitter();
     byte[] buffer = new byte[8192];
     try {
-      InputStream in = source.getInputStream();
-      OutputStream out = destination.getOutputStream();
+      final InputStream in;
+      final OutputStream out;
+      try {
+        in = source.getInputStream();
+        out = destination.getOutputStream();
+      } catch (IOException streamSetupFailed) {
+        return; // Sibling pump tears the session down via its own error path.
+      }
       while (true) {
         final int read;
         try {
