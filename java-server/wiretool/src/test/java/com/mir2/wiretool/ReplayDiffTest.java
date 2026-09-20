@@ -64,7 +64,7 @@ class ReplayDiffTest {
 
   @Test
   void firstDiffHelperHandlesEqualInputs() {
-    assertEquals(3, ReplayDiff.firstDiff(b(1, 2, 3), b(1, 2, 4)));
+    assertEquals(2, ReplayDiff.firstDiff(b(1, 2, 3), b(1, 2, 4)));
     assertEquals(3, ReplayDiff.firstDiff(b(1, 2, 3), b(1, 2, 3)));
   }
 

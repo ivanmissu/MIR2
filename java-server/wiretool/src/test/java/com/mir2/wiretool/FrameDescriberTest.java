@@ -57,10 +57,11 @@ class FrameDescriberTest {
 
   @Test
   void describesNoiseAsPrintablePreview() {
-    String description = FrameDescriber.describe(Recording.Kind.SERVER_NOISE,
-        "hello".getBytes(StandardCharsets.ISO_8859_1));
-    assertTrue(description.contains("noise 5B"), description);
-    assertTrue(description.contains("\"hello\""), description);
+    // "hello" plus one control byte: printable mapping leaves exactly one '.'.
+    byte[] noise = {'h', 'e', 'l', 'l', 'o', 0x01};
+    String description = FrameDescriber.describe(Recording.Kind.SERVER_NOISE, noise);
+    assertTrue(description.contains("noise 6B"), description);
+    assertTrue(description.contains("\"hello.\""), description);
   }
 
   @Test
