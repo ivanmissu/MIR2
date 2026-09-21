@@ -48,6 +48,17 @@ class ServerConfigTest {
   }
 
   @Test
+  void testGoldFloorsTheLoginWalletAndRejectsInvalidValues() {
+    assertEquals(5_000, ServerConfig.from(Map.of("MIR2_TEST_GOLD", "5000")).testGold());
+    // The shipped default is g_Config.nTestGold = 0: a no-op floor.
+    assertEquals(0, ServerConfig.from(Map.of()).testGold());
+    assertThrows(IllegalArgumentException.class,
+        () -> ServerConfig.from(Map.of("MIR2_TEST_GOLD", "-1")));
+    assertThrows(IllegalArgumentException.class,
+        () -> ServerConfig.from(Map.of("MIR2_TEST_GOLD", Long.toString(10_000_001L))));
+  }
+
+  @Test
   void environmentOverridesAllDeploymentValues() {
     ServerConfig config = ServerConfig.from(Map.ofEntries(
         Map.entry("MIR2_DATABASE", "/tmp/custom.db"),

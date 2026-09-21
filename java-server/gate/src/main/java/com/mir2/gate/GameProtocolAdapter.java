@@ -94,6 +94,20 @@ public final class GameProtocolAdapter implements WorldEventSink {
         // CM_DROPITEM: recog=MakeIndex, body=item name (ClMain.pas:3042).
         case ProtocolConstants.CM_DROPITEM -> reportExceptionalFailure(world.dropItem(
             boundPlayer, message.recog(), WireMessageCodec.decodeBody(packet.encodedBody())));
+        // CM_MERCHANTDLGSELECT: recog=merchant, body=label (ClMain.pas:3094). Delphi answers
+        // no +GOOD/+FAIL for the merchant family, so like CM_SAY the reply is event-driven.
+        case ProtocolConstants.CM_MERCHANTDLGSELECT -> reportExceptionalFailure(
+            world.selectMerchantLabel(
+                boundPlayer, message.recog(), WireMessageCodec.decodeBody(packet.encodedBody())));
+        // CM_MERCHANTQUERYREPAIRCOST: recog=merchant, param/tag = MakeIndex words,
+        // body=item name (ClMain.pas:3120). No such bag item stays silent, as in Delphi.
+        case ProtocolConstants.CM_MERCHANTQUERYREPAIRCOST -> reportExceptionalFailure(
+            world.queryRepairCost(boundPlayer, unpackMakeIndex(message),
+                WireMessageCodec.decodeBody(packet.encodedBody())));
+        // CM_USERREPAIRITEM: same layout as the cost query (ClMain.pas:3136).
+        case ProtocolConstants.CM_USERREPAIRITEM -> reportExceptionalFailure(
+            world.repairItem(boundPlayer, unpackMakeIndex(message),
+                WireMessageCodec.decodeBody(packet.encodedBody())));
         // Chat from client: Delphi sends no +GOOD/+FAIL acknowledgement for CM_SAY.
         case ProtocolConstants.CM_SAY -> {
           String text = WireMessageCodec.decodeBody(packet.encodedBody());
@@ -217,7 +231,7 @@ public final class GameProtocolAdapter implements WorldEventSink {
         }
       }
       case WorldEvent.AbilityChanged changed -> {
-        if (changed.playerId() == playerId) sendAbility(changed.ability());
+        if (changed.playerId() == playerId) sendAbility(changed);
       }
       case WorldEvent.EquipmentSent sent -> {
         if (sent.playerId() == playerId) sendWornSet(sent.equipment());
@@ -227,6 +241,36 @@ public final class GameProtocolAdapter implements WorldEventSink {
           output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_DURACHANGE,
               changed.dura(), changed.slot().index(), changed.duraMax() & 0xffff,
               (changed.duraMax() >>> 16) & 0xffff, "")));
+        }
+      }
+      case WorldEvent.GoldChanged changed -> {
+        if (changed.playerId() == playerId) {
+          output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_GOLDCHANGED,
+              (int) changed.gold(), 0, 0, 0, "")));
+        }
+      }
+      case WorldEvent.MerchantRepairDialog opened -> {
+        if (opened.playerId() == playerId) {
+          output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_SENDUSERREPAIR,
+              opened.merchantId(), 0, 0, 0, "")));
+        }
+      }
+      case WorldEvent.RepairCostResolved resolved -> {
+        if (resolved.playerId() == playerId) {
+          output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_SENDREPAIRCOST,
+              resolved.cost(), 0, 0, 0, "")));
+        }
+      }
+      case WorldEvent.ItemRepaired repaired -> {
+        if (repaired.playerId() == playerId) {
+          output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_USERREPAIRITEM_OK,
+              repaired.gold(), repaired.dura(), repaired.duraMax(), 0, "")));
+        }
+      }
+      case WorldEvent.RepairRejected rejected -> {
+        if (rejected.playerId() == playerId) {
+          output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_USERREPAIRITEM_FAIL,
+              0, 0, 0, 0, "")));
         }
       }
       case WorldEvent.DayChanging dayChanging -> output.accept(new GameOutbound.Packet(
@@ -255,7 +299,18 @@ public final class GameProtocolAdapter implements WorldEventSink {
         || ident == ProtocolConstants.CM_TAKEONITEM
         || ident == ProtocolConstants.CM_TAKEOFFITEM
         || ident == ProtocolConstants.CM_EAT
-        || ident == ProtocolConstants.CM_DROPITEM;
+        || ident == ProtocolConstants.CM_DROPITEM
+        || ident == ProtocolConstants.CM_MERCHANTDLGSELECT
+        || ident == ProtocolConstants.CM_MERCHANTQUERYREPAIRCOST
+        || ident == ProtocolConstants.CM_USERREPAIRITEM;
+  }
+
+  /**
+   * Delphi {@code MakeLong(LoWord, HiWord)}: the client packs an item's MakeIndex across the
+   * Param/Tag words so the low word lands in Param and the high word in Tag.
+   */
+  private static int unpackMakeIndex(DefaultMessage message) {
+    return (message.param() & 0xffff) | (message.tag() << 16);
   }
 
   private static AttackKind attackKind(int ident) {
@@ -465,10 +520,18 @@ public final class GameProtocolAdapter implements WorldEventSink {
         unequipped.playerId(), 0, 0, 1, ClientItemCodec.encode(unequipped.item()))));
   }
 
-  /** {@code RM_ABILITY} -> {@code SM_ABILITY} with the 50-byte packed TAbility body. */
-  private void sendAbility(com.mir2.world.Ability ability) {
-    output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_ABILITY, 0, 0, 0, 0,
-        AbilityCodec.encode(ability))));
+  /**
+   * {@code RM_ABILITY -> SM_ABILITY} with the 50-byte packed TAbility body. The Delphi header
+   * (ObjBase.pas:5685) carries the wallet in Recog and {@code MakeWord(btJob, 99)} in Param —
+   * the client refreshes its gold display from every SM_ABILITY, so these cannot stay zero now
+   * that gold exists.
+   */
+  private void sendAbility(WorldEvent.AbilityChanged changed) {
+    output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_ABILITY,
+        (int) changed.gold(),
+        (changed.job() & 0xff) | (99 << 8),
+        0, 0,
+        AbilityCodec.encode(changed.ability()))));
   }
 
   /** {@code SM_SENDUSEITEMS}; ObjBase.pas:16930 stays silent when nothing is worn. */

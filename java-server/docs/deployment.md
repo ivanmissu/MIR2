@@ -239,6 +239,7 @@ $JAVA --enable-native-access=ALL-UNNAMED -XX:MaxRAMPercentage=75 \
 | `MIR2_MONSTER_KIND` | `chicken` | 首批 10 种模板之一：`chicken`（鸡）、`deer`（鹿，逃跑型）、`scarecrow`（稻草人）、`hookcat`（多钩猫）、`rakecat`（钉耙猫）、`cavemaggot`（洞蛆）、`scorpion`（蝎子）、`orc`（半兽人）、`orcwarrior`（半兽勇士）、`orcfighter`（半兽战士）；中文名同样有效 |
 | `MIR2_MONGEN_FILE` | 未设置 | 可选的经典 `MonGen.txt` 路径；支持 `loadgen`、引号怪物名、范围/数量/分钟/刷新率字段；每行注册为自动刷新的 spawner（对应 `TUserEngine.RegenMonsters`），按行内分钟数补足被击杀的怪物 |
 | `MIR2_SAVE_INTERVAL_SECONDS` | `600` | 在线玩家周期存档间隔（对应 Delphi `SaveHumanRcdTime`，默认 10 分钟）；事件型存档（伤害/拾取/离场）不受影响 |
+| `MIR2_TEST_GOLD` | `0` | 测试服登录金币下限（对应 Delphi `boTestServer`/`nTestGold`，`UserLogon` 语义）：登录时金币低于该值即补足并下发 `SM_GOLDCHANGED`；0 = 不生效，上限 10,000,000（`nHumanMaxGold`） |
 
 ### 5.4 账号引导
 

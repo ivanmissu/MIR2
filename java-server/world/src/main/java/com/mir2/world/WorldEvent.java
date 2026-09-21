@@ -48,7 +48,12 @@ public sealed interface WorldEvent
         WorldEvent.WeightChanged,
         WorldEvent.AbilityChanged,
         WorldEvent.EquipmentSent,
-        WorldEvent.ItemDurabilityChanged {
+        WorldEvent.ItemDurabilityChanged,
+        WorldEvent.GoldChanged,
+        WorldEvent.MerchantRepairDialog,
+        WorldEvent.RepairCostResolved,
+        WorldEvent.ItemRepaired,
+        WorldEvent.RepairRejected {
 
   record MapEntered(
       WorldObjectSnapshot player,
@@ -422,11 +427,75 @@ public sealed interface WorldEvent
     }
   }
 
-  /** {@code RM_ABILITY}: the recalculated ability after equipment changed. */
-  record AbilityChanged(int playerId, Ability ability) implements WorldEvent {
+  /**
+   * {@code RM_ABILITY}: the recalculated ability after equipment changed. The Delphi header
+   * carries {@code m_nGold} in Recog and {@code MakeWord(btJob, 99)} in Param
+   * (ObjBase.pas:5685), and the client refreshes its gold display from every SM_ABILITY, so
+   * the event has to carry both alongside the 50-byte body.
+   */
+  record AbilityChanged(int playerId, Ability ability, long gold, int job) implements WorldEvent {
     public AbilityChanged {
       if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
       Objects.requireNonNull(ability, "ability");
+      if (gold < 0) throw new IllegalArgumentException("gold must not be negative");
+      if (job < 0) throw new IllegalArgumentException("job must not be negative");
+    }
+  }
+
+  /**
+   * {@code RM_GOLDCHANGED -> SM_GOLDCHANGED}: Recog carries the new wallet total. Delphi only
+   * fires this when gold actually changes through a source that calls {@code GoldChanged}
+   * (gold pickups, castle exchange); the repair path syncs the wallet through
+   * SM_USERREPAIRITEM_OK instead, exactly as the original does.
+   */
+  record GoldChanged(int playerId, long gold) implements WorldEvent {
+    public GoldChanged {
+      if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
+      if (gold < 0) throw new IllegalArgumentException("gold must not be negative");
+    }
+  }
+
+  /**
+   * {@code RM_SENDUSERREPAIR / RM_SENDUSERSREPAIR -> SM_SENDUSERREPAIR}: the merchant told the
+   * client to open its repair dialog. Recog is the merchant the client clicked; this engine
+   * has no NPC objects yet, so it echoes the id the client supplied instead of Delphi's own
+   * {@code Integer(Self)} pointer.
+   */
+  record MerchantRepairDialog(int playerId, int merchantId) implements WorldEvent {
+    public MerchantRepairDialog {
+      if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
+    }
+  }
+
+  /**
+   * {@code RM_SENDREPAIRCOST -> SM_SENDREPAIRCOST}: the quoted repair price for the item the
+   * client dragged into the repair dialog. {@code cost < 0} is the Delphi "cannot repair"
+   * answer (the client prints ???).
+   */
+  record RepairCostResolved(int playerId, int cost) implements WorldEvent {
+    public RepairCostResolved {
+      if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
+    }
+  }
+
+  /**
+   * {@code RM_USERREPAIRITEM_OK -> SM_USERREPAIRITEM_OK}: Recog=remaining gold, Param=Dura,
+   * Tag=DuraMax — the client refreshes all three from this one packet.
+   */
+  record ItemRepaired(int playerId, int gold, int dura, int duraMax) implements WorldEvent {
+    public ItemRepaired {
+      if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
+      if (gold < 0) throw new IllegalArgumentException("gold must not be negative");
+      if (dura < 0 || duraMax < 0) {
+        throw new IllegalArgumentException("durability must not be negative");
+      }
+    }
+  }
+
+  /** {@code RM_USERREPAIRITEM_FAIL -> SM_USERREPAIRITEM_FAIL}: Recog stays zero. */
+  record RepairRejected(int playerId) implements WorldEvent {
+    public RepairRejected {
+      if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
     }
   }
 

@@ -89,7 +89,8 @@ public final class Mir2Server implements AutoCloseable {
         throw new IllegalArgumentException("configured spawn is outside the map or blocked: " + spawn);
       world = new WorldEngine(
           new WorldEngine.Config(Duration.ofMillis(config.worldTickMillis()), 12, 10_000,
-              900, 5_000, 180_000, 200, config.saveIntervalSeconds() * 1_000L),
+              900, 5_000, 180_000, 200, config.saveIntervalSeconds() * 1_000L,
+              config.testGold()),
           worldMaps,
           store,
           store.itemDatabase());

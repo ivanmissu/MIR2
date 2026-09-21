@@ -17,7 +17,20 @@ public final class StdItems {
   private StdItems() {}
 
   public static List<StdItem> defaults() {
-    return List.of(chickenMeat(), deerMeat(), woodenSword(), smallHealingPotion());
+    return List.of(chickenMeat(), deerMeat(), woodenSword(), smallHealingPotion(), revivalRing());
+  }
+
+  /**
+   * 复活戒指: the classic Shape 114 revival ring (StdMode 22 → U_RINGL/U_RINGR). Each
+   * activation of the death-defying branch drains 1000 durability from every worn
+   * revival-capable item ({@code ItemDamageRevivalRing}), so DuraMax 5000 is five
+   * deaths' worth of protection. Listed in the catalog for manual gameplay checks and
+   * the future NPC shop slice; nothing drops it yet.
+   */
+  // TODO(verify): real template values (Looks/price/AC) must be confirmed against the
+  // StdItems.DB import.
+  public static StdItem revivalRing() {
+    return new StdItem("复活戒指", 22, 114, 1, 0, 0, 0, 217, 5000, 0, 0, 0, 0, 0, 0, 0, 3000);
   }
 
   /**

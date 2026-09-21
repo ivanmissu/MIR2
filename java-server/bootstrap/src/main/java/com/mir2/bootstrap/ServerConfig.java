@@ -27,7 +27,8 @@ public record ServerConfig(
     int connectionAttemptsPerWindow,
     int connectionAttemptWindowSeconds,
     int idleTimeoutSeconds,
-    int saveIntervalSeconds) {
+    int saveIntervalSeconds,
+    long testGold) {
 
   /** Compatibility constructor for embedded tests and load-test callers. */
   public ServerConfig(Path database, GatePorts ports, String advertisedHost, String serverName,
@@ -35,7 +36,7 @@ public record ServerConfig(
       String monsterKind, String bootstrapUser, String bootstrapPassword) {
     this(database, ports, advertisedHost, serverName, mapFile, null, mapId, spawnX, spawnY,
         worldTickMillis, monsterCount, monsterKind, null, bootstrapUser, bootstrapPassword,
-        128, 300, 60, 900, 600);
+        128, 300, 60, 900, 600, 0);
   }
 
   public ServerConfig {
@@ -58,6 +59,9 @@ public record ServerConfig(
       throw new IllegalArgumentException("access-layer limits and timeouts must be positive");
     if (saveIntervalSeconds < 1)
       throw new IllegalArgumentException("save interval must be a positive number of seconds");
+    if (testGold < 0 || testGold > com.mir2.world.PlayerState.MAX_GOLD)
+      throw new IllegalArgumentException("test gold must be within 0.."
+          + com.mir2.world.PlayerState.MAX_GOLD);
     monsterKind = requireText(monsterKind, "monster kind");
     try {
       com.mir2.world.MonsterTemplate.forName(monsterKind);
@@ -100,7 +104,10 @@ public record ServerConfig(
         positiveInt(environment, "MIR2_CONNECTION_ATTEMPT_WINDOW_SECONDS", 60),
         positiveInt(environment, "MIR2_IDLE_TIMEOUT_SECONDS", 900),
         // g_Config.dwSaveHumanRcdTime defaults to 10 minutes (M2Share.pas).
-        positiveInt(environment, "MIR2_SAVE_INTERVAL_SECONDS", 600));
+        positiveInt(environment, "MIR2_SAVE_INTERVAL_SECONDS", 600),
+        // g_Config.nTestGold defaults to 0 under boTestServer (ObjBase.pas:16360): a login
+        // wallet floor for test servers, kept at the shipped no-op default.
+        nonNegativeLong(environment, "MIR2_TEST_GOLD", 0));
   }
 
   /** Resolves the configured melee monster used to populate the PoC map. */
@@ -136,6 +143,17 @@ public record ServerConfig(
     String raw = value(environment, key, Integer.toString(fallback));
     try {
       int result = Integer.parseInt(raw);
+      if (result < 0) throw new NumberFormatException();
+      return result;
+    } catch (NumberFormatException error) {
+      throw new IllegalArgumentException(key + " must be a non-negative integer", error);
+    }
+  }
+
+  private static long nonNegativeLong(Map<String, String> environment, String key, long fallback) {
+    String raw = value(environment, key, Long.toString(fallback));
+    try {
+      long result = Long.parseLong(raw);
       if (result < 0) throw new NumberFormatException();
       return result;
     } catch (NumberFormatException error) {
