@@ -74,7 +74,9 @@ class GameProtocolAdapterTest {
       assertTrue(adapter.handle(invalidDirection));
       assertEquals(new GameOutbound.Status(false, 99), output.removeFirst());
 
-      assertFalse(adapter.handle(new WirePacket(new DefaultMessage(0, 99999, 0, 0, 0))));
+      // An ident outside the supported gameplay subset is ignored; 65535 is the largest
+      // value TDefaultMessage's Word ident field can carry and is unassigned in Grobal2.pas.
+      assertFalse(adapter.handle(new WirePacket(new DefaultMessage(0, 0xffff, 0, 0, 0))));
       assertTrue(output.isEmpty());
     }
   }
@@ -269,7 +271,7 @@ class GameProtocolAdapterTest {
       assertEquals(3, dayChanging.message().param());
       assertEquals(1, dayChanging.message().tag());
 
-      adapter.send(new WorldEvent.DoorClosed(new Position(12, 12)));
+      adapter.send(new WorldEvent.DoorClosed("0", new Position(12, 12)));
       WirePacket doorClosed = ((GameOutbound.Packet) output.removeFirst()).packet();
       assertEquals(ProtocolConstants.SM_CLOSEDOOR, doorClosed.message().ident());
       assertEquals(12, doorClosed.message().param());

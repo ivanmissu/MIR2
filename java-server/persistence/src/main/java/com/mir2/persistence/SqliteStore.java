@@ -3,6 +3,8 @@ package com.mir2.persistence;
 import com.mir2.character.Character;
 import com.mir2.world.Ability;
 import com.mir2.world.BackpackItem;
+import com.mir2.world.Equipment;
+import com.mir2.world.EquipmentSlot;
 import com.mir2.world.ItemDatabase;
 import com.mir2.world.PlayerState;
 import com.mir2.world.PlayerStateStore;
@@ -15,8 +17,11 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.EnumMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.Optional;
@@ -132,6 +137,18 @@ public final class SqliteStore implements AutoCloseable,
             PRIMARY KEY(character_id, slot)
           )
           """);
+      statement.executeUpdate("""
+          CREATE TABLE IF NOT EXISTS character_equipment (
+            character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+            slot INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            looks INTEGER NOT NULL,
+            make_index INTEGER NOT NULL DEFAULT 0,
+            dura INTEGER NOT NULL DEFAULT 0,
+            dura_max INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY(character_id, slot)
+          )
+          """);
       statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_characters_account ON characters(account)");
       statement.executeUpdate("""
           INSERT OR IGNORE INTO character_state(
@@ -229,8 +246,13 @@ public final class SqliteStore implements AutoCloseable,
   @Override
   public synchronized long itemMakeIndexHighWater() {
     try (Statement statement = connection.createStatement();
-        ResultSet result = statement.executeQuery(
-            "SELECT COALESCE(MAX(make_index), 0) FROM character_inventory")) {
+        ResultSet result = statement.executeQuery("""
+            SELECT MAX(high) FROM (
+              SELECT COALESCE(MAX(make_index), 0) AS high FROM character_inventory
+              UNION ALL
+              SELECT COALESCE(MAX(make_index), 0) AS high FROM character_equipment
+            )
+            """)) {
       return result.next() ? result.getLong(1) : 0L;
     } catch (SQLException error) {
       throw failure(error);
@@ -390,20 +412,78 @@ public final class SqliteStore implements AutoCloseable,
             result.getInt("max_ac"),
             result.getInt("level"),
             result.getLong("experience"));
-        return Optional.of(new PlayerState(characterId, ability, loadBackpack(characterId)));
+        return Optional.of(new PlayerState(
+            characterId, ability, loadBackpack(characterId), loadEquipment(characterId)));
       }
     } catch (SQLException error) {
       throw failure(error);
     }
   }
 
+  /** Shared projection of an item row joined to its template; used by bag and worn set. */
+  private static final String ITEM_COLUMNS = """
+      i.name, i.looks, i.make_index, i.dura, i.dura_max,
+      s.std_mode, s.shape, s.weight, s.ani_count, s.source, s.need_identify,
+      s.looks AS template_looks, s.dura_max AS template_dura_max,
+      s.ac, s.mac, s.dc, s.mc, s.sc, s.need, s.need_level, s.price
+      """;
+
+  /**
+   * Worn items keyed by their {@code U_*} slot index. Rows whose slot no longer maps to a
+   * known slot are skipped rather than failing the whole load.
+   */
+  private Equipment loadEquipment(UUID characterId) throws SQLException {
+    Map<EquipmentSlot, BackpackItem> worn = new EnumMap<>(EquipmentSlot.class);
+    try (PreparedStatement statement = connection.prepareStatement(
+        "SELECT i.slot, " + ITEM_COLUMNS + """
+        FROM character_equipment i
+        LEFT JOIN std_items s ON s.name = i.name
+        WHERE i.character_id = ?
+        ORDER BY i.slot
+        """)) {
+      statement.setString(1, characterId.toString());
+      try (ResultSet result = statement.executeQuery()) {
+        while (result.next()) {
+          int slotIndex = result.getInt("slot");
+          if (!EquipmentSlot.isValidIndex(slotIndex)) continue;
+          worn.put(EquipmentSlot.fromIndex(slotIndex), readItem(result));
+        }
+      }
+    }
+    return new Equipment(worn);
+  }
+
+  private void replaceEquipment(UUID characterId, Equipment equipment) throws SQLException {
+    cacheTemplates(equipment.byIndex().values());
+    try (PreparedStatement statement = connection.prepareStatement(
+        "DELETE FROM character_equipment WHERE character_id = ?")) {
+      statement.setString(1, characterId.toString());
+      statement.executeUpdate();
+    }
+    if (equipment.isEmpty()) return;
+    try (PreparedStatement statement = connection.prepareStatement("""
+        INSERT INTO character_equipment(character_id, slot, name, looks, make_index, dura, dura_max)
+        VALUES(?, ?, ?, ?, ?, ?, ?)
+        """)) {
+      for (Map.Entry<Integer, BackpackItem> entry : equipment.byIndex().entrySet()) {
+        BackpackItem item = entry.getValue();
+        statement.setString(1, characterId.toString());
+        statement.setInt(2, entry.getKey());
+        statement.setString(3, item.name());
+        statement.setInt(4, item.looks());
+        statement.setInt(5, item.makeIndex());
+        statement.setInt(6, item.dura());
+        statement.setInt(7, item.duraMax());
+        statement.addBatch();
+      }
+      statement.executeBatch();
+    }
+  }
+
   private List<BackpackItem> loadBackpack(UUID characterId) throws SQLException {
     List<BackpackItem> backpack = new ArrayList<>();
-    try (PreparedStatement statement = connection.prepareStatement("""
-        SELECT i.name, i.looks, i.make_index, i.dura, i.dura_max,
-               s.std_mode, s.shape, s.weight, s.ani_count, s.source, s.need_identify,
-               s.looks AS template_looks, s.dura_max AS template_dura_max,
-               s.ac, s.mac, s.dc, s.mc, s.sc, s.need, s.need_level, s.price
+    try (PreparedStatement statement = connection.prepareStatement(
+        "SELECT " + ITEM_COLUMNS + """
         FROM character_inventory i
         LEFT JOIN std_items s ON s.name = i.name
         WHERE i.character_id = ?
@@ -412,36 +492,41 @@ public final class SqliteStore implements AutoCloseable,
       statement.setString(1, characterId.toString());
       try (ResultSet result = statement.executeQuery()) {
         while (result.next()) {
-          String name = result.getString("name");
-          StdItem template = result.getObject("std_mode") == null
-              // Delphi drops instances whose template lookup fails; we keep them visible
-              // as placeholders so W03 rows and unknown names never vanish from a bag.
-              ? StdItem.placeholder(name, result.getInt("looks"))
-              : new StdItem(name,
-                  result.getInt("std_mode"),
-                  result.getInt("shape"),
-                  result.getInt("weight"),
-                  result.getInt("ani_count"),
-                  result.getInt("source"),
-                  result.getInt("need_identify"),
-                  result.getInt("template_looks"),
-                  result.getLong("template_dura_max"),
-                  result.getLong("ac"),
-                  result.getLong("mac"),
-                  result.getLong("dc"),
-                  result.getLong("mc"),
-                  result.getLong("sc"),
-                  result.getLong("need"),
-                  result.getLong("need_level"),
-                  result.getLong("price"));
-          backpack.add(new BackpackItem(template,
-              result.getInt("make_index"),
-              result.getInt("dura"),
-              result.getInt("dura_max")));
+          backpack.add(readItem(result));
         }
       }
     }
     return List.copyOf(backpack);
+  }
+
+  /** Maps one {@link #ITEM_COLUMNS} row into an instance plus its template. */
+  private static BackpackItem readItem(ResultSet result) throws SQLException {
+    String name = result.getString("name");
+    StdItem template = result.getObject("std_mode") == null
+        // Delphi drops instances whose template lookup fails; we keep them visible
+        // as placeholders so W03 rows and unknown names never vanish from a bag.
+        ? StdItem.placeholder(name, result.getInt("looks"))
+        : new StdItem(name,
+            result.getInt("std_mode"),
+            result.getInt("shape"),
+            result.getInt("weight"),
+            result.getInt("ani_count"),
+            result.getInt("source"),
+            result.getInt("need_identify"),
+            result.getInt("template_looks"),
+            result.getLong("template_dura_max"),
+            result.getLong("ac"),
+            result.getLong("mac"),
+            result.getLong("dc"),
+            result.getLong("mc"),
+            result.getLong("sc"),
+            result.getLong("need"),
+            result.getLong("need_level"),
+            result.getLong("price"));
+    return new BackpackItem(template,
+        result.getInt("make_index"),
+        result.getInt("dura"),
+        result.getInt("dura_max"));
   }
 
   @Override
@@ -459,6 +544,7 @@ public final class SqliteStore implements AutoCloseable,
         }
         upsertAbility(state.characterId(), state.ability());
         replaceBackpack(state.characterId(), state.backpack());
+        replaceEquipment(state.characterId(), state.equipment());
         return null;
       });
     } catch (SQLException error) {
@@ -503,21 +589,28 @@ public final class SqliteStore implements AutoCloseable,
     statement.setLong(11, ability.experience());
   }
 
-  private void replaceBackpack(UUID characterId, List<BackpackItem> backpack) throws SQLException {
-    // Cache instance templates so bags stay loadable even when the boot catalog has no
-    // entry; first writer wins and curated std_items rows are never clobbered.
+  /**
+   * Caches instance templates so items stay loadable even when the boot catalog has no entry;
+   * first writer wins and curated std_items rows are never clobbered.
+   */
+  private void cacheTemplates(Collection<BackpackItem> items) throws SQLException {
+    if (items.isEmpty()) return;
     try (PreparedStatement template = connection.prepareStatement("""
         INSERT OR IGNORE INTO std_items(
           name, std_mode, shape, weight, ani_count, source, need_identify, looks,
           dura_max, ac, mac, dc, mc, sc, need, need_level, price)
         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """)) {
-      for (BackpackItem item : backpack) {
+      for (BackpackItem item : items) {
         bindStdItem(template, item.item());
         template.addBatch();
       }
       template.executeBatch();
     }
+  }
+
+  private void replaceBackpack(UUID characterId, List<BackpackItem> backpack) throws SQLException {
+    cacheTemplates(backpack);
     try (PreparedStatement statement = connection.prepareStatement(
         "DELETE FROM character_inventory WHERE character_id = ?")) {
       statement.setString(1, characterId.toString());

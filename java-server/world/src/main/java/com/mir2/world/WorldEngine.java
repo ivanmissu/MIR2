@@ -39,6 +39,12 @@ import java.util.logging.Logger;
 public final class WorldEngine implements AutoCloseable {
   private static final Logger LOG = Logger.getLogger(WorldEngine.class.getName());
 
+  /**
+   * {@code TUserEngine.ProcessMapDoor} closes a door once it has been open for more than
+   * 5000ms ({@code GetTickCount - dwOpenTick > 5000}).
+   */
+  private static final long DOOR_AUTO_CLOSE_MILLIS = 5_000;
+
   public record Config(
       Duration tickInterval,
       int viewRange,
@@ -290,6 +296,17 @@ public final class WorldEngine implements AutoCloseable {
    * every {@code regenIntervalMillis} (dwRegenMonstersTime, 200ms default) and replenishes
    * losses when their respawn window has elapsed, mirroring {@code TUserEngine.RegenMonsters}.
    */
+  /**
+   * Registers one parsed {@code MonGen.txt} row. The definition's own map name is only a
+   * label from the file; {@code mapId} is the map the caller resolved it to.
+   */
+  public CompletableFuture<Void> addSpawner(
+      MonsterTemplate template, String mapId, MonsterSpawnDefinition definition) {
+    Objects.requireNonNull(definition, "definition");
+    return addSpawner(template, mapId, new Position(definition.x(), definition.y()),
+        definition.range(), definition.count(), Duration.ofMillis(definition.respawnMillis()));
+  }
+
   public CompletableFuture<Void> addSpawner(MonsterTemplate template, String mapId,
       Position center, int radius, int count, Duration respawnInterval) {
     Objects.requireNonNull(template, "template");
@@ -325,6 +342,62 @@ public final class WorldEngine implements AutoCloseable {
     Objects.requireNonNull(direction, "direction");
     Objects.requireNonNull(attack, "attack");
     return submit(() -> attackWith(playerId, claimedPosition, direction, attack));
+  }
+
+  /**
+   * {@code CM_TAKEONITEM} -> {@code TPlayObject.ClientTakeOnItems} (ObjBase.pas:17072): moves
+   * the bag item identified by {@code makeIndex} + {@code itemName} into {@code slotIndex}.
+   */
+  public CompletableFuture<Boolean> equip(
+      int playerId, int slotIndex, int makeIndex, String itemName) {
+    Objects.requireNonNull(itemName, "itemName");
+    return submit(() -> equipItem(playerId, slotIndex, makeIndex, itemName));
+  }
+
+  /** {@code CM_TAKEOFFITEM} -> {@code ClientTakeOffItems} (ObjBase.pas:17221). */
+  public CompletableFuture<Boolean> unequip(
+      int playerId, int slotIndex, int makeIndex, String itemName) {
+    Objects.requireNonNull(itemName, "itemName");
+    return submit(() -> unequipItem(playerId, slotIndex, makeIndex, itemName));
+  }
+
+  /** {@code CM_EAT} -> {@code ClientUseItems} (ObjBase.pas:17300). */
+  public CompletableFuture<Boolean> useItem(int playerId, int makeIndex, String itemName) {
+    Objects.requireNonNull(itemName, "itemName");
+    return submit(() -> consumeItem(playerId, makeIndex, itemName));
+  }
+
+  /** {@code CM_DROPITEM} -> {@code ClientDropItem} (ObjBase.pas:16213). */
+  public CompletableFuture<Boolean> dropItem(int playerId, int makeIndex, String itemName) {
+    Objects.requireNonNull(itemName, "itemName");
+    return submit(() -> dropBagItem(playerId, makeIndex, itemName));
+  }
+
+  /**
+   * Places an item on the map without a monster having dropped it — the engine-side of
+   * {@code TMapItem} creation used by tests and, later, by NPC and quest scripts.
+   */
+  public CompletableFuture<GroundItem> spawnGroundItem(
+      String itemName, int looks, String mapId, Position position) {
+    Objects.requireNonNull(itemName, "itemName");
+    Objects.requireNonNull(mapId, "mapId");
+    Objects.requireNonNull(position, "position");
+    return submit(() -> {
+      GameMap map = requireMap(mapId);
+      int itemId = allocateObjectId();
+      int resolvedLooks = itemDatabase.find(itemName).map(StdItem::looks).orElse(looks);
+      GroundItem item = new GroundItem(itemId, itemName, resolvedLooks, map.id(), position);
+      groundItems.put(itemId, item);
+      itemDropTimes.put(itemId, clock.getAsLong());
+      WorldEvent appeared = new WorldEvent.ItemAppeared(item);
+      for (int viewerId : visibleIds(map, position, 0)) emit(players.get(viewerId), appeared);
+      return item;
+    });
+  }
+
+  /** Current worn set, used by the adapter to answer with {@code SM_SENDUSEITEMS}. */
+  public CompletableFuture<Equipment> equipment(int playerId) {
+    return submit(() -> requirePlayer(playerId).equipment);
   }
 
   public CompletableFuture<Boolean> pickUp(int playerId, Position claimedPosition) {
@@ -538,7 +611,11 @@ public final class WorldEngine implements AutoCloseable {
     int id = allocateObjectId();
     List<Integer> visibleIds = visibleIds(map, position, 0);
     Player player = new Player(id, characterId, name, map, position, direction, feature, status,
-        restored.ability(), restored.backpack(), sink);
+        restored.ability(), restored.backpack(), restored.equipment(), sink);
+    // RecalcAbilitys runs once at login so the restored gear is reflected before the client
+    // receives its first ability packet. Current HP/MP are carried over untouched: Delphi
+    // only refills them on revival, not on login.
+    recalculateAbilities(player);
     // The enter itself just saved; the periodic pass starts counting from now.
     player.lastSavedAt = clock.getAsLong();
     map.place(id, position);
@@ -552,6 +629,12 @@ public final class WorldEngine implements AutoCloseable {
         .toList();
     emit(player, new WorldEvent.MapEntered(
         player.snapshot(), map.info(), visible, visibleItems(map, position), dayBright(map)));
+    // TPlayObject login sequence (ObjBase.pas:16572) sends RM_SENDUSEITEMS so the client
+    // knows what the character is wearing. RM_WEIGHTCHANGED is not part of that sequence —
+    // the Delphi login path only refreshes weight when something actually changes it.
+    if (!player.equipment.isEmpty()) {
+      emit(player, new WorldEvent.EquipmentSent(player.id, player.equipment));
+    }
     WorldEvent appeared = new WorldEvent.ObjectAppeared(player.snapshot());
     for (int viewerId : visibleIds) emit(players.get(viewerId), appeared);
     return player.snapshot();
@@ -696,6 +779,335 @@ public final class WorldEngine implements AutoCloseable {
     WorldEvent hidden = new WorldEvent.ItemDisappeared(item);
     for (int viewerId : visibleIds(player.map, item.position(), 0)) emit(players.get(viewerId), hidden);
     return true;
+  }
+
+  /**
+   * {@code TPlayObject.ClientTakeOnItems} (ObjBase.pas:17072). The Delphi handler locates the
+   * bag entry by MakeIndex <em>and</em> a case-insensitive name comparison, validates the slot
+   * with {@code CheckUserItems} and the wearer with {@code CheckTakeOnItems}, then swaps any
+   * item already in the slot back into the bag before recalculating abilities.
+   */
+  private boolean equipItem(int playerId, int slotIndex, int makeIndex, String itemName) {
+    Player player = requirePlayer(playerId);
+    if (!player.ability.alive()) {
+      emit(player, new WorldEvent.EquipRejected(player.id, -1, WorldEvent.EquipRejection.ACTOR_DEAD));
+      return false;
+    }
+    if (!EquipmentSlot.isValidIndex(slotIndex)) {
+      emit(player, new WorldEvent.EquipRejected(player.id, -1, WorldEvent.EquipRejection.INVALID_SLOT));
+      return false;
+    }
+    EquipmentSlot slot = EquipmentSlot.fromIndex(slotIndex);
+    int bagIndex = findBagItem(player, makeIndex, itemName);
+    if (bagIndex < 0) {
+      emit(player, new WorldEvent.EquipRejected(player.id, -1, WorldEvent.EquipRejection.NO_SUCH_ITEM));
+      return false;
+    }
+    BackpackItem candidate = player.backpack.get(bagIndex);
+    if (!slot.accepts(candidate.item())) {
+      emit(player, new WorldEvent.EquipRejected(player.id, -1, WorldEvent.EquipRejection.SLOT_MISMATCH));
+      return false;
+    }
+    if (!EquipRequirement.check(slot, candidate.item(), requirementView(player),
+        wornWeightExcluding(player, slot)).allowed()) {
+      emit(player, new WorldEvent.EquipRejected(
+          player.id, -1, WorldEvent.EquipRejection.REQUIREMENT_NOT_MET));
+      return false;
+    }
+    // Delphi refuses the whole take-on when the occupant of the slot is locked (n18 = -4).
+    BackpackItem displaced = player.equipment.at(slot).orElse(null);
+    if (displaced != null && isLockedInPlace(displaced)) {
+      emit(player, new WorldEvent.EquipRejected(
+          player.id, -4, WorldEvent.EquipRejection.CANNOT_TAKE_OFF_EXISTING));
+      return false;
+    }
+    // A swap needs the freed bag slot, so capacity can only be exceeded when nothing is
+    // displaced — which cannot happen, the incoming item already occupies a bag slot.
+    List<BackpackItem> previousBackpack = List.copyOf(player.backpack);
+    Equipment previousEquipment = player.equipment;
+    Ability previousAbility = player.ability;
+
+    player.backpack.remove(bagIndex);
+    if (displaced != null) player.backpack.add(displaced);
+    player.equipment = player.equipment.with(slot, candidate);
+    recalculateAbilities(player);
+    try {
+      persist(player);
+    } catch (RuntimeException failure) {
+      player.backpack.clear();
+      player.backpack.addAll(previousBackpack);
+      player.equipment = previousEquipment;
+      player.ability = previousAbility;
+      throw failure;
+    }
+    emitEquipmentChange(player,
+        new WorldEvent.ItemEquipped(player.id, slot, candidate, player.feature(), player.featureEx()));
+    return true;
+  }
+
+  /**
+   * {@code TPlayObject.ClientTakeOffItems} (ObjBase.pas:17221): the reverse move, gated on the
+   * same lock checks plus bag capacity.
+   */
+  private boolean unequipItem(int playerId, int slotIndex, int makeIndex, String itemName) {
+    Player player = requirePlayer(playerId);
+    if (!EquipmentSlot.isValidIndex(slotIndex)) {
+      emit(player, new WorldEvent.UnequipRejected(
+          player.id, -1, WorldEvent.UnequipRejection.BUSY_OR_INVALID_SLOT));
+      return false;
+    }
+    EquipmentSlot slot = EquipmentSlot.fromIndex(slotIndex);
+    BackpackItem worn = player.equipment.at(slot).orElse(null);
+    // Delphi reports an empty slot and a MakeIndex/name mismatch through the same path.
+    if (worn == null || worn.makeIndex() != makeIndex || !worn.name().equalsIgnoreCase(itemName)) {
+      emit(player, new WorldEvent.UnequipRejected(
+          player.id, -2, WorldEvent.UnequipRejection.SLOT_EMPTY));
+      return false;
+    }
+    if (isLockedInPlace(worn)) {
+      emit(player, new WorldEvent.UnequipRejected(
+          player.id, -4, WorldEvent.UnequipRejection.CANNOT_TAKE_OFF));
+      return false;
+    }
+    if (player.backpack.size() >= PlayerState.MAX_BACKPACK_ITEMS) {
+      emit(player, new WorldEvent.UnequipRejected(
+          player.id, -3, WorldEvent.UnequipRejection.BACKPACK_FULL));
+      return false;
+    }
+
+    List<BackpackItem> previousBackpack = List.copyOf(player.backpack);
+    Equipment previousEquipment = player.equipment;
+    Ability previousAbility = player.ability;
+
+    player.equipment = player.equipment.without(slot);
+    player.backpack.add(worn);
+    recalculateAbilities(player);
+    try {
+      persist(player);
+    } catch (RuntimeException failure) {
+      player.backpack.clear();
+      player.backpack.addAll(previousBackpack);
+      player.equipment = previousEquipment;
+      player.ability = previousAbility;
+      throw failure;
+    }
+    emitEquipmentChange(player,
+        new WorldEvent.ItemUnequipped(player.id, slot, worn, player.feature(), player.featureEx()));
+    return true;
+  }
+
+  /**
+   * {@code TPlayObject.ClientUseItems} (ObjBase.pas:17300) restricted to the drinkable
+   * StdModes 0-3 that {@code EatItems} (ObjBase.pas:23324) implements. Books (StdMode 4) and
+   * the StdMode 31 unpack action belong to slices that do not exist yet.
+   */
+  private boolean consumeItem(int playerId, int makeIndex, String itemName) {
+    Player player = requirePlayer(playerId);
+    if (!player.ability.alive()) {
+      emit(player, new WorldEvent.UseItemRejected(player.id, WorldEvent.UseItemRejection.ACTOR_DEAD));
+      return false;
+    }
+    int bagIndex = findBagItem(player, makeIndex, itemName);
+    if (bagIndex < 0) {
+      emit(player, new WorldEvent.UseItemRejected(player.id, WorldEvent.UseItemRejection.NO_SUCH_ITEM));
+      return false;
+    }
+    BackpackItem item = player.backpack.get(bagIndex);
+    int stdMode = item.item().stdMode();
+    if (stdMode > 3) {
+      // TODO(verify): StdMode 4 (books/skills) and 31 (unpack) need the skill and container
+      // slices; refusing keeps the bag consistent instead of silently eating the item.
+      emit(player, new WorldEvent.UseItemRejected(player.id, WorldEvent.UseItemRejection.NOT_CONSUMABLE));
+      return false;
+    }
+    if (player.map.flags().isNoDrug()) {
+      emit(player, new WorldEvent.UseItemRejected(
+          player.id, WorldEvent.UseItemRejection.MAP_FORBIDS_DRUGS));
+      return false;
+    }
+
+    // EatItems StdMode 0 Shape<>1/2: the AC/MAC dwords are the HP/MP restore amounts, applied
+    // immediately by IncHealthSpell (ObjBase.pas:3615), which clamps at the maxima.
+    int restoreHp = stdMode == 0 ? (int) Math.min(item.item().ac(), Integer.MAX_VALUE) : 0;
+    int restoreMp = stdMode == 0 ? (int) Math.min(item.item().mac(), Integer.MAX_VALUE) : 0;
+    Ability previousAbility = player.ability;
+    List<BackpackItem> previousBackpack = List.copyOf(player.backpack);
+
+    player.backpack.remove(bagIndex);
+    if (restoreHp > 0 || restoreMp > 0) {
+      player.ability = player.ability
+          .withHp(player.ability.hp() + restoreHp)
+          .withMp(player.ability.mp() + restoreMp);
+    }
+    try {
+      persist(player);
+    } catch (RuntimeException failure) {
+      player.backpack.clear();
+      player.backpack.addAll(previousBackpack);
+      player.ability = previousAbility;
+      throw failure;
+    }
+    int healedHp = player.ability.hp() - previousAbility.hp();
+    int healedMp = player.ability.mp() - previousAbility.mp();
+    emit(player, new WorldEvent.ItemUsed(player.id, item, healedHp, healedMp));
+    if (healedHp != 0 || healedMp != 0) {
+      emitToObserversAndSelf(player, new WorldEvent.HealthChanged(player.snapshot()));
+    }
+    // ClientUseItems ends in WeightChanged() because the bag just got lighter.
+    emitWeight(player);
+    return true;
+  }
+
+  /**
+   * {@code TPlayObject.ClientDropItem} (ObjBase.pas:16213): safe-zone and map-flag gates, then
+   * the item lands on the ground exactly like monster loot does.
+   */
+  private boolean dropBagItem(int playerId, int makeIndex, String itemName) {
+    Player player = requirePlayer(playerId);
+    if (!player.ability.alive()) {
+      emit(player, new WorldEvent.DropItemRejected(
+          player.id, itemName, makeIndex, WorldEvent.DropRejection.ACTOR_DEAD));
+      return false;
+    }
+    // Delphi splits at the first space because mailed items append a use counter.
+    String wantedName = itemName.indexOf(' ') >= 0
+        ? itemName.substring(0, itemName.indexOf(' ')) : itemName;
+    if (player.map.flags().isSafeZone()) {
+      emit(player, new WorldEvent.DropItemRejected(
+          player.id, wantedName, makeIndex, WorldEvent.DropRejection.SAFE_ZONE));
+      return false;
+    }
+    if (player.map.flags().isNoThrowItem()) {
+      emit(player, new WorldEvent.DropItemRejected(
+          player.id, wantedName, makeIndex, WorldEvent.DropRejection.MAP_FORBIDS_DROP));
+      return false;
+    }
+    int bagIndex = findBagItem(player, makeIndex, wantedName);
+    if (bagIndex < 0) {
+      emit(player, new WorldEvent.DropItemRejected(
+          player.id, wantedName, makeIndex, WorldEvent.DropRejection.NO_SUCH_ITEM));
+      return false;
+    }
+    Position dropPosition = findDropPosition(player.map, player.position);
+    if (dropPosition == null) {
+      emit(player, new WorldEvent.DropItemRejected(
+          player.id, wantedName, makeIndex, WorldEvent.DropRejection.NO_SPACE));
+      return false;
+    }
+
+    BackpackItem item = player.backpack.get(bagIndex);
+    List<BackpackItem> previousBackpack = List.copyOf(player.backpack);
+    player.backpack.remove(bagIndex);
+    try {
+      persist(player);
+    } catch (RuntimeException failure) {
+      player.backpack.clear();
+      player.backpack.addAll(previousBackpack);
+      throw failure;
+    }
+
+    int itemId = allocateObjectId();
+    GroundItem ground = new GroundItem(
+        itemId, item.name(), item.looks(), player.map.id(), dropPosition);
+    groundItems.put(itemId, ground);
+    itemDropTimes.put(itemId, clock.getAsLong());
+    emit(player, new WorldEvent.ItemDropped(player.id, item, ground));
+    WorldEvent appeared = new WorldEvent.ItemAppeared(ground);
+    for (int viewerId : visibleIds(player.map, dropPosition, 0)) emit(players.get(viewerId), appeared);
+    emitWeight(player);
+    return true;
+  }
+
+  /** Bag lookup by MakeIndex plus {@code CompareText}, as every item command does. */
+  private static int findBagItem(Player player, int makeIndex, String itemName) {
+    for (int index = 0; index < player.backpack.size(); index++) {
+      BackpackItem item = player.backpack.get(index);
+      if (item.makeIndex() == makeIndex && item.name().equalsIgnoreCase(itemName)) return index;
+    }
+    return -1;
+  }
+
+  /**
+   * The "cannot take off" family of checks shared by take-on and take-off
+   * (ObjBase.pas:17238-17262). Only the accessory lock is modelled: the two
+   * {@code StdItem.Reserved} bits and {@code InDisableTakeOffList} are server-config state
+   * that this migration has no source for yet.
+   */
+  private static boolean isLockedInPlace(BackpackItem item) {
+    // TODO(verify): Reserved bits 2/4 and the DisableTakeOffList come from server config that
+    // the Java server does not load; no shipped item sets them, so nothing is locked today.
+    return false;
+  }
+
+  /**
+   * {@code GetUserItemWeitht(nWhere)} (ObjBase.pas:23306): total weight of the worn set,
+   * excluding the destination slot and — a Delphi quirk — both hand slots, whatever the
+   * destination is.
+   */
+  private static int wornWeightExcluding(Player player, EquipmentSlot destination) {
+    int total = 0;
+    for (Map.Entry<EquipmentSlot, BackpackItem> entry : player.equipment.inSlotOrder()) {
+      EquipmentSlot slot = entry.getKey();
+      if (slot == destination || slot.countsTowardHandWeight()) continue;
+      total += entry.getValue().item().weight();
+    }
+    return total;
+  }
+
+  private static EquipRequirement.Character requirementView(Player player) {
+    Ability ability = player.ability;
+    return new EquipRequirement.Character(player.gender, player.job, ability.level(),
+        ability.maxDc(), 0, 0, player.maxWearWeight(), player.maxHandWeight());
+  }
+
+  /**
+   * {@code TBaseObject.RecalcAbilitys} (ObjBase.pas:2818): rebuilds the working ability from
+   * the base ability plus the worn set. HP/MP survive the rebuild and are only re-clamped
+   * when the new maxima are lower.
+   */
+  private void recalculateAbilities(Player player) {
+    EquipmentBonus bonus = player.equipment.bonus();
+    Ability base = player.baseAbility;
+    int maxHp = clampWord(base.maxHp() + bonus.hp());
+    int maxMp = clampWord(base.maxMp() + bonus.mp());
+    player.ability = new Ability(
+        Math.min(player.ability.hp(), maxHp),
+        maxHp,
+        Math.min(player.ability.mp(), maxMp),
+        maxMp,
+        base.minDc() + bonus.minDc(),
+        base.maxDc() + bonus.maxDc(),
+        base.minAc() + bonus.minAc(),
+        base.maxAc() + bonus.maxAc(),
+        base.level(),
+        base.experience());
+    player.bonus = bonus;
+  }
+
+  private static int clampWord(int value) {
+    return Math.max(1, Math.min(value, 0xffff));
+  }
+
+  /**
+   * The common tail of take-on/take-off: RM_ABILITY, the SM_TAKEON_OK/SM_TAKEOFF_OK reply,
+   * FeatureChanged to observers and the weight refresh.
+   */
+  private void emitEquipmentChange(Player player, WorldEvent change) {
+    emit(player, change);
+    emit(player, new WorldEvent.AbilityChanged(player.id, player.ability));
+    emitWeight(player);
+    // FeatureChanged() broadcasts the new look to everyone who can see the player.
+    WorldObjectSnapshot snapshot = player.snapshot();
+    WorldEvent appearance = new WorldEvent.ObjectAppeared(snapshot);
+    for (int viewerId : visibleIds(player.map, player.position, player.id)) {
+      emit(players.get(viewerId), appearance);
+    }
+  }
+
+  /** {@code TBaseObject.WeightChanged} -> RM_WEIGHTCHANGED -> {@code SM_WEIGHTCHANGED}. */
+  private void emitWeight(Player player) {
+    emit(player, new WorldEvent.WeightChanged(
+        player.id, player.bagWeight(), player.bonus.wearWeight(), player.bonus.handWeight()));
   }
 
   private boolean openDoorAt(int playerId, Position claimed) {
@@ -901,8 +1313,8 @@ public final class WorldEngine implements AutoCloseable {
   private void awardExperience(Player player, long experience) {
     if (experience <= 0) return;
     Ability before = player.ability;
-    long nextTotal = before.exp() + experience;
-    Ability updated = before.withExp(nextTotal);
+    long nextTotal = before.experience() + experience;
+    Ability updated = before.addExperience(experience);
     player.setAbility(updated);
     try {
       persist(player);
@@ -915,14 +1327,14 @@ public final class WorldEngine implements AutoCloseable {
 
   private void dropLoot(Monster monster) {
     for (ItemDrop drop : monster.template.drops()) {
-      if (random.nextInt(drop.oneInChance()) != 0) continue;
+      if (random.nextInt(drop.oneIn()) != 0) continue;
       Position dropPosition = findDropPosition(monster.map, monster.position);
       if (dropPosition == null) continue;
       int itemId = allocateObjectId();
-      int looks = itemDatabase.find(drop.itemName())
+      int looks = itemDatabase.find(drop.name())
           .map(StdItem::looks)
           .orElse(drop.looks());
-      GroundItem item = new GroundItem(itemId, drop.itemName(), looks, monster.map.id(), dropPosition);
+      GroundItem item = new GroundItem(itemId, drop.name(), looks, monster.map.id(), dropPosition);
       groundItems.put(itemId, item);
       itemDropTimes.put(itemId, clock.getAsLong());
       monster.droppedItemIds.add(itemId);
@@ -955,7 +1367,7 @@ public final class WorldEngine implements AutoCloseable {
     long now = clock.getAsLong();
     for (GameMap map : maps.values()) {
       for (DoorInfo door : map.doors()) {
-        if (door.status().opened() && (now - door.status().openedAt() >= DoorInfo.AUTO_CLOSE_MILLIS)) {
+        if (door.status().opened() && (now - door.status().openedAtMillis() >= DOOR_AUTO_CLOSE_MILLIS)) {
           door.status().close();
           WorldEvent closedEvent = new WorldEvent.DoorClosed(map.id(), door.anchor());
           for (int viewerId : playersInSquare(map, door.anchor())) {
@@ -1078,7 +1490,7 @@ public final class WorldEngine implements AutoCloseable {
   private void monsterAttack(Monster monster, Player target, long now) {
     if (now - monster.lastAttackAt < monster.template.attackIntervalMillis()) return;
     monster.lastAttackAt = now;
-    monster.direction = monster.position.directionTo(target.position);
+    monster.direction = Direction.toward(monster.position, target.position);
     WorldObjectSnapshot attacker = monster.snapshot();
     WorldEvent swing = new WorldEvent.ObjectAttacked(attacker, AttackKind.HIT);
     emitToObserversAndSelf(monster, swing);
@@ -1093,19 +1505,19 @@ public final class WorldEngine implements AutoCloseable {
   private void monsterFlee(Monster monster, Player target, long now) {
     if (now - monster.lastWalkAt < monster.template.walkIntervalMillis()) return;
     monster.lastWalkAt = now;
-    Direction away = target.position.directionTo(monster.position);
+    Direction away = Direction.toward(target.position, monster.position);
     Position step = monster.position.translate(away, 1);
     if (monster.map.canWalk(step)) {
       stepMonster(monster, step, away);
       return;
     }
-    Direction left = away.rotateLeft();
+    Direction left = rotate(away, -1);
     Position stepLeft = monster.position.translate(left, 1);
     if (monster.map.canWalk(stepLeft)) {
       stepMonster(monster, stepLeft, left);
       return;
     }
-    Direction right = away.rotateRight();
+    Direction right = rotate(away, 1);
     Position stepRight = monster.position.translate(right, 1);
     if (monster.map.canWalk(stepRight)) {
       stepMonster(monster, stepRight, right);
@@ -1115,23 +1527,32 @@ public final class WorldEngine implements AutoCloseable {
   private void monsterChase(Monster monster, Player target, long now) {
     if (now - monster.lastWalkAt < monster.template.walkIntervalMillis()) return;
     monster.lastWalkAt = now;
-    Direction direction = monster.position.directionTo(target.position);
+    Direction direction = Direction.toward(monster.position, target.position);
     Position step = monster.position.translate(direction, 1);
     if (monster.map.canWalk(step)) {
       stepMonster(monster, step, direction);
       return;
     }
-    Direction left = direction.rotateLeft();
+    Direction left = rotate(direction, -1);
     Position stepLeft = monster.position.translate(left, 1);
     if (monster.map.canWalk(stepLeft)) {
       stepMonster(monster, stepLeft, left);
       return;
     }
-    Direction right = direction.rotateRight();
+    Direction right = rotate(direction, 1);
     Position stepRight = monster.position.translate(right, 1);
     if (monster.map.canWalk(stepRight)) {
       stepMonster(monster, stepRight, right);
     }
+  }
+
+  /**
+   * Turns {@code direction} by {@code steps} eighths clockwise (negative = anticlockwise).
+   * Delphi's monster walk helpers retry the two neighbouring compass points when the
+   * straight step is blocked; the direction codes are cyclic (DR_UP..DR_UPLEFT = 0..7).
+   */
+  private static Direction rotate(Direction direction, int steps) {
+    return Direction.fromCode(Math.floorMod(direction.code() + steps, 8));
   }
 
   private void stepMonster(Monster monster, Position target, Direction direction) {
@@ -1182,12 +1603,12 @@ public final class WorldEngine implements AutoCloseable {
 
   private MoveResult rejectMove(Player player, Position target, WorldEvent.MoveRejection reason) {
     emit(player, new WorldEvent.MoveRejected(player.id, target, reason));
-    return MoveResult.rejected(reason);
+    return MoveResult.rejected(player.snapshot(), reason);
   }
 
   private AttackResult rejectAttack(Player player, WorldEvent.AttackRejection reason) {
     emit(player, new WorldEvent.AttackRejected(player.id, reason));
-    return AttackResult.rejected(reason);
+    return AttackResult.rejected(player.snapshot(), reason);
   }
 
   private void emitOwnVisibilityChanges(
@@ -1345,8 +1766,10 @@ public final class WorldEngine implements AutoCloseable {
     return current;
   }
 
-  private static int seedMakeIndex(int highWater) {
-    return highWater <= 0 ? 1 : highWater + 1;
+  private static int seedMakeIndex(long highWater) {
+    // GetItemNumber wraps at High(Integer)/2-1; a persisted high-water beyond that restarts at 1.
+    if (highWater <= 0 || highWater >= Integer.MAX_VALUE / 2 - 1) return 1;
+    return (int) highWater + 1;
   }
 
   private PlayerState withStableMakeIndexes(PlayerState state) {
@@ -1451,17 +1874,34 @@ public final class WorldEngine implements AutoCloseable {
   }
 
   private static final class Player implements WorldObject {
+    /**
+     * {@code TAbility.MaxWearWeight}/{@code MaxHandWeight} come from the character's level
+     * and job in the Delphi server ({@code RecalcLevelAbilitys}). That table is not migrated
+     * yet, so the engine uses the classic level-1 baseline for every player.
+     */
+    // TODO(verify): replace with the real MaxWearWeight/MaxHandWeight curves when the
+    // level-ability table lands.
+    private static final int BASE_MAX_WEAR_WEIGHT = 30;
+    private static final int BASE_MAX_HAND_WEIGHT = 20;
+
     private final int id;
     private final UUID characterId;
     private final String name;
     // m_PEnvir equivalent: reassigned by EnterAnotherMap when a gate teleports the player.
     private GameMap map;
-    private final int feature;
+    private final int baseFeature;
     private final int status;
     private final WorldEventSink sink;
     private final List<BackpackItem> backpack;
+    private final int gender;
+    private final int job;
+    private Equipment equipment;
+    /** {@code m_Abil}: the naked character, before any worn gear is applied. */
+    private Ability baseAbility;
+    private EquipmentBonus bonus = EquipmentBonus.none();
     private Position position;
     private Direction direction;
+    /** {@code m_WAbil}: the working ability including equipment. */
     private Ability ability;
     private long lastAttackAt = Long.MIN_VALUE / 4;
     private long lastSavedAt;
@@ -1477,6 +1917,7 @@ public final class WorldEngine implements AutoCloseable {
         int status,
         Ability ability,
         List<BackpackItem> backpack,
+        Equipment equipment,
         WorldEventSink sink) {
       this.id = id;
       this.characterId = characterId;
@@ -1484,11 +1925,64 @@ public final class WorldEngine implements AutoCloseable {
       this.map = map;
       this.position = position;
       this.direction = direction;
-      this.feature = feature;
+      this.baseFeature = feature;
       this.status = status;
+      this.baseAbility = ability;
       this.ability = ability;
       this.backpack = new ArrayList<>(backpack);
+      this.equipment = equipment;
       this.sink = sink;
+      // MakeHumanFeature packs hair/dress/weapon appearance; the low bit of each byte is the
+      // gender, so the caller's feature value already carries it (Grobal2.pas:2729).
+      this.gender = feature == 0 ? 0 : (feature >>> 24) & 1;
+      // TODO(verify): the job is not part of the Feature word; until the character domain
+      // hands it to the world, every player is treated as a warrior (jWarr = 0).
+      this.job = 0;
+    }
+
+    /** Total weight carried in the bag — {@code TBaseObject.RecalcBagWeight} (ObjBase.pas:18533). */
+    private int bagWeight() {
+      int total = 0;
+      for (BackpackItem item : backpack) total += item.item().weight();
+      return total;
+    }
+
+    private int maxWearWeight() {
+      return BASE_MAX_WEAR_WEIGHT + bonus.maxWearWeightBonus();
+    }
+
+    private int maxHandWeight() {
+      return BASE_MAX_HAND_WEIGHT + bonus.maxHandWeightBonus();
+    }
+
+    /**
+     * {@code TBaseObject.GetFeature} (ObjBase.pas:19992) overlaid on the appearance the
+     * character domain supplied at login.
+     *
+     * <p>Delphi rebuilds the whole word from {@code m_UseItems} every time, so an unequipped
+     * player ends up with {@code dress = weapon = gender}. This engine instead keeps the
+     * caller's byte for a slot that holds nothing, because the character record already
+     * carries the dress/weapon shapes chosen at creation and the world has no other source
+     * for them. Once a slot is filled the worn {@code Shape} wins, which is what makes a
+     * take-on visibly change the avatar.
+     */
+    private int feature() {
+      int dress = equipment.at(EquipmentSlot.DRESS)
+          .map(item -> (item.item().shape() * 2 + gender) & 0xff)
+          .orElse((baseFeature >>> 24) & 0xff);
+      int weapon = equipment.at(EquipmentSlot.WEAPON)
+          .map(item -> (item.item().shape() * 2 + gender) & 0xff)
+          .orElse((baseFeature >>> 8) & 0xff);
+      // Hair and the low race-image byte are never touched by equipment.
+      return (dress << 24) | (baseFeature & 0x00ff0000) | (weapon << 8) | (baseFeature & 0xff);
+    }
+
+    /**
+     * {@code GetFeatureEx} (ObjBase.pas:19982) = {@code MakeWord(HorseType, DressEffType)}.
+     * Mounts and dress effects are not modelled, so both halves stay zero.
+     */
+    private int featureEx() {
+      return 0;
     }
 
     @Override
@@ -1511,19 +2005,51 @@ public final class WorldEngine implements AutoCloseable {
       return ability;
     }
 
+    /**
+     * Combat and experience act on the working ability ({@code m_WAbil}); the durable
+     * character record behind it ({@code m_Abil}) has to follow, otherwise a save would
+     * write back pre-combat values.
+     */
     @Override
     public void setAbility(Ability ability) {
       this.ability = ability;
+      this.baseAbility = rebase(ability);
+    }
+
+    /**
+     * Strips the equipment contribution back out of a working ability so the naked
+     * {@code m_Abil} can be persisted and re-derived on the next login.
+     *
+     * <p>HP/MP are clamped into the naked maxima. Only {@code StdMode 63} charms raise MaxHP
+     * and that slot is disabled in the shipped {@code CheckUserItems}, so the clamp cannot
+     * actually bite today; it exists so a future HP-granting item degrades predictably
+     * instead of tripping the Ability invariants.
+     */
+    private Ability rebase(Ability working) {
+      int maxHp = Math.max(1, working.maxHp() - bonus.hp());
+      int maxMp = Math.max(0, working.maxMp() - bonus.mp());
+      return new Ability(
+          Math.min(working.hp(), maxHp),
+          maxHp,
+          Math.min(working.mp(), maxMp),
+          maxMp,
+          Math.max(0, working.minDc() - bonus.minDc()),
+          Math.max(0, working.maxDc() - bonus.maxDc()),
+          Math.max(0, working.minAc() - bonus.minAc()),
+          Math.max(0, working.maxAc() - bonus.maxAc()),
+          working.level(),
+          working.experience());
     }
 
     private PlayerState state() {
-      return new PlayerState(characterId, ability, backpack);
+      // Persist the naked ability: worn bonuses are re-derived by RecalcAbilitys on load.
+      return new PlayerState(characterId, baseAbility, backpack, equipment);
     }
 
     @Override
     public WorldObjectSnapshot snapshot() {
       return new WorldObjectSnapshot(
-          id, name, WorldObjectType.PLAYER, map.id(), position, direction, feature, status, ability);
+          id, name, WorldObjectType.PLAYER, map.id(), position, direction, feature(), status, ability);
     }
   }
 

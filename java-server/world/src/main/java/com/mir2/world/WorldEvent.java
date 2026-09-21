@@ -33,7 +33,18 @@ public sealed interface WorldEvent
         WorldEvent.Whisper,
         WorldEvent.Shout,
         WorldEvent.SystemMessage,
-        WorldEvent.DayChanging {
+        WorldEvent.DayChanging,
+        WorldEvent.ItemEquipped,
+        WorldEvent.EquipRejected,
+        WorldEvent.ItemUnequipped,
+        WorldEvent.UnequipRejected,
+        WorldEvent.ItemUsed,
+        WorldEvent.UseItemRejected,
+        WorldEvent.ItemDropped,
+        WorldEvent.DropItemRejected,
+        WorldEvent.WeightChanged,
+        WorldEvent.AbilityChanged,
+        WorldEvent.EquipmentSent {
 
   record MapEntered(
       WorldObjectSnapshot player,
@@ -282,6 +293,154 @@ public sealed interface WorldEvent
     public DayChanging {
       if (playerId < 0) throw new IllegalArgumentException("player id must not be negative");
     }
+  }
+
+  /**
+   * A bag item moved into an equipment slot. {@code feature}/{@code featureEx} carry the
+   * recomputed appearance that {@code SM_TAKEON_OK} echoes back as recog/param.
+   */
+  record ItemEquipped(
+      int playerId, EquipmentSlot slot, BackpackItem item, int feature, int featureEx)
+      implements WorldEvent {
+    public ItemEquipped {
+      if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
+      Objects.requireNonNull(slot, "slot");
+      Objects.requireNonNull(item, "item");
+    }
+  }
+
+  /** {@code SM_TAKEON_FAIL}; {@code reason} is the Delphi n18 code carried in recog. */
+  record EquipRejected(int playerId, int reason, EquipRejection detail) implements WorldEvent {
+    public EquipRejected {
+      if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
+      Objects.requireNonNull(detail, "detail");
+    }
+  }
+
+  /** An equipped item returned to the bag. */
+  record ItemUnequipped(
+      int playerId, EquipmentSlot slot, BackpackItem item, int feature, int featureEx)
+      implements WorldEvent {
+    public ItemUnequipped {
+      if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
+      Objects.requireNonNull(slot, "slot");
+      Objects.requireNonNull(item, "item");
+    }
+  }
+
+  /** {@code SM_TAKEOFF_FAIL}; {@code reason} is the Delphi n10 code carried in recog. */
+  record UnequipRejected(int playerId, int reason, UnequipRejection detail) implements WorldEvent {
+    public UnequipRejected {
+      if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
+      Objects.requireNonNull(detail, "detail");
+    }
+  }
+
+  /** A consumable was eaten and removed from the bag ({@code SM_EAT_OK}). */
+  record ItemUsed(int playerId, BackpackItem item, int restoredHp, int restoredMp)
+      implements WorldEvent {
+    public ItemUsed {
+      if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
+      Objects.requireNonNull(item, "item");
+    }
+  }
+
+  /** {@code SM_EAT_FAIL}: the client puts the item back into its bag slot. */
+  record UseItemRejected(int playerId, UseItemRejection reason) implements WorldEvent {
+    public UseItemRejected {
+      if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
+      Objects.requireNonNull(reason, "reason");
+    }
+  }
+
+  /** A bag item was thrown on the ground ({@code SM_DROPITEM_SUCCESS}). */
+  record ItemDropped(int playerId, BackpackItem item, GroundItem ground) implements WorldEvent {
+    public ItemDropped {
+      if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
+      Objects.requireNonNull(item, "item");
+      Objects.requireNonNull(ground, "ground");
+    }
+  }
+
+  /** {@code SM_DROPITEM_FAIL}: recog carries the MakeIndex, the body the item name. */
+  record DropItemRejected(int playerId, String itemName, int makeIndex, DropRejection reason)
+      implements WorldEvent {
+    public DropItemRejected {
+      if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
+      Objects.requireNonNull(itemName, "itemName");
+      Objects.requireNonNull(reason, "reason");
+    }
+  }
+
+  /** {@code SM_WEIGHTCHANGED}: recog=Weight, param=WearWeight, tag=HandWeight. */
+  record WeightChanged(int playerId, int weight, int wearWeight, int handWeight)
+      implements WorldEvent {
+    public WeightChanged {
+      if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
+    }
+  }
+
+  /** {@code RM_ABILITY}: the recalculated ability after equipment changed. */
+  record AbilityChanged(int playerId, Ability ability) implements WorldEvent {
+    public AbilityChanged {
+      if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
+      Objects.requireNonNull(ability, "ability");
+    }
+  }
+
+  /** {@code SM_SENDUSEITEMS}: the whole worn set, sent after login and on reconnect. */
+  record EquipmentSent(int playerId, Equipment equipment) implements WorldEvent {
+    public EquipmentSent {
+      if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
+      Objects.requireNonNull(equipment, "equipment");
+    }
+  }
+
+  /** Why a take-on was refused, beyond the numeric code the client receives. */
+  enum EquipRejection {
+    /** No bag item with that MakeIndex and name. */
+    NO_SUCH_ITEM,
+    /** The StdMode may not live in the requested slot ({@code CheckUserItems}). */
+    SLOT_MISMATCH,
+    /** {@code CheckTakeOnItems} refused: gender, weight or Need requirement. */
+    REQUIREMENT_NOT_MET,
+    /** The item already in the slot is locked and cannot be removed. */
+    CANNOT_TAKE_OFF_EXISTING,
+    /** Slot index outside 0..12. */
+    INVALID_SLOT,
+    ACTOR_DEAD
+  }
+
+  /** Why a take-off was refused. */
+  enum UnequipRejection {
+    /** Trading, or a slot index outside 0..12 (Delphi n10 = -1). */
+    BUSY_OR_INVALID_SLOT,
+    /** The slot is empty, or the MakeIndex/name did not match (n10 = -2). */
+    SLOT_EMPTY,
+    /** The bag has no free space (n10 = -3). */
+    BACKPACK_FULL,
+    /** The item is bound or locked (n10 = -4). */
+    CANNOT_TAKE_OFF
+  }
+
+  enum UseItemRejection {
+    NO_SUCH_ITEM,
+    ACTOR_DEAD,
+    /** The map forbids potions ({@code Flag.boNODRUG}). */
+    MAP_FORBIDS_DRUGS,
+    /** The StdMode is not something {@code ClientUseItems} knows how to consume. */
+    NOT_CONSUMABLE
+  }
+
+  enum DropRejection {
+    NO_SUCH_ITEM,
+    /** {@code boInSafeDisableDrop} and the player stands in a safe zone. */
+    SAFE_ZONE,
+    /** The map sets {@code Flag.boNOTHROWITEM}. */
+    MAP_FORBIDS_DROP,
+    /** No free cell near the player to hold the item. */
+    NO_SPACE,
+    ACTOR_DEAD
   }
 
   enum MoveRejection {

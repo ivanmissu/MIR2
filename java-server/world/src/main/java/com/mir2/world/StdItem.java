@@ -43,6 +43,15 @@ public record StdItem(
   /** Delphi {@code String[20]} payload capacity in GBK bytes. */
   public static final int MAX_NAME_BYTES = 20;
 
+  /** {@code ITEM_WEAPON} (Common/Grobal2.pas:77). */
+  public static final int ITEM_WEAPON = 0;
+  /** {@code ITEM_ARMOR} (Common/Grobal2.pas:78). */
+  public static final int ITEM_ARMOR = 1;
+  /** {@code ITEM_ACCESSORY} (Common/Grobal2.pas:79). */
+  public static final int ITEM_ACCESSORY = 2;
+  /** {@code ITEM_ETC}: everything the LocalDB classifier does not recognise. */
+  public static final int ITEM_ETC = 3;
+
   private static final Charset GBK = Charset.forName("GBK");
   private static final long UINT_MAX = 0xFFFF_FFFFL;
 
@@ -67,6 +76,70 @@ public record StdItem(
     requireU32("need", need);
     requireU32("needLevel", needLevel);
     requireU32("price", price);
+  }
+
+  /**
+   * Classifies the template the way {@code TLocalDB.LoadItemsDB} (LocalDB.pas:307-310) does
+   * when it fills {@code TItem.ItemType}. The category, not the slot, selects which branch
+   * of {@code ApplyItemParameters} a worn item takes.
+   */
+  public int itemType() {
+    return switch (stdMode) {
+      case 5, 6 -> ITEM_WEAPON;
+      case 10, 11 -> ITEM_ARMOR;
+      case 15, 19, 20, 21, 22, 23, 24, 26, 51, 52, 53, 54, 62, 63, 64 -> ITEM_ACCESSORY;
+      default -> ITEM_ETC;
+    };
+  }
+
+  /** Low word of the packed AC dword — Delphi {@code TItem.AC}. */
+  public int acMin() {
+    return low(ac);
+  }
+
+  /** High word of the packed AC dword — Delphi {@code TItem.AC2}. */
+  public int acMax() {
+    return high(ac);
+  }
+
+  public int macMin() {
+    return low(mac);
+  }
+
+  public int macMax() {
+    return high(mac);
+  }
+
+  public int dcMin() {
+    return low(dc);
+  }
+
+  public int dcMax() {
+    return high(dc);
+  }
+
+  public int mcMin() {
+    return low(mc);
+  }
+
+  public int mcMax() {
+    return high(mc);
+  }
+
+  public int scMin() {
+    return low(sc);
+  }
+
+  public int scMax() {
+    return high(sc);
+  }
+
+  private static int low(long packed) {
+    return (int) (packed & 0xffffL);
+  }
+
+  private static int high(long packed) {
+    return (int) ((packed >>> 16) & 0xffffL);
   }
 
   /**
