@@ -20,7 +20,8 @@ import java.util.Objects;
  *   <li>{@code [id description serverIndex flags...]} defines a map. Optional {@code |}
  *       aliasing ({@code [D016|D015 半兽古墓三层]}) names the logical id before the pipe and
  *       the {@code .map} file alias after it; quoted descriptions keep embedded spaces;
- *       flags (SAFE, DARK, DAY, FIGHT, NORECONNECT, NOCHAT, QUIZ, ...) are parsed into {@link MapFlags};
+ *       flags (SAFE, DARK, DAY, FIGHT, NORECONNECT, NOCHAT, QUIZ, NODRUG, NOTHROWITEM, ...)
+ *       are parsed into {@link MapFlags};
  *   <li>any other non-empty line is a route
  *       {@code srcMap srcX srcY -> dstMap dstX dstY}, tokenised exactly like the Delphi
  *       {@code GetValidStr3} chains: the first three fields split on space/comma/tab, the
@@ -192,6 +193,8 @@ public final class MapInfoLoader {
     boolean runMon = false;
     int musicId = -1;
     int expRate = -1;
+    boolean noDrug = false;
+    boolean noThrowItem = false;
 
     for (String token : tokens) {
       String upper = token.toUpperCase();
@@ -209,6 +212,10 @@ public final class MapInfoLoader {
         quiz = true;
       } else if (upper.equals("NOCHAT")) {
         noChat = true;
+      } else if (upper.equals("NODRUG")) {
+        noDrug = true;
+      } else if (upper.equals("NOTHROWITEM")) {
+        noThrowItem = true;
       } else if (upper.equals("RUNHUMAN")) {
         runHuman = true;
       } else if (upper.equals("RUNMON")) {
@@ -228,7 +235,8 @@ public final class MapInfoLoader {
 
     return new MapFlags(
         safeZone, darkness, dayLight, fightZone, fight3Zone, quiz,
-        noReconnect, noReconnectMap, noChat, runHuman, runMon, musicId, expRate);
+        noReconnect, noReconnectMap, noChat, runHuman, runMon, musicId, expRate,
+        noDrug, noThrowItem);
   }
 
   private static String extractParentheses(String token) {

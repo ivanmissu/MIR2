@@ -9,6 +9,8 @@ import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 
 /**
  * Legacy {@code TClientItem} wire codec (Common/Grobal2.pas:562, Client/Grobal2.pas:558).
@@ -69,6 +71,20 @@ public final class ClientItemCodec {
     StringBuilder body = new StringBuilder();
     for (BackpackItem item : backpack) {
       body.append(encode(item)).append(SEPARATOR);
+    }
+    return body.toString();
+  }
+
+  /**
+   * {@code SM_SENDUSEITEMS} body built by {@code TPlayObject.SendUseitems} (ObjBase.pas:16897):
+   * every occupied slot contributes {@code IntToStr(slot) + '/' + EncodeBuffer(item) + '/'}.
+   * Empty slots are skipped entirely and an empty worn set produces no packet at all.
+   */
+  public static String encodeWornSet(Map<Integer, BackpackItem> wornBySlot) {
+    StringBuilder body = new StringBuilder();
+    for (Map.Entry<Integer, BackpackItem> entry : new TreeMap<>(wornBySlot).entrySet()) {
+      body.append(entry.getKey()).append(SEPARATOR)
+          .append(encode(entry.getValue())).append(SEPARATOR);
     }
     return body.toString();
   }

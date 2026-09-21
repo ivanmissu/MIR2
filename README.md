@@ -59,6 +59,16 @@ Java 服务端。
 - **物品目录与背包同步（W04）**：最小标准物品库（`StdItem` 完整 `TStdItem` 字段 + SQLite `std_items` 表）、
   复刻 `GetItemNumber` 的稳定 `MakeIndex`、耐久字段、76 字节 `TClientItem` 小端编解码，
   以及 `CM_QUERYBAGITEMS → SM_BAGITEMS`（含空包静默）与 `SM_ADDITEM` 完整载荷
+- **装备穿脱 / 使用 / 丢弃（W12）**：13 槽 `THumanUseItems` 装备容器（`U_DRESS..U_CHARM`），
+  `CheckUserItems` 槽位匹配与 `CheckTakeOnItems` 穿戴条件（性别锁、手持/负重双预算、`Need` 等级与职业门槛），
+  `RecalcAbilitys` 属性重算（`ApplyItemParameters` 按 `ItemType` 分支、`Weight/WearWeight/HandWeight`
+  三桶负重、按穿戴 `Shape` 重算 `Feature` 外观并广播）；协议侧接通
+  `CM_TAKEONITEM / CM_TAKEOFFITEM / CM_EAT / CM_DROPITEM` 与
+  `SM_TAKEON_OK/FAIL`、`SM_TAKEOFF_OK/FAIL`、`SM_EAT_OK/FAIL`、`SM_DROPITEM_SUCCESS/FAIL`、
+  `SM_SENDUSEITEMS`（分槽 `TClientItem`）、`SM_WEIGHTCHANGED`、`SM_ABILITY`（50 字节 `TAbility`）；
+  装备槽由 SQLite `character_equipment` 表持久化，旧库开库即原位升级。
+  原版 quirk 忠实复刻：成功取下装备后会尾随一条 `SM_TAKEOFF_FAIL(recog=0)`
+  （Delphi 成功路径 `n10` 保持 0，而出口判定是 `if n10 <= 0`）
 - **bot 压测军团（loadtest 模块）**：走真实 TCP 三端口全链路（登录→建号→进图→走/打/捡→周期性重登）
   的 50+ 机器人稳定性压测工具，输出中文 Markdown/CSV 报告（进图率、重登数、动作 +GOOD/+FAIL/超时、
   p50/p90/p99/max 应答延迟、服务端消息分布、错误分类）；支持 embedded（进程内起服务端 + JVM 堆采样）
@@ -262,8 +272,10 @@ docker compose -f java-server/compose.yml up --build
 - 近战战斗、近战怪物 AI、掉落/拾取及 HP/MP/等级/经验/背包重登存档已实现；W04 起背包条目携带完整
   `TStdItem` 模板、稳定 `MakeIndex` 与耐久，`SM_ADDITEM/SM_BAGITEMS` 输出 76 字节 `TClientItem`
   载荷（`TStdItem` 为 66 字节：`String[20]` 占 21 字节，Delphi 源码 "60 bytes" 注释已过时）；
-  物品数值仍是最小占位目录，待导入真实 StdItems 数据后校正；装备穿脱、技能/魔法、远程攻击与
-  剩余 47 种怪物仍未实现；
+  物品数值仍是最小占位目录，待导入真实 StdItems 数据后校正；W12 已补齐装备穿脱、使用（`CM_EAT`）与
+  丢弃（`CM_DROPITEM`），但装备属性映射虽逐条取自 `ItmUnit.pas`，具体数值同样等 `StdItems.DB`
+  导入才算权威；套装/特戒效果（Shape/AniCount 111-217 那张表）、物品耐久消耗与修理、
+  技能/魔法、远程攻击与剩余 47 种怪物仍未实现；
 - 门与地图连接点（W10）已实现：`.map` 门锚点 + `CM_OPENDOOR` + 5 秒自动关门、`MapInfo.txt` 多图与
   连接点换图（含目标不可走整步回滚）；昼夜亮暗（`DayBright`）、地图旗标（SAFE/FIGHT/NORECONNECT 等）、
   城堡门差异分支与跨服切换（`nServerIndex` 不同）仍未实现；

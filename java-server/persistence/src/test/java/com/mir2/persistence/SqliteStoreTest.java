@@ -3,6 +3,8 @@ package com.mir2.persistence;
 import com.mir2.character.Character;
 import com.mir2.world.Ability;
 import com.mir2.world.BackpackItem;
+import com.mir2.world.Equipment;
+import com.mir2.world.EquipmentSlot;
 import com.mir2.world.ItemDatabase;
 import com.mir2.world.PlayerState;
 import com.mir2.world.StdItem;
@@ -201,6 +203,42 @@ class SqliteStoreTest {
       upgraded.save(new PlayerState(characterId, Ability.defaultPlayer(), List.of(stabilised)));
       assertEquals(55, upgraded.load(characterId).orElseThrow().backpack().getFirst().makeIndex());
       assertEquals(55, upgraded.itemMakeIndexHighWater());
+    } finally {
+      Files.deleteIfExists(file);
+    }
+  }
+
+  @Test
+  void wornEquipmentRoundTripsAndPreW12DatabasesGainTheTableOnOpen() throws Exception {
+    Path file = Files.createTempFile("mir2-w12-", ".db");
+    String url = "jdbc:sqlite:" + file;
+    UUID characterId = UUID.randomUUID();
+    BackpackItem dress = new BackpackItem(StdItems.woodenSword(), 201, 18, 20);
+    BackpackItem bagged = BackpackItem.of(StdItems.chickenMeat(), 202);
+
+    try (SqliteStore store = new SqliteStore(url)) {
+      store.saveAccount("w12", new byte[] {9});
+      store.save(new Character(characterId, "w12", "铁匠", 0, 5, 0, 1, 0, 0));
+
+      Equipment equipment = Equipment.empty().with(EquipmentSlot.WEAPON, dress);
+      store.save(new PlayerState(
+          characterId, Ability.defaultPlayer(), List.of(bagged), equipment));
+      // The high-water mark has to consider worn items too, or a relog would re-issue 201.
+      assertEquals(202, store.itemMakeIndexHighWater());
+    }
+
+    try (SqliteStore reopened = new SqliteStore(url)) {
+      PlayerState restored = reopened.load(characterId).orElseThrow();
+      BackpackItem worn = restored.equipment().at(EquipmentSlot.WEAPON).orElseThrow();
+      assertEquals("木剑", worn.name());
+      assertEquals(201, worn.makeIndex());
+      assertEquals(18, worn.dura(), "partial durability must survive the round trip");
+      assertEquals(StdItems.woodenSword(), worn.item());
+      assertEquals(List.of("鸡肉"), restored.backpack().stream().map(BackpackItem::name).toList());
+
+      // Taking the item off again clears the row instead of leaving a stale slot behind.
+      reopened.save(restored.withEquipment(Equipment.empty()));
+      assertTrue(reopened.load(characterId).orElseThrow().equipment().isEmpty());
     } finally {
       Files.deleteIfExists(file);
     }

@@ -80,6 +80,20 @@ public final class GameProtocolAdapter implements WorldEventSink {
         case ProtocolConstants.CM_QUERYBAGITEMS -> reportExceptionalFailure(
             world.playerState(boundPlayer)
                 .thenAccept(state -> sendBagItems(state.backpack())));
+        // CM_TAKEONITEM: recog=MakeIndex, param=slot, body=item name (ClMain.pas:3058).
+        case ProtocolConstants.CM_TAKEONITEM -> reportExceptionalFailure(world.equip(
+            boundPlayer, message.param(), message.recog(),
+            WireMessageCodec.decodeBody(packet.encodedBody())));
+        // CM_TAKEOFFITEM carries the same layout as CM_TAKEONITEM (ClMain.pas:3066).
+        case ProtocolConstants.CM_TAKEOFFITEM -> reportExceptionalFailure(world.unequip(
+            boundPlayer, message.param(), message.recog(),
+            WireMessageCodec.decodeBody(packet.encodedBody())));
+        // CM_EAT: recog=MakeIndex, body=item name; no slot (ClMain.pas:3074).
+        case ProtocolConstants.CM_EAT -> reportExceptionalFailure(world.useItem(
+            boundPlayer, message.recog(), WireMessageCodec.decodeBody(packet.encodedBody())));
+        // CM_DROPITEM: recog=MakeIndex, body=item name (ClMain.pas:3042).
+        case ProtocolConstants.CM_DROPITEM -> reportExceptionalFailure(world.dropItem(
+            boundPlayer, message.recog(), WireMessageCodec.decodeBody(packet.encodedBody())));
         // Chat from client: Delphi sends no +GOOD/+FAIL acknowledgement for CM_SAY.
         case ProtocolConstants.CM_SAY -> {
           String text = WireMessageCodec.decodeBody(packet.encodedBody());
@@ -153,6 +167,58 @@ public final class GameProtocolAdapter implements WorldEventSink {
       case WorldEvent.SystemMessage sysMsg -> output.accept(new GameOutbound.Packet(
           packet(ProtocolConstants.SM_SYSMESSAGE, 0, 0xFF, 0, 1,
               WireMessageCodec.encodeBody(sysMsg.message()))));
+      case WorldEvent.ItemEquipped equipped -> sendTakeOnOk(equipped);
+      case WorldEvent.EquipRejected rejected -> {
+        if (rejected.playerId() == playerId) {
+          output.accept(new GameOutbound.Packet(
+              packet(ProtocolConstants.SM_TAKEON_FAIL, rejected.reason(), 0, 0, 0, "")));
+        }
+      }
+      case WorldEvent.ItemUnequipped unequipped -> sendTakeOffOk(unequipped);
+      case WorldEvent.UnequipRejected rejected -> {
+        if (rejected.playerId() == playerId) {
+          output.accept(new GameOutbound.Packet(
+              packet(ProtocolConstants.SM_TAKEOFF_FAIL, rejected.reason(), 0, 0, 0, "")));
+        }
+      }
+      case WorldEvent.ItemUsed used -> {
+        if (used.playerId() == playerId) {
+          output.accept(new GameOutbound.Packet(
+              packet(ProtocolConstants.SM_EAT_OK, 0, 0, 0, 0, "")));
+        }
+      }
+      case WorldEvent.UseItemRejected rejected -> {
+        if (rejected.playerId() == playerId) {
+          output.accept(new GameOutbound.Packet(
+              packet(ProtocolConstants.SM_EAT_FAIL, 0, 0, 0, 0, "")));
+        }
+      }
+      case WorldEvent.ItemDropped dropped -> {
+        if (dropped.playerId() == playerId) {
+          // SM_DROPITEM_SUCCESS: recog=MakeIndex, body=item name (ClMain.pas SM handler).
+          output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_DROPITEM_SUCCESS,
+              dropped.item().makeIndex(), 0, 0, 0,
+              WireMessageCodec.encodeBody(dropped.item().name()))));
+        }
+      }
+      case WorldEvent.DropItemRejected rejected -> {
+        if (rejected.playerId() == playerId) {
+          output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_DROPITEM_FAIL,
+              rejected.makeIndex(), 0, 0, 0, WireMessageCodec.encodeBody(rejected.itemName()))));
+        }
+      }
+      case WorldEvent.WeightChanged weight -> {
+        if (weight.playerId() == playerId) {
+          output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_WEIGHTCHANGED,
+              weight.weight(), weight.wearWeight(), weight.handWeight(), 0, "")));
+        }
+      }
+      case WorldEvent.AbilityChanged changed -> {
+        if (changed.playerId() == playerId) sendAbility(changed.ability());
+      }
+      case WorldEvent.EquipmentSent sent -> {
+        if (sent.playerId() == playerId) sendWornSet(sent.equipment());
+      }
       case WorldEvent.DayChanging dayChanging -> output.accept(new GameOutbound.Packet(
           packet(ProtocolConstants.SM_DAYCHANGING, 0, dayChanging.gameTime(), dayChanging.dayBright(), 0, "")));
       default -> {
@@ -175,7 +241,11 @@ public final class GameProtocolAdapter implements WorldEventSink {
         || ident == ProtocolConstants.CM_PICKUP
         || ident == ProtocolConstants.CM_OPENDOOR
         || ident == ProtocolConstants.CM_QUERYBAGITEMS
-        || ident == ProtocolConstants.CM_SAY;
+        || ident == ProtocolConstants.CM_SAY
+        || ident == ProtocolConstants.CM_TAKEONITEM
+        || ident == ProtocolConstants.CM_TAKEOFFITEM
+        || ident == ProtocolConstants.CM_EAT
+        || ident == ProtocolConstants.CM_DROPITEM;
   }
 
   private static AttackKind attackKind(int ident) {
@@ -311,6 +381,51 @@ public final class GameProtocolAdapter implements WorldEventSink {
     if (backpack.isEmpty()) return;
     output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_BAGITEMS, requirePlayerId(),
         0, 0, backpack.size(), ClientItemCodec.encodeBag(backpack))));
+  }
+
+  /**
+   * {@code SM_TAKEON_OK}: recog carries {@code GetFeatureToLong} and param
+   * {@code GetFeatureEx} (ObjBase.pas:17165), which the client applies to its own avatar.
+   */
+  private void sendTakeOnOk(WorldEvent.ItemEquipped equipped) {
+    if (equipped.playerId() != playerId) return;
+    output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_TAKEON_OK,
+        equipped.feature(), equipped.featureEx(), 0, 0, "")));
+  }
+
+  /**
+   * {@code SM_TAKEOFF_OK}, followed by the {@code SM_TAKEOFF_FAIL} that
+   * {@code ClientTakeOffItems} also emits on success.
+   *
+   * <p>Quirk faithfully reproduced: the Delphi handler leaves its {@code n10} status at 0 on
+   * the success path and its exit test is {@code if n10 <= 0 then SendDefMessage(
+   * SM_TAKEOFF_FAIL, ...)} (ObjBase.pas:17294). Zero satisfies that test, so every successful
+   * take-off is followed by a failure packet carrying recog 0. The 1.50 client tolerates it
+   * because its SM_TAKEOFF_FAIL branch only restores {@code g_WaitingUseItem} when the pending
+   * index is negative, which it is not after a successful take-off.
+   */
+  private void sendTakeOffOk(WorldEvent.ItemUnequipped unequipped) {
+    if (unequipped.playerId() != playerId) return;
+    output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_TAKEOFF_OK,
+        unequipped.feature(), unequipped.featureEx(), 0, 0, "")));
+    output.accept(new GameOutbound.Packet(
+        packet(ProtocolConstants.SM_TAKEOFF_FAIL, 0, 0, 0, 0, "")));
+    // The freed item reappears in the bag; SendAddItem carries the full TClientItem.
+    output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_ADDITEM,
+        unequipped.playerId(), 0, 0, 1, ClientItemCodec.encode(unequipped.item()))));
+  }
+
+  /** {@code RM_ABILITY} -> {@code SM_ABILITY} with the 50-byte packed TAbility body. */
+  private void sendAbility(com.mir2.world.Ability ability) {
+    output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_ABILITY, 0, 0, 0, 0,
+        AbilityCodec.encode(ability))));
+  }
+
+  /** {@code SM_SENDUSEITEMS}; ObjBase.pas:16930 stays silent when nothing is worn. */
+  private void sendWornSet(com.mir2.world.Equipment equipment) {
+    if (equipment.isEmpty()) return;
+    output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_SENDUSEITEMS, 0, 0, 0, 0,
+        ClientItemCodec.encodeWornSet(equipment.byIndex()))));
   }
 
   private void sendStatus(boolean accepted) {
