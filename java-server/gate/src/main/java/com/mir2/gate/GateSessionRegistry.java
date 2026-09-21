@@ -8,18 +8,26 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /** Bridges the Java auth token to the positive Integer certification used by mir2.exe. */
 public final class GateSessionRegistry {
-  public record SelectedCharacter(UUID id, String name, int feature) {
+  /** {@code job} is Delphi's {@code m_btJob}; the world needs it for the level-up curves. */
+  public record SelectedCharacter(UUID id, String name, int feature, int job) {
     public SelectedCharacter(UUID id, String name) {
-      this(id, name, 0);
+      this(id, name, 0, 0);
+    }
+
+    /** Compatibility overload predating the job field; defaults to jWarr. */
+    public SelectedCharacter(UUID id, String name, int feature) {
+      this(id, name, feature, 0);
     }
 
     public SelectedCharacter {
       Objects.requireNonNull(id, "id");
       Objects.requireNonNull(name, "name");
+      if (job < 0 || job > 2) throw new IllegalArgumentException("job must be 0..2");
     }
 
     private static SelectedCharacter from(Character character) {
-      return new SelectedCharacter(character.id(), character.name(), character.feature());
+      return new SelectedCharacter(
+          character.id(), character.name(), character.feature(), character.job());
     }
   }
 

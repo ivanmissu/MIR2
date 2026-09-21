@@ -77,6 +77,10 @@ public final class BotReport {
         .append(metrics.get(BotMetrics.Key.ITEMS_PICKED_UP)).append(" |\n");
     text.append("| SM_WINEXP (经验推送) | ")
         .append(metrics.get(BotMetrics.Key.EXPERIENCE_UPDATES)).append(" |\n");
+    text.append("| SM_LEVELUP (升级) | ")
+        .append(metrics.get(BotMetrics.Key.LEVEL_UPS)).append(" |\n");
+    text.append("| SM_ALIVE (复活) | ")
+        .append(metrics.get(BotMetrics.Key.REVIVALS_SEEN)).append(" |\n");
     text.append("| SM_DEATH (他者死亡) | ")
         .append(metrics.get(BotMetrics.Key.OBSERVED_DEATHS)).append(" |\n");
     text.append('\n');

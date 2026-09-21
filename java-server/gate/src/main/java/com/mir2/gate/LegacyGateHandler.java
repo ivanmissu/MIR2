@@ -102,7 +102,9 @@ public final class LegacyGateHandler implements BiConsumer<ClientConnection, IOE
     try {
       playerId = world.engine().enterPlayerNear(
           state.selectedCharacter.id(), state.selectedCharacter.name(), world.mapId(), world.spawn(),
-          world.direction(), state.selectedCharacter.feature(), 0, adapter).join().id();
+          world.direction(), state.selectedCharacter.feature(), 0,
+          // btJob selects the RecalcLevelAbilitys growth branch (warrior/wizard/taoist).
+          state.selectedCharacter.job(), adapter).join().id();
       // The certification is a one-time admission ticket, mirroring the Delphi id-server's
       // single-use session id (M2Server/IdSrvClient.pas:DelSession). It is consumed only once
       // the world has actually admitted the player, not merely once RunLogin authenticated:

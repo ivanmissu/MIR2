@@ -45,6 +45,34 @@ public final class WorldEngine implements AutoCloseable {
    */
   private static final long DOOR_AUTO_CLOSE_MILLIS = 5_000;
 
+  /**
+   * {@code g_Config.nDieScatterBagRate} (M2Share.pas:2020): a non-red character drops one bag
+   * entry in three when it dies. Red names drop everything, but the PK-level model is not
+   * migrated yet, so only the ordinary rate applies.
+   */
+  private static final int DIE_SCATTER_BAG_RATE = 3;
+
+  /**
+   * {@code g_Config.dwMakeGhostTime} (M2Share.pas:1796): a corpse becomes a ghost — i.e. it
+   * leaves the map — three minutes after death.
+   */
+  private static final long MAKE_GHOST_MILLIS = 3 * 60 * 1000L;
+
+  /** {@code TBaseObject.Run} advances the HP/MP counters by {@code elapsed div 20}. */
+  private static final long HP_MP_TICK_MILLIS = 20;
+
+  /** {@code g_Config.nHealthFillTime} (M2Share.pas:1638) = 300 counter units = 6 seconds. */
+  private static final long HEALTH_FILL_TICKS = 300;
+
+  /** {@code g_Config.nSpellFillTime} (M2Share.pas:1639) = 800 counter units = 16 seconds. */
+  private static final long SPELL_FILL_TICKS = 800;
+
+  /**
+   * {@code TUserEngine.AddPlayObject} (UsrEngn.pas:600): a character loaded at {@code HP <= 0}
+   * is moved home and set to {@code m_Abil.HP := 14} before entering the world.
+   */
+  private static final int REVIVE_ON_LOGIN_HP = 14;
+
   public record Config(
       Duration tickInterval,
       int viewRange,
@@ -230,6 +258,21 @@ public final class WorldEngine implements AutoCloseable {
       int feature,
       int status,
       WorldEventSink sink) {
+    return enterPlayer(characterId, name, mapId, position, direction, feature, status,
+        LevelAbilities.JOB_WARRIOR, sink);
+  }
+
+  /** Job-aware variant; the job selects the {@code RecalcLevelAbilitys} growth branch. */
+  public CompletableFuture<WorldObjectSnapshot> enterPlayer(
+      UUID characterId,
+      String name,
+      String mapId,
+      Position position,
+      Direction direction,
+      int feature,
+      int status,
+      int job,
+      WorldEventSink sink) {
     Objects.requireNonNull(characterId, "characterId");
     Objects.requireNonNull(name, "name");
     Objects.requireNonNull(mapId, "mapId");
@@ -237,7 +280,7 @@ public final class WorldEngine implements AutoCloseable {
     Objects.requireNonNull(direction, "direction");
     Objects.requireNonNull(sink, "sink");
     return submit(() -> enter(
-        characterId, name, mapId, position, direction, feature, status, sink));
+        characterId, name, mapId, position, direction, feature, status, job, sink));
   }
 
   /** Enters at the requested spawn or the nearest currently available cell. */
@@ -263,6 +306,21 @@ public final class WorldEngine implements AutoCloseable {
       int feature,
       int status,
       WorldEventSink sink) {
+    return enterPlayerNear(characterId, name, mapId, preferredPosition, direction, feature,
+        status, LevelAbilities.JOB_WARRIOR, sink);
+  }
+
+  /** Job-aware variant of the nearest-cell entry. */
+  public CompletableFuture<WorldObjectSnapshot> enterPlayerNear(
+      UUID characterId,
+      String name,
+      String mapId,
+      Position preferredPosition,
+      Direction direction,
+      int feature,
+      int status,
+      int job,
+      WorldEventSink sink) {
     Objects.requireNonNull(characterId, "characterId");
     Objects.requireNonNull(name, "name");
     Objects.requireNonNull(mapId, "mapId");
@@ -278,7 +336,7 @@ public final class WorldEngine implements AutoCloseable {
         }
       }
       return enter(characterId, name, map.id(), nearestAvailable(map, preferredPosition),
-          direction, feature, status, sink);
+          direction, feature, status, job, sink);
     });
   }
 
@@ -431,6 +489,45 @@ public final class WorldEngine implements AutoCloseable {
     });
   }
 
+  /**
+   * Brings a dead player back on the spot with full HP, mirroring the GM command
+   * {@code CmdReAlive} (ObjBase.pas:13998). Returns false when the player was already alive.
+   */
+  public CompletableFuture<Boolean> revive(int playerId) {
+    return submit(() -> revivePlayer(playerId));
+  }
+
+  /**
+   * {@code TPlayObject.CmdChangeLevel} (ObjBase.pas:10848), the GM {@code @Level} command:
+   * {@code m_Abil.Level := _MIN(MAXUPLEVEL, nLevel); HasLevelUp(1)}. The level is set outright,
+   * the curve is rebuilt and the client receives the same {@code SM_LEVELUP} it would get from
+   * an ordinary level-up.
+   */
+  public CompletableFuture<Integer> setLevel(int playerId, int level) {
+    if (level < 1) throw new IllegalArgumentException("level must be at least one");
+    return submit(() -> {
+      Player player = requirePlayer(playerId);
+      int capped = Math.min(LevelExperience.MAX_UP_LEVEL, level);
+      Ability naked = player.baseAbility;
+      Ability working = player.ability;
+      EquipmentBonus bonusBefore = player.bonus;
+      Ability relevelled = new Ability(naked.hp(), naked.maxHp(), naked.mp(), naked.maxMp(),
+          naked.minDc(), naked.maxDc(), naked.minAc(), naked.maxAc(), capped,
+          naked.experience(), LevelExperience.forLevel(capped));
+      applyLevelUp(player, relevelled);
+      try {
+        persist(player);
+      } catch (RuntimeException failure) {
+        player.baseAbility = naked;
+        player.ability = working;
+        player.bonus = bonusBefore;
+        throw failure;
+      }
+      announceLevelUp(player, player.ability);
+      return capped;
+    });
+  }
+
   public CompletableFuture<Void> leavePlayer(int playerId) {
     return submit(() -> {
       leave(playerId);
@@ -551,6 +648,8 @@ public final class WorldEngine implements AutoCloseable {
     }
     regenSpawners();
     updateMonsters();
+    regenerateHealthAndSpell();
+    makeGhostsOfExpiredCorpses();
     expireGroundItems();
     closeDoorsPeriodically();
     savePlayersPeriodically();
@@ -586,7 +685,7 @@ public final class WorldEngine implements AutoCloseable {
 
   private WorldObjectSnapshot enter(
       UUID characterId, String name, String mapId, Position position, Direction direction,
-      int feature, int status, WorldEventSink sink) {
+      int feature, int status, int job, WorldEventSink sink) {
     if (name.isBlank()) throw new IllegalArgumentException("player name must not be blank");
     if (playersByName.containsKey(name)) throw new IllegalStateException("player is already online: " + name);
     GameMap map = requireMap(mapId);
@@ -611,11 +710,27 @@ public final class WorldEngine implements AutoCloseable {
     int id = allocateObjectId();
     List<Integer> visibleIds = visibleIds(map, position, 0);
     Player player = new Player(id, characterId, name, map, position, direction, feature, status,
-        restored.ability(), restored.backpack(), restored.equipment(), sink);
+        restored.ability(), restored.backpack(), restored.equipment(), job, sink);
+    // MaxExp is derived state in Delphi (HasLevelUp refreshes it from GetLevelExp), so it is
+    // never persisted; rebuild it from the restored level before anything reads it.
+    player.baseAbility = new Ability(
+        player.baseAbility.hp(), player.baseAbility.maxHp(),
+        player.baseAbility.mp(), player.baseAbility.maxMp(),
+        player.baseAbility.minDc(), player.baseAbility.maxDc(),
+        player.baseAbility.minAc(), player.baseAbility.maxAc(),
+        player.baseAbility.level(), player.baseAbility.experience(),
+        LevelExperience.forLevel(player.baseAbility.level()));
     // RecalcAbilitys runs once at login so the restored gear is reflected before the client
     // receives its first ability packet. Current HP/MP are carried over untouched: Delphi
     // only refills them on revival, not on login.
     recalculateAbilities(player);
+    // UsrEngn.pas:576-600 revives a character that was saved at zero HP before it re-enters
+    // the world; the Delphi server relocates it home first, which the single-map PoC cannot
+    // do, so the player simply stands up on the restored cell with the classic 14 HP.
+    if (!player.ability.alive()) {
+      player.ability = player.ability.withHp(Math.min(REVIVE_ON_LOGIN_HP, player.ability.maxHp()));
+      player.baseAbility = player.rebase(player.ability);
+    }
     // The enter itself just saved; the periodic pass starts counting from now.
     player.lastSavedAt = clock.getAsLong();
     map.place(id, position);
@@ -1082,7 +1197,8 @@ public final class WorldEngine implements AutoCloseable {
         base.minAc() + bonus.minAc(),
         base.maxAc() + bonus.maxAc(),
         base.level(),
-        base.experience());
+        base.experience(),
+        base.maxExperience());
     player.bonus = bonus;
   }
 
@@ -1351,6 +1467,12 @@ public final class WorldEngine implements AutoCloseable {
   }
 
   private void handleDeath(WorldObject victim, WorldObject killer) {
+    if (victim instanceof Player player) {
+      // TBaseObject.Die marks the object dead and stamps m_dwDeathTick before anything else,
+      // because ScatterBagItems and the RM_DEATH broadcast both observe that state.
+      player.diedAt = clock.getAsLong();
+      scatterBagItems(player);
+    }
     WorldEvent death = new WorldEvent.ObjectDied(victim.snapshot(), killer.id());
     emitToObserversAndSelf(victim, death);
     if (victim instanceof Monster monster) {
@@ -1363,19 +1485,203 @@ public final class WorldEngine implements AutoCloseable {
     }
   }
 
-  private void awardExperience(Player player, long experience) {
-    if (experience <= 0) return;
+  /**
+   * {@code TPlayObject.ScatterBagItems} (ObjBase.pas:26648) with {@code ItemOfCreat = nil},
+   * the {@code g_Config.boDieScatterBag} path taken by {@code Die}: every bag entry has a
+   * {@code 1 / nDieScatterBagRate} (default 3) chance to drop within {@code DropWide = 2}
+   * cells, and the dropped set is reported back through {@code RM_SENDDELITEMLIST}.
+   *
+   * <p>Worn gear is untouched here. {@code DropUseItems} does handle equipment, but its
+   * default config ({@code boKillByHumanDropUseItem = False}) only fires for monster kills and
+   * it depends on {@code StdItem.Reserved} bits that this migration has no source for yet.
+   */
+  // TODO(verify): DropUseItems (equipment drop on death) needs the StdItem.Reserved bits and
+  // the PK level model; both are missing, so only the bag scatters today.
+  private void scatterBagItems(Player player) {
+    if (player.backpack.isEmpty()) return;
+    // Delphi refuses the whole scatter on a NODROPITEM map (m_PEnvir.Flag.boNODROPITEM).
+    if (player.map.flags().isNoThrowItem()) return;
+    List<BackpackItem> previousBackpack = List.copyOf(player.backpack);
+    List<BackpackItem> dropped = new ArrayList<>();
+    List<GroundItem> landed = new ArrayList<>();
+    // Delphi walks the bag backwards so removals do not disturb the remaining indexes.
+    for (int index = player.backpack.size() - 1; index >= 0; index--) {
+      if (random.nextInt(DIE_SCATTER_BAG_RATE) != 0) continue;
+      BackpackItem item = player.backpack.get(index);
+      Position cell = findDropPosition(player.map, player.position);
+      if (cell == null) continue; // DropItemDown failed: the entry stays in the bag.
+      int itemId = allocateObjectId();
+      GroundItem ground = new GroundItem(itemId, item.name(), item.looks(), player.map.id(), cell);
+      landed.add(ground);
+      dropped.add(item);
+      player.backpack.remove(index);
+    }
+    if (dropped.isEmpty()) return;
+    try {
+      persist(player);
+    } catch (RuntimeException failure) {
+      player.backpack.clear();
+      player.backpack.addAll(previousBackpack);
+      LOG.log(Level.WARNING, "death scatter rolled back for " + player.name, failure);
+      return;
+    }
+    for (GroundItem ground : landed) {
+      groundItems.put(ground.id(), ground);
+      itemDropTimes.put(ground.id(), clock.getAsLong());
+      WorldEvent appeared = new WorldEvent.ItemAppeared(ground);
+      for (int viewerId : visibleIds(player.map, ground.position(), 0)) {
+        emit(players.get(viewerId), appeared);
+      }
+    }
+    emit(player, new WorldEvent.ItemsRemoved(player.id, dropped));
+  }
+
+  /**
+   * {@code TBaseObject.ReAlive} (ObjBase.pas:21199) plus the {@code CmdReAlive} tail
+   * (ObjBase.pas:14019) that also refills HP and refreshes the ability block: the player
+   * stands up on the same cell and every observer receives {@code SM_ALIVE}.
+   */
+  private boolean revivePlayer(int playerId) {
+    Player player = requirePlayer(playerId);
+    if (player.ability.alive()) return false;
     Ability before = player.ability;
-    long nextTotal = before.experience() + experience;
-    Ability updated = before.addExperience(experience);
-    player.setAbility(updated);
+    player.diedAt = 0;
+    // CmdReAlive sets m_WAbil.HP := m_WAbil.MaxHP; MP is left where it was, as in Delphi.
+    player.setAbility(player.ability.withHp(player.ability.maxHp()));
     try {
       persist(player);
     } catch (RuntimeException failure) {
       player.setAbility(before);
       throw failure;
     }
+    emitToObserversAndSelf(player, new WorldEvent.ObjectRevived(player.snapshot()));
+    emit(player, new WorldEvent.AbilityChanged(player.id, player.ability));
+    return true;
+  }
+
+  /**
+   * {@code TBaseObject.Run} (ObjBase.pas:3718): HP and MP tick back up on their own clocks.
+   * The Delphi counters advance by {@code (now - m_dwHPMPTick) div 20} per pass and fire when
+   * they reach {@code nHealthFillTime} (300) / {@code nSpellFillTime} (800) — i.e. every
+   * 6 seconds for HP and 16 seconds for MP — restoring {@code MaxHP div 75 + 1} and
+   * {@code MaxMP div 18 + 1}. Dead objects regenerate nothing.
+   */
+  private void regenerateHealthAndSpell() {
+    long now = clock.getAsLong();
+    for (Player player : players.values()) {
+      if (player.lastRegenAt == 0) {
+        player.lastRegenAt = now;
+        continue;
+      }
+      long elapsed = now - player.lastRegenAt;
+      long units = elapsed / HP_MP_TICK_MILLIS;
+      // Sub-20ms slivers are left on the clock so a fast tick interval still accumulates,
+      // which is what Delphi's integer division against m_dwHPMPTick effectively does.
+      if (units <= 0) continue;
+      player.lastRegenAt = now - elapsed % HP_MP_TICK_MILLIS;
+      if (!player.ability.alive()) continue;
+      player.healthTicks += units;
+      player.spellTicks += units;
+      boolean changed = false;
+      if (player.ability.hp() < player.ability.maxHp() && player.healthTicks >= HEALTH_FILL_TICKS) {
+        int step = player.ability.maxHp() / 75 + 1;
+        player.ability = player.ability.withHp(player.ability.hp() + step);
+        player.baseAbility = player.rebase(player.ability);
+        player.healthTicks = 0;
+        changed = true;
+      }
+      if (player.ability.mp() < player.ability.maxMp() && player.spellTicks >= SPELL_FILL_TICKS) {
+        int step = player.ability.maxMp() / 18 + 1;
+        player.ability = player.ability.withMp(player.ability.mp() + step);
+        player.baseAbility = player.rebase(player.ability);
+        player.spellTicks = 0;
+        changed = true;
+      }
+      // Delphi clears a counter that reached the threshold even when the pool was already full.
+      if (player.healthTicks >= HEALTH_FILL_TICKS) player.healthTicks = 0;
+      if (player.spellTicks >= SPELL_FILL_TICKS) player.spellTicks = 0;
+      if (changed) {
+        emitToObserversAndSelf(player, new WorldEvent.HealthChanged(player.snapshot()));
+      }
+    }
+  }
+
+  /**
+   * {@code TBaseObject.Run}'s dead branch (ObjBase.pas:3769): after
+   * {@code g_Config.dwMakeGhostTime} (3 minutes) the corpse turns into a ghost, which for a
+   * player object means it is removed from the map exactly like a disconnect would.
+   */
+  private void makeGhostsOfExpiredCorpses() {
+    long now = clock.getAsLong();
+    List<Player> expired = new ArrayList<>();
+    for (Player player : players.values()) {
+      if (player.ability.alive() || player.diedAt == 0) continue;
+      if (now - player.diedAt > MAKE_GHOST_MILLIS) expired.add(player);
+    }
+    for (Player player : expired) {
+      try {
+        leave(player.id);
+      } catch (RuntimeException error) {
+        LOG.log(Level.WARNING, "ghosting failed for " + player.name, error);
+      }
+    }
+  }
+
+  /**
+   * {@code TPlayObject.GetExp} (ObjBase.pas:1843): accumulate, announce, then level while the
+   * threshold is met. Delphi only checks once per kill, but a single monster can never award
+   * more than one level's worth, so the loop below is the same behaviour with a guard against
+   * configured multipliers that could.
+   */
+  private void awardExperience(Player player, long experience) {
+    if (experience <= 0) return;
+    Ability before = player.ability;
+    EquipmentBonus bonusBefore = player.bonus;
+    long nextTotal = before.experience() + experience;
+    player.setAbility(before.addExperience(experience));
+    List<Ability> reached = new ArrayList<>();
+    // Delphi levels up inside GetExp, before the save; the same order is kept here so a
+    // storage failure rolls back the level as well as the experience.
+    while (player.ability.readyToLevel()) {
+      int levelBefore = player.baseAbility.level();
+      applyLevelUp(player, player.baseAbility.consumeLevelExperience());
+      reached.add(player.ability);
+      // A capped character keeps burning overflow experience without gaining levels; stop
+      // once the level can no longer move so the loop always terminates.
+      if (player.baseAbility.level() == levelBefore) break;
+    }
+    try {
+      persist(player);
+    } catch (RuntimeException failure) {
+      player.setAbility(before);
+      player.bonus = bonusBefore;
+      throw failure;
+    }
     emit(player, new WorldEvent.ExperienceGained(player.id, experience, nextTotal));
+    for (Ability level : reached) announceLevelUp(player, level);
+  }
+
+  /**
+   * {@code TBaseObject.HasLevelUp} (ObjBase.pas:1943): refresh {@code MaxExp}, rebuild the
+   * level-derived stats, re-apply equipment and top the pools up.
+   */
+  private void applyLevelUp(Player player, Ability relevelled) {
+    player.baseAbility = LevelAbilities.forLevel(player.job, relevelled.level(), relevelled);
+    // RecalcAbilitys re-derives the working ability (m_WAbil) from the new naked values.
+    recalculateAbilities(player);
+    // HasLevelUp ends with IncHealthSpell(2000, 2000), which clamps at the new maxima.
+    player.ability = player.ability.withHp(player.ability.hp() + 2000)
+        .withMp(player.ability.mp() + 2000);
+    player.baseAbility = player.rebase(player.ability);
+  }
+
+  /** The {@code RM_LEVELUP} fan-out: SM_LEVELUP, the full ability block and the new pools. */
+  private void announceLevelUp(Player player, Ability reached) {
+    emit(player, new WorldEvent.LevelUp(
+        player.id, reached.level(), reached.experience(), reached));
+    // RM_LEVELUP's handler also refreshes the whole ability block (ObjBase.pas:5584).
+    emit(player, new WorldEvent.AbilityChanged(player.id, reached));
+    emitToObserversAndSelf(player, new WorldEvent.HealthChanged(player.snapshot()));
   }
 
   private void dropLoot(Monster monster) {
@@ -1958,6 +2264,13 @@ public final class WorldEngine implements AutoCloseable {
     private Ability ability;
     private long lastAttackAt = Long.MIN_VALUE / 4;
     private long lastSavedAt;
+    /** {@code m_dwDeathTick}: 0 while alive, the death timestamp otherwise. */
+    private long diedAt;
+    /** {@code m_dwHPMPTick}: the reference point the regeneration counters advance from. */
+    private long lastRegenAt;
+    /** {@code m_nHealthTick} / {@code m_nSpellTick}. */
+    private long healthTicks;
+    private long spellTicks;
 
     private Player(
         int id,
@@ -1971,6 +2284,7 @@ public final class WorldEngine implements AutoCloseable {
         Ability ability,
         List<BackpackItem> backpack,
         Equipment equipment,
+        int job,
         WorldEventSink sink) {
       this.id = id;
       this.characterId = characterId;
@@ -1988,9 +2302,9 @@ public final class WorldEngine implements AutoCloseable {
       // MakeHumanFeature packs hair/dress/weapon appearance; the low bit of each byte is the
       // gender, so the caller's feature value already carries it (Grobal2.pas:2729).
       this.gender = feature == 0 ? 0 : (feature >>> 24) & 1;
-      // TODO(verify): the job is not part of the Feature word; until the character domain
-      // hands it to the world, every player is treated as a warrior (jWarr = 0).
-      this.job = 0;
+      // The job is not part of the Feature word; the gate passes the character record's
+      // btJob through so the level curves (RecalcLevelAbilitys) pick the right branch.
+      this.job = job;
     }
 
     /** Total weight carried in the bag — {@code TBaseObject.RecalcBagWeight} (ObjBase.pas:18533). */
@@ -2091,7 +2405,8 @@ public final class WorldEngine implements AutoCloseable {
           Math.max(0, working.minAc() - bonus.minAc()),
           Math.max(0, working.maxAc() - bonus.maxAc()),
           working.level(),
-          working.experience());
+          working.experience(),
+          working.maxExperience());
     }
 
     private PlayerState state() {
