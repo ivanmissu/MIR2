@@ -52,7 +52,7 @@ class GameSessionIntegrationTest {
           try (two) {
             List<WirePacket> twoEntry = readPackets(two, 5);
             assertEquals(List.of(ProtocolConstants.SM_NEWMAP, ProtocolConstants.SM_LOGON,
-                ProtocolConstants.SM_MAPDESCRIPTION, ProtocolConstants.SM_ABILITY, ProtocolConstants.SM_TURN), idents(twoEntry));
+                ProtocolConstants.SM_MAPDESCRIPTION, ProtocolConstants.SM_TURN, ProtocolConstants.SM_ABILITY), idents(twoEntry));
             Position twoPosition = new Position(twoEntry.getFirst().message().param(),
                 twoEntry.getFirst().message().tag());
 

@@ -114,16 +114,16 @@ class GameProtocolAdapterTest {
       assertEquals(-1, description.message().recog());
       assertEquals("比奇省", WireMessageCodec.decodeBody(description.encodedBody()));
 
-      WirePacket ability = ((GameOutbound.Packet) output.removeFirst()).packet();
-      assertEquals(ProtocolConstants.SM_ABILITY, ability.message().ident());
-      assertEquals(0, ability.message().recog(), "new players start with zero gold and ability sync is immediate");
-      assertEquals(50, SixBitCodec.decodeString(ability.encodedBody()).length);
-
       WirePacket appeared = ((GameOutbound.Packet) output.removeFirst()).packet();
       assertEquals(ProtocolConstants.SM_TURN, appeared.message().ident());
       assertEquals(first.join().id(), appeared.message().recog());
       assertEquals(new CharacterDescription(0x11223344, 0x55667788),
           CharacterDescription.decode(appeared.encodedBody()));
+
+      WirePacket ability = ((GameOutbound.Packet) output.removeFirst()).packet();
+      assertEquals(ProtocolConstants.SM_ABILITY, ability.message().ident());
+      assertEquals(0, ability.message().recog(), "new players start with zero gold and ability sync is immediate");
+      assertEquals(50, SixBitCodec.decodeString(ability.encodedBody()).length);
       assertTrue(output.isEmpty());
     }
   }
