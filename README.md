@@ -29,7 +29,8 @@ Java 服务端。
     ├── persistence/    SQLite 持久化
     ├── bootstrap/      进程启动入口与可执行 JAR 打包
     ├── loadtest/       bot 压测军团（全链路稳定性压测与报告）
-    └── wiretool/       流量录制/回放对拍（recorder 透明代理 + replayer 字节级对拍）
+    ├── wiretool/       流量录制/回放对拍（recorder 透明代理 + replayer 字节级对拍）
+    └── shadowdiff/     影子对拍 harness（同一操作流驱动双服并 diff 状态快照）
 ```
 
 ## 已实现的 Java 功能
@@ -213,6 +214,30 @@ java -jar java-server/wiretool/target/mir2-wiretool.jar replay \
 - 录制文件格式 `.mrec` v1：magic + 元数据行 + 逐条（方向、相对毫秒、长度、载荷）；
   帧外原始字节记为噪声段，整条流可逐字节重构；写入逐条落盘，kill 进程最多损失最后半条。
 
+### 6. 影子对拍（shadowdiff，P2 收尾件 / G3 硬性要求）
+
+`shadowdiff` 模块用**同一份确定性操作流**（走真实 `#…!` + RunLogin 线上协议）依次驱动两台
+服务端，并在每一步之后 diff 玩家可观测状态（地图/坐标/朝向/HP/MP/等级/金币/背包/装备）：
+
+```bash
+# 模式一：embedded——进程内拉起两台独立 Java 服务端互拍（骨架自检 + 确定性回归）
+java -jar java-server/shadowdiff/target/mir2-shadowdiff.jar --embedded --strict-messages
+
+# 模式二：remote——对拍任意两台已运行的服务端（Delphi 侧就绪后即为真正的 Delphi↔Java 对拍）
+java -jar java-server/shadowdiff/target/mir2-shadowdiff.jar \
+  --left-label delphi --left-host 192.0.2.10 --left-login-port 7000 \
+  --right-label java  --right-host 127.0.0.1 --right-login-port 7000 \
+  --script my-ops.txt
+```
+
+- 操作脚本一行一个 op（`#` 注释）：`turn/walk/run/hit/heavyhit/bighit <0..7>`、`pickup`、
+  `bag`、`say <文本>`、`drop/eat/takeon/takeoff <物品名>`、`sleep <ms>`、`relog`；缺省用内置
+  冒烟脚本（含 relog 存档往返）。
+- 判定分三级：**状态差异 / 应答（+GOOD/+FAIL）差异 = FAIL**，消息集合差异默认仅提示
+  （`--strict-messages` 升级为 FAIL）；退出码即结论，报告落 `reports/shadow-report.md|.csv`。
+- MakeIndex、对象 id 等服务端本地量已在快照中归一化，两台服务端只需世界配置一致。
+- CI 在每个 PR 上跑一轮 embedded 自拍作为确定性回归。
+
 ## 配置说明
 
 所有配置均通过环境变量注入：
@@ -293,8 +318,9 @@ docker compose -f java-server/compose.yml up --build
 
 - 编译与启动冒烟测试**尚不能**证明与真实 `mir2.exe` 完全兼容，真实客户端联调验证仍在
   进行中；bot 压测军团（50 机器人 × 5 分钟全链路，embedded 与 remote 双模式，
-  报告见 `java-server/docs/g0-evidence/`）与 wiretool 录制/回放对拍骨架已先行就位，
-  但**不能替代**真实客户端对拍与 Delphi 实捕 golden；
+  报告见 `java-server/docs/g0-evidence/`）、wiretool 录制/回放对拍骨架与 shadowdiff
+  影子对拍 harness（embedded 双 Java 自拍严格判定 PASS，remote 模式待 Delphi 环境即插即用）
+  均已先行就位，但**不能替代**真实客户端对拍与 Delphi 实捕 golden；
 - 7200 游戏网关已把 RunLogin、移动与战斗消息接入世界命令队列，并通过双会话 Socket 集成测试；
   但**尚未与真实 `mir2.exe` 对拍**，字段与消息顺序仍属待验证假设；
 - 认证码一次性消费与断线清理仅覆盖 GAME 连接的会话生命周期；LOGIN/SELECT 网关的连接数/频率限制、
