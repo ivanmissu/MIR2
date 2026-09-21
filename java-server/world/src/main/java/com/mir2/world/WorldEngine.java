@@ -58,6 +58,26 @@ public final class WorldEngine implements AutoCloseable {
    */
   private static final long MAKE_GHOST_MILLIS = 3 * 60 * 1000L;
 
+  /** {@code g_Config.dwRevivalTime} (M2Share.pas) = 60 seconds between ring revivals. */
+  private static final long REVIVAL_COOLDOWN_MILLIS = 60 * 1000L;
+
+  /** {@code ItemDamageRevivalRing} drains exactly {@code Dec(nDura, 1000)} per item. */
+  private static final int REVIVAL_RING_DURABILITY_COST = 1000;
+
+  /** {@code g_sRevivalRecoverMsg} (M2Share.pas:3194): the green hint shown when a revival ring
+   * fires — 「复活戒指生效，体力恢复.」 in the shipped GBK source.
+   */
+  private static final String REVIVAL_RECOVER_MESSAGE = "复活戒指生效，体力恢复.";
+
+  /** {@code g_Config.nSuperRepairPriceRate} (M2Share.pas) = 3. */
+  private static final int SUPER_REPAIR_PRICE_RATE = 3;
+
+  /** {@code g_Config.nRepairItemDecDura} (M2Share.pas) = 30. */
+  private static final int REPAIR_ITEM_DEC_DURA = 30;
+
+  /** StdMode 43 (宝石) is the one category {@code ClientRepairItem} refuses outright. */
+  private static final int REPAIR_REFUSED_STD_MODE = 43;
+
   /** {@code TBaseObject.Run} advances the HP/MP counters by {@code elapsed div 20}. */
   private static final long HP_MP_TICK_MILLIS = 20;
 
@@ -81,7 +101,8 @@ public final class WorldEngine implements AutoCloseable {
       long corpseLingerMillis,
       long itemLingerMillis,
       long regenIntervalMillis,
-      long saveIntervalMillis) {
+      long saveIntervalMillis,
+      long testGold) {
 
     public Config {
       Objects.requireNonNull(tickInterval, "tickInterval");
@@ -96,6 +117,15 @@ public final class WorldEngine implements AutoCloseable {
         throw new IllegalArgumentException("regen interval must be at least one millisecond");
       if (saveIntervalMillis < 1)
         throw new IllegalArgumentException("save interval must be at least one millisecond");
+      if (testGold < 0 || testGold > PlayerState.MAX_GOLD)
+        throw new IllegalArgumentException("test gold must be within 0.." + PlayerState.MAX_GOLD);
+    }
+
+    public Config(Duration tickInterval, int viewRange, int maxCommandsPerTick,
+        long hitIntervalMillis, long corpseLingerMillis, long itemLingerMillis,
+        long regenIntervalMillis, long saveIntervalMillis) {
+      this(tickInterval, viewRange, maxCommandsPerTick, hitIntervalMillis, corpseLingerMillis,
+          itemLingerMillis, regenIntervalMillis, saveIntervalMillis, 0);
     }
 
     public Config(Duration tickInterval, int viewRange, int maxCommandsPerTick,
@@ -432,6 +462,148 @@ public final class WorldEngine implements AutoCloseable {
   }
 
   /**
+   * {@code CM_MERCHANTDLGSELECT -> TMerchant.UserSelect} (ObjNpc.pas:1516), reduced to the one
+   * label family this engine can honour without the Market_Def script engine: the label is
+   * remembered as {@code m_sScriptLable} (which is how Delphi later picks the repair mode) and
+   * {@code @repair} / {@code @s_repair} answer with {@code SM_SENDUSERREPAIR} so the client
+   * opens its repair dialog. Every other label is stored silently — the script response it
+   * would generate does not exist here yet. The merchant proximity check ({@code FindMerchant},
+   * same map, |Δ|<15) needs NPC objects and is deferred to the NPC slice.
+   *
+   * @return true when the label opened the repair dialog
+   */
+  public CompletableFuture<Boolean> selectMerchantLabel(
+      int playerId, int merchantId, String label) {
+    Objects.requireNonNull(label, "label");
+    return submit(() -> {
+      Player player = requirePlayer(playerId);
+      if (!player.ability.alive()) return false;
+      // UserSelect only reacts to labels that start with '@'; GetValidStr3 splits the input
+      // at CR for the @@-input labels.
+      String trimmed = label.strip();
+      if (trimmed.isEmpty() || trimmed.charAt(0) != '@') return false;
+      String firstToken = trimmed.split("\r", 2)[0];
+      player.merchantLabel = trimmed;
+      if ("@repair".equalsIgnoreCase(firstToken) || "@s_repair".equalsIgnoreCase(firstToken)) {
+        emit(player, new WorldEvent.MerchantRepairDialog(player.id, merchantId));
+        return true;
+      }
+      return false;
+    });
+  }
+
+  /**
+   * {@code CM_MERCHANTQUERYREPAIRCOST -> TMerchant.ClientQueryRepairCost} (ObjNpc.pas:2385).
+   * The quote is {@code Round(price div 3 / DuraMax * (DuraMax - Dura))} — note the integer
+   * division before the real arithmetic — times three for a special repair. Like Delphi, the
+   * quote only ever addresses bag items ({@code m_ItemList}); worn gear has to be taken off
+   * first. An item without a price or one at full durability gets the Delphi "cannot repair"
+   * answer of -1. A MakeIndex/name that matches nothing in the bag stays silent, exactly like
+   * {@code ClientQueryRepairCost} exiting without a reply.
+   *
+   * @return the quoted cost, -1 when the merchant refuses, or {@code null} when Delphi would
+   *     stay silent (no such bag item)
+   */
+  public CompletableFuture<Integer> queryRepairCost(int playerId, int makeIndex, String itemName) {
+    Objects.requireNonNull(itemName, "itemName");
+    return submit(() -> {
+      Player player = requirePlayer(playerId);
+      int bagIndex = findBagItem(player, makeIndex, itemName);
+      if (bagIndex < 0) return null;
+      BackpackItem item = player.backpack.get(bagIndex);
+      int cost = repairQuote(item, isSpecialRepair(player));
+      emit(player, new WorldEvent.RepairCostResolved(player.id, cost));
+      return cost;
+    });
+  }
+
+  /**
+   * {@code CM_USERREPAIRITEM -> TMerchant.ClientRepairItem} (ObjNpc.pas:2423). Normal repair
+   * lowers DuraMax by the wear's thirtieth before topping Dura up
+   * ({@code Dec(DuraMax, (DuraMax - Dura) div 30); Dura := DuraMax}); special repair keeps
+   * DuraMax and just refills. The charged price mirrors the Delphi quirk: the query multiplies
+   * the normal quote by three, while the charge triples {@code nPrice} *before* the
+   * {@code div 3} — so the two only agree when the item price is a multiple of three. A
+   * wallet that cannot cover the charge fails without touching the item. {@code GotoLable}
+   * (the script follow-up) does not exist here yet.
+   *
+   * @return true on SM_USERREPAIRITEM_OK, false on SM_USERREPAIRITEM_FAIL, or {@code null}
+   *     when Delphi would stay silent (no such bag item)
+   */
+  public CompletableFuture<Boolean> repairItem(int playerId, int makeIndex, String itemName) {
+    Objects.requireNonNull(itemName, "itemName");
+    return submit(() -> {
+      Player player = requirePlayer(playerId);
+      int bagIndex = findBagItem(player, makeIndex, itemName);
+      if (bagIndex < 0) return null;
+      BackpackItem item = player.backpack.get(bagIndex);
+      boolean special = isSpecialRepair(player);
+      long price = item.item().price();
+      if (special) price *= SUPER_REPAIR_PRICE_RATE;
+      boolean canRepair = price > 0 && item.duraMax() > item.dura()
+          && item.item().stdMode() != REPAIR_REFUSED_STD_MODE;
+      int charge = canRepair ? repairCharge(price, item.duraMax(), item.dura()) : 0;
+      if (!canRepair || player.gold < charge) {
+        emit(player, new WorldEvent.RepairRejected(player.id));
+        return false;
+      }
+      int duraMax = special ? item.duraMax()
+          : item.duraMax() - (item.duraMax() - item.dura()) / REPAIR_ITEM_DEC_DURA;
+      BackpackItem repaired = new BackpackItem(item.item(), item.makeIndex(), duraMax, duraMax);
+
+      List<BackpackItem> previousBackpack = List.copyOf(player.backpack);
+      long previousGold = player.gold;
+      player.backpack.set(bagIndex, repaired);
+      player.gold -= charge;
+      try {
+        persist(player);
+      } catch (RuntimeException failure) {
+        player.backpack.clear();
+        player.backpack.addAll(previousBackpack);
+        player.gold = previousGold;
+        throw failure;
+      }
+      emit(player, new WorldEvent.ItemRepaired(player.id, (int) player.gold, duraMax, duraMax));
+      return true;
+    });
+  }
+
+  /**
+   * {@code PlayObject.m_sScriptLable = sSUPERREPAIR} ('@s_repair') selects the special repair;
+   * anything else — including the empty label of a fresh login — repairs normally. Delphi
+   * compares with {@code =}, which is case-sensitive.
+   */
+  private static boolean isSpecialRepair(Player player) {
+    return "@s_repair".equals(player.merchantLabel);
+  }
+
+  /**
+   * The quoted price: {@code Round(nPrice div 3 / DuraMax * (DuraMax - Dura))}, ×3 for the
+   * special variant ({@code nSuperRepairPriceRate}). Returns -1 when there is nothing to
+   * mend or the item has no price — Delphi's "???? 金币" answer.
+   */
+  private static int repairQuote(BackpackItem item, boolean special) {
+    long price = item.item().price();
+    if (price <= 0 || item.duraMax() <= item.dura()) return -1;
+    if (item.duraMax() <= 0) return (int) Math.min(price, Integer.MAX_VALUE);
+    int quote = (int) Math.rint(
+        (price / 3) / (double) item.duraMax() * (item.duraMax() - item.dura()));
+    return special ? quote * SUPER_REPAIR_PRICE_RATE : quote;
+  }
+
+  /**
+   * The charged price. The special repair tripled {@code nPrice} *before* the {@code div 3},
+   * so it cancels out and lands on the un-truncated base — the quote and the charge genuinely
+   * disagree whenever {@code price mod 3 != 0}. Both formulas are reproduced on purpose:
+   * {@code repairQuote} triples afterwards, this one divides the tripled price.
+   */
+  private static int repairCharge(long pricedForMode, int duraMax, int dura) {
+    if (duraMax <= 0) return (int) Math.min(pricedForMode, Integer.MAX_VALUE);
+    // Delphi: Round(nPrice div 3 / DuraMax * (DuraMax - Dura)); Round is banker's rounding.
+    return (int) Math.rint((pricedForMode / 3) / (double) duraMax * (duraMax - dura));
+  }
+
+  /**
    * Places an item on the map without a monster having dropped it — the engine-side of
    * {@code TMapItem} creation used by tests and, later, by NPC and quest scripts.
    */
@@ -711,6 +883,14 @@ public final class WorldEngine implements AutoCloseable {
     List<Integer> visibleIds = visibleIds(map, position, 0);
     Player player = new Player(id, characterId, name, map, position, direction, feature, status,
         restored.ability(), restored.backpack(), restored.equipment(), job, sink);
+    // UsrEngn.pas:2310 restores m_nGold from the character record (HumData.nGold).
+    player.gold = restored.gold();
+    // UserLogon's test-server block (ObjBase.pas:16360): under g_Config.boTestServer the
+    // wallet is topped up to nTestGold (default 0, i.e. a no-op). Delphi does not notify the
+    // client here; the notification is deferred until after MapEntered below so the client
+    // has its actor before the wallet arrives.
+    boolean goldFloored = player.gold < config.testGold();
+    if (goldFloored) player.gold = config.testGold();
     // MaxExp is derived state in Delphi (HasLevelUp refreshes it from GetLevelExp), so it is
     // never persisted; rebuild it from the restored level before anything reads it.
     player.baseAbility = new Ability(
@@ -752,6 +932,8 @@ public final class WorldEngine implements AutoCloseable {
     }
     WorldEvent appeared = new WorldEvent.ObjectAppeared(player.snapshot());
     for (int viewerId : visibleIds) emit(players.get(viewerId), appeared);
+    // The test-gold floor is announced once the client can actually see itself.
+    if (goldFloored) emit(player, new WorldEvent.GoldChanged(player.id, player.gold));
     return player.snapshot();
   }
 
@@ -1200,6 +1382,51 @@ public final class WorldEngine implements AutoCloseable {
         base.experience(),
         base.maxExperience());
     player.bonus = bonus;
+    player.revival = equipmentGrantsRevival(player.equipment);
+  }
+
+  /**
+   * The {@code m_boRevival} half of {@code RecalcAbilitys} (ObjBase.pas:2866/2968/3218-3228/
+   * 3271). The loop skips items at zero durability, weapon/right-hand/dress slots contribute
+   * through {@code AniCount}, every other slot through {@code Shape}. The dress is included in
+   * the flag branch even though {@code ItemDamageRevivalRing} never consumes from it — that
+   * asymmetry is in the original and is kept here.
+   */
+  private static boolean equipmentGrantsRevival(Equipment equipment) {
+    for (Map.Entry<EquipmentSlot, BackpackItem> entry : equipment.inSlotOrder()) {
+      if (entry.getValue().dura() <= 0) continue;
+      StdItem item = entry.getValue().item();
+      EquipmentSlot slot = entry.getKey();
+      if (slot == EquipmentSlot.WEAPON || slot == EquipmentSlot.RIGHT_HAND
+          || slot == EquipmentSlot.DRESS) {
+        if (isRevivalShape(item.aniCount())) return true;
+      } else if (isRevivalShape(item.shape())) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** {@code Shape/AniCount in [114, 160, 161, 162]} — the four revival-capable shapes. */
+  private static boolean isRevivalShape(int value) {
+    return value == 114 || value == 160 || value == 161 || value == 162;
+  }
+
+  /**
+   * {@code StdItem.Shape = 144} sets {@code m_boUnRevival} on the wearer (ObjBase.pas:3139,
+   * the accessory branch — the three hand/dress slots branch on AniCount instead and never
+   * set this flag), and {@code TBaseObject.Run} refuses the ring revival when the last hitter
+   * carries it. Monsters never wear gear, so only a player attacker can suppress a revival.
+   */
+  private static boolean preventsRevival(WorldObject attacker) {
+    if (!(attacker instanceof Player killer)) return false;
+    for (Map.Entry<EquipmentSlot, BackpackItem> entry : killer.equipment.inSlotOrder()) {
+      if (entry.getKey() == EquipmentSlot.WEAPON
+          || entry.getKey() == EquipmentSlot.RIGHT_HAND
+          || entry.getKey() == EquipmentSlot.DRESS) continue;
+      if (entry.getValue().item().shape() == 144) return true;
+    }
+    return false;
   }
 
   private static int clampWord(int value) {
@@ -1212,7 +1439,7 @@ public final class WorldEngine implements AutoCloseable {
    */
   private void emitEquipmentChange(Player player, WorldEvent change) {
     emit(player, change);
-    emit(player, new WorldEvent.AbilityChanged(player.id, player.ability));
+    emit(player, new WorldEvent.AbilityChanged(player.id, player.ability, player.gold, player.job));
     emitWeight(player);
     // FeatureChanged() broadcasts the new look to everyone who can see the player.
     WorldObjectSnapshot snapshot = player.snapshot();
@@ -1399,9 +1626,93 @@ public final class WorldEngine implements AutoCloseable {
     if (updated.alive()) {
       WorldEvent health = new WorldEvent.HealthChanged(victim.snapshot());
       emitToObserversAndSelf(victim, health);
+    } else if (victim instanceof Player player && tryRevivalRing(player, attacker)) {
+      // TBaseObject.Run's revival branch fired before Die: the ring ate the blow, the player
+      // never actually died and no death/scatter side effects ran. HealthChanged and the
+      // green hint were emitted by the branch itself.
     } else {
       handleDeath(victim, attacker);
     }
+  }
+
+  /**
+   * The HP=0 branch of {@code TBaseObject.Run} (ObjBase.pas:3750-3763). Delphi evaluates it
+   * on the next tick after a lethal blow; this engine folds it into the damage pass because
+   * death itself was already made synchronous in W14 — the observable message order
+   * (struck → health restored) is identical either way.
+   *
+   * <p>Gates, in Delphi order: the last hitter's {@code m_boUnRevival} (worn Shape 144),
+   * {@code m_boRevival} (recalculated from the worn set), and the {@code dwRevivalTime}
+   * cooldown (60 seconds, strictly greater-than). On success the ring(s) pay 1000 durability
+   * each, HP is refilled to MaxHP and the classic green hint goes out.
+   */
+  private boolean tryRevivalRing(Player player, WorldObject attacker) {
+    if (preventsRevival(attacker)) return false;
+    if (!player.revival) return false;
+    long now = clock.getAsLong();
+    if (now - player.revivalTick <= REVIVAL_COOLDOWN_MILLIS) return false;
+    player.revivalTick = now;
+    consumeRevivalRings(player);
+    player.setAbility(player.ability.withHp(player.ability.maxHp()));
+    emitToObserversAndSelf(player, new WorldEvent.HealthChanged(player.snapshot()));
+    emit(player, new WorldEvent.SystemMessage(player.id, REVIVAL_RECOVER_MESSAGE));
+    // The damage pass already persisted HP=0; the ring outcome has to reach the store too,
+    // but a store hiccup must not un-revive the player — the periodic save catches up.
+    try {
+      persist(player);
+    } catch (RuntimeException error) {
+      LOG.log(Level.WARNING, "revival save failed for " + player.name, error);
+    }
+    return true;
+  }
+
+  /**
+   * {@code TBaseObject.ItemDamageRevivalRing} (ObjBase.pas:3625): every worn item whose
+   * {@code Shape} is revival-capable — or, for the two hand slots only, whose
+   * {@code AnniCount} is — pays exactly 1000 durability. The Delphi loop has no {@code break},
+   * so two rings both pay for one revival.
+   *
+   * <p>Quirks kept verbatim: an item drained to zero is destroyed (deleted from the client
+   * via SM_DELITEMS and its slot cleared) rather than returned to the bag; and the
+   * RM_DURACHANGE follow-up only fires when the wear crossed a 1000-durability display
+   * boundary — Delphi's {@code Round(nDura / 1000)} is banker's rounding, so e.g. 2500 → 1500
+   * rounds to 2 on both sides and sends nothing.
+   */
+  private void consumeRevivalRings(Player player) {
+    boolean anyDestroyed = false;
+    for (EquipmentSlot slot : EquipmentSlot.values()) {
+      BackpackItem worn = player.equipment.at(slot).orElse(null);
+      if (worn == null) continue;
+      StdItem item = worn.item();
+      boolean consumes = isRevivalShape(item.shape())
+          || ((slot == EquipmentSlot.WEAPON || slot == EquipmentSlot.RIGHT_HAND)
+              && isRevivalShape(item.aniCount()));
+      if (!consumes) continue;
+
+      int nDura = worn.dura();
+      int tDura = thousandsBucket(nDura);
+      nDura -= REVIVAL_RING_DURABILITY_COST;
+      if (nDura <= 0) {
+        nDura = 0;
+        // SendDelItems reads the slot before it is cleared, so the removal message still
+        // names the item.
+        emit(player, new WorldEvent.ItemsRemoved(player.id, List.of(worn)));
+        player.equipment = player.equipment.without(slot);
+        anyDestroyed = true;
+      } else {
+        player.equipment = player.equipment.with(slot, worn.withDura(nDura));
+      }
+      if (tDura != thousandsBucket(nDura)) {
+        emit(player, new WorldEvent.ItemDurabilityChanged(
+            player.id, slot, worn.makeIndex(), nDura, worn.duraMax(), nDura == 0));
+      }
+    }
+    if (anyDestroyed) recalculateAbilities(player);
+  }
+
+  /** Delphi {@code Round(nDura / 1000)}: banker's rounding of the durability thousands. */
+  private static int thousandsBucket(int dura) {
+    return (int) Math.rint(dura / 1000.0);
   }
 
   /** {@code StruckDamage}: dress always wears; every occupied slot also has a 1/8 chance. */
@@ -1445,7 +1756,7 @@ public final class WorldEngine implements AutoCloseable {
     emit(player, new WorldEvent.ItemDurabilityChanged(
         player.id, slot, worn.makeIndex(), nextDura, worn.duraMax(), broken));
     if (broken) {
-      emit(player, new WorldEvent.AbilityChanged(player.id, player.ability));
+      emit(player, new WorldEvent.AbilityChanged(player.id, player.ability, player.gold, player.job));
       emitWeight(player);
       WorldEvent appearance = new WorldEvent.ObjectAppeared(player.snapshot());
       for (int viewerId : visibleIds(player.map, player.position, player.id)) {
@@ -1555,7 +1866,7 @@ public final class WorldEngine implements AutoCloseable {
       throw failure;
     }
     emitToObserversAndSelf(player, new WorldEvent.ObjectRevived(player.snapshot()));
-    emit(player, new WorldEvent.AbilityChanged(player.id, player.ability));
+    emit(player, new WorldEvent.AbilityChanged(player.id, player.ability, player.gold, player.job));
     return true;
   }
 
@@ -1680,7 +1991,7 @@ public final class WorldEngine implements AutoCloseable {
     emit(player, new WorldEvent.LevelUp(
         player.id, reached.level(), reached.experience(), reached));
     // RM_LEVELUP's handler also refreshes the whole ability block (ObjBase.pas:5584).
-    emit(player, new WorldEvent.AbilityChanged(player.id, reached));
+    emit(player, new WorldEvent.AbilityChanged(player.id, reached, player.gold, player.job));
     emitToObserversAndSelf(player, new WorldEvent.HealthChanged(player.snapshot()));
   }
 
@@ -2142,7 +2453,10 @@ public final class WorldEngine implements AutoCloseable {
         updated.add(item);
       }
     }
-    return modified ? new PlayerState(state.characterId(), state.ability(), updated) : state;
+    return modified
+        ? new PlayerState(state.characterId(), state.ability(), updated, state.equipment(),
+            state.gold())
+        : state;
   }
 
   private static UUID transientCharacterId(String name) {
@@ -2266,6 +2580,21 @@ public final class WorldEngine implements AutoCloseable {
     private long lastSavedAt;
     /** {@code m_dwDeathTick}: 0 while alive, the death timestamp otherwise. */
     private long diedAt;
+    /** {@code m_nGold}: the wallet, restored from the character record at login. */
+    private long gold;
+    /**
+     * {@code m_boRevival}: recalculated by {@code RecalcAbilitys} from the worn set — a
+     * revival-capable ring/weapon grants the death-defying branch in {@code TBaseObject.Run}.
+     */
+    private boolean revival;
+    /** {@code m_dwRevivalTick}: timestamp of the last ring revival (cooldown start). */
+    private long revivalTick;
+    /**
+     * {@code m_sScriptLable}: the merchant dialog label the player last selected
+     * ({@code CM_MERCHANTDLGSELECT}); the repair path branches on it. Empty until a label is
+     * chosen, which means "normal repair" — Delphi compares against '@s_repair' only.
+     */
+    private String merchantLabel = "";
     /** {@code m_dwHPMPTick}: the reference point the regeneration counters advance from. */
     private long lastRegenAt;
     /** {@code m_nHealthTick} / {@code m_nSpellTick}. */
@@ -2411,7 +2740,7 @@ public final class WorldEngine implements AutoCloseable {
 
     private PlayerState state() {
       // Persist the naked ability: worn bonuses are re-derived by RecalcAbilitys on load.
-      return new PlayerState(characterId, baseAbility, backpack, equipment);
+      return new PlayerState(characterId, baseAbility, backpack, equipment, gold);
     }
 
     @Override

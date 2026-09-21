@@ -83,6 +83,21 @@ Java 服务端。
   （1 级、HP/MP 15、DC 1-2、升级经验 100），世界难度因此回到原版水平——一个 1 级角色
   确实会被几只鸡打死。另一处 quirk 也一并复刻：角色升到 2 级时 DC 反而从建号字面量
   1-2 收窄为成长曲线的 1-1
+- **修理 NPC 最小闭环 + 复活戒指 + 金币（W15）**：复活戒指复刻 `TBaseObject.Run` 的
+  HP=0 分支与 `ItemDamageRevivalRing`——穿戴 `Shape/AniCount in [114,160,161,162]`
+  （武器/右手/衣服槽看 AniCount，其余槽看 Shape）即获得 `m_boRevival`，致死一击触发
+  60 秒冷却的原地满血复活（`SM_HEALTHSPELLCHANGED` + 绿字「复活戒指生效，体力恢复.」），
+  每件复活装备扣 1000 耐久（**双戒同耗**，归零即 `SM_DELITEMS` 销毁清槽），
+  `SM_DURACHANGE` 仅在千位桶变化时下发（银行家舍入 quirk：2500→1500 不发）；
+  攻击者佩戴 Shape 144 装备可压制复活（`m_boUnRevival`）。修理走
+  `CM_MERCHANTDLGSELECT` 的 `m_sScriptLable` 状态机（`@repair`/`@s_repair` →
+  `SM_SENDUSERREPAIR` 打开客户端修理对话框）、`CM_MERCHANTQUERYREPAIRCOST →
+  SM_SENDREPAIRCOST`（-1 = 不能修）与 `CM_USERREPAIRITEM → SM_USERREPAIRITEM_OK/
+  FAIL`；普通修理 `DuraMax` 按磨损三十分之一衰减后回满、特殊修理保持 `DuraMax`；
+  价格 `Round(价格 div 3 / DuraMax × 磨损)`（**quirk：特殊修理报价与实扣相差 1-2 金币**，
+  均按原版复刻）。金币（`m_nGold`）随角色落库，`SM_ABILITY` 头部携带
+  `recog=金币 / param=MakeWord(职业,99)`，`SM_GOLDCHANGED` 通知余额，
+  `MIR2_TEST_GOLD` 复刻测试服登录金币下限（默认 0 = 不生效）
 - **bot 压测军团（loadtest 模块）**：走真实 TCP 三端口全链路（登录→建号→进图→走/打/捡→周期性重登）
   的 50+ 机器人稳定性压测工具，输出中文 Markdown/CSV 报告（进图率、重登数、动作 +GOOD/+FAIL/超时、
   p50/p90/p99/max 应答延迟、服务端消息分布、错误分类）；支持 embedded（进程内起服务端 + JVM 堆采样）
@@ -210,6 +225,7 @@ java -jar java-server/wiretool/target/mir2-wiretool.jar replay \
 | `MIR2_GAME_PORT` | `7200` | 游戏网关监听端口 |
 | `MIR2_ADVERTISED_HOST` | `127.0.0.1` | 下发给客户端的下一段连接地址 |
 | `MIR2_SERVER_NAME` | `MIR2` | 显示给客户端的服务器名称 |
+| `MIR2_TEST_GOLD` | `0` | 测试服登录金币下限（`boTestServer`/`nTestGold` 语义；0 = 不生效） |
 | `MIR2_MAP_FILE` | 未设置 | 可选：首张 Delphi `.map` 文件；未设置时建立 256×256 空白 PoC 地图（与 `MIR2_MAPINFO_FILE` 互斥） |
 | `MIR2_MAPINFO_FILE` | 未设置 | 可选：经典 `MapInfo.txt`（`loadmapinfo` 包含、`[id|alias desc idx]` 地图条目、路线行）；按条目从同目录加载 `<id>.map` 多图并注册地图连接点（与 `MIR2_MAP_FILE` 互斥） |
 | `MIR2_MAP_ID` | `0` | 首张地图 ID（对应客户端地图文件名；`MIR2_MAPINFO_FILE` 模式下必须是已加载地图之一） |
@@ -288,12 +304,16 @@ docker compose -f java-server/compose.yml up --build
   载荷（`TStdItem` 为 66 字节：`String[20]` 占 21 字节，Delphi 源码 "60 bytes" 注释已过时）；
   物品数值仍是最小占位目录，待导入真实 StdItems 数据后校正；W12 已补齐装备穿脱、使用（`CM_EAT`）与
   丢弃（`CM_DROPITEM`），但装备属性映射虽逐条取自 `ItmUnit.pas`，具体数值同样等 `StdItems.DB`
-  导入才算权威；套装/特戒效果（Shape/AniCount 111-217 那张表）、修理 NPC、复活戒指
-  （`ItemDamageRevivalRing`）、技能/魔法、远程攻击与剩余 47 种怪物仍未实现；
+  导入才算权威；W15 已补齐修理（普通/特殊）与复活戒指（`ItemDamageRevivalRing`，
+  目录新增 `复活戒指` 占位模板，数值 `TODO(verify)`）；套装效果（Shape/AniCount
+  111-217 表的其余行）、技能/魔法、远程攻击与剩余 47 种怪物仍未实现；修理目前是
+  协议级最小闭环（`m_sScriptLable` 状态机 + 修理三消息），**NPC 对象、商家距离校验
+  与 Market_Def 脚本引擎未实现**（受「NPC 脚本对拍前不得扩展」红线约束）；
 - 等级提升与死亡/复活闭环（W14）已实现，但死亡掉落**只覆盖背包**：`DropUseItems`（死亡掉
   已穿装备）依赖尚未迁移的 `StdItem.Reserved` 位，红名全掉（`boDieRedScatterBagAll`）依赖
-  尚未迁移的 PK 等级模型，两者都记为 `TODO(verify)`；复活目前只有 GM 语义的服务端入口
-  （`WorldEngine.revive`），玩家自助复活与死亡后回城在原版里走的是重新登录路径；
+  尚未迁移的 PK 等级模型，两者都记为 `TODO(verify)`；玩家自助复活现有两条路径——
+  复活戒指（W15，装备触发）与 GM 语义的 `WorldEngine.revive`，死亡后回城在原版里
+  走的是重新登录路径；
 - 门与地图连接点（W10）已实现：`.map` 门锚点 + `CM_OPENDOOR` + 5 秒自动关门、`MapInfo.txt` 多图与
   连接点换图（含目标不可走整步回滚）；昼夜亮暗（`DayBright`）、地图旗标（SAFE/FIGHT/NORECONNECT 等）、
   城堡门差异分支与跨服切换（`nServerIndex` 不同）仍未实现；

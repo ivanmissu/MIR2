@@ -736,6 +736,10 @@ final class Mir2Bot implements Runnable {
           }
         }
       }
+      case ProtocolConstants.SM_GOLDCHANGED -> metrics.count(BotMetrics.Key.GOLD_UPDATES);
+      case ProtocolConstants.SM_SENDREPAIRCOST, ProtocolConstants.SM_USERREPAIRITEM_OK,
+          ProtocolConstants.SM_USERREPAIRITEM_FAIL ->
+          metrics.count(BotMetrics.Key.REPAIR_REPLIES);
       case ProtocolConstants.SM_WINEXP -> metrics.count(BotMetrics.Key.EXPERIENCE_UPDATES);
       case ProtocolConstants.SM_LEVELUP -> metrics.count(BotMetrics.Key.LEVEL_UPS);
       case ProtocolConstants.SM_ALIVE -> {
@@ -768,8 +772,15 @@ final class Mir2Bot implements Runnable {
       case ProtocolConstants.SM_DAYCHANGING -> {
         // Day/night cycle update
       }
-      case ProtocolConstants.SM_HEAR, ProtocolConstants.SM_WHISPER, ProtocolConstants.SM_SYSMESSAGE -> {
+      case ProtocolConstants.SM_HEAR, ProtocolConstants.SM_WHISPER -> {
         // Chat messages
+      }
+      case ProtocolConstants.SM_SYSMESSAGE -> {
+        // g_sRevivalRecoverMsg is the one system message a fighting bot reliably earns on
+        // its own behalf; counting it keeps W15's death-defying branch visible in reports.
+        if ("复活戒指生效，体力恢复.".equals(WireMessageCodec.decodeBody(packet.encodedBody()))) {
+          metrics.count(BotMetrics.Key.RING_REVIVALS);
+        }
       }
       case ProtocolConstants.SM_ITEMSHOW -> {
         synchronized (stateLock) {

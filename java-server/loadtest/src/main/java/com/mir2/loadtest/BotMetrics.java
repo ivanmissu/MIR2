@@ -56,6 +56,9 @@ public final class BotMetrics {
     EXPERIENCE_UPDATES("SM_WINEXP received"),
     LEVEL_UPS("SM_LEVELUP received"),
     REVIVALS_SEEN("SM_ALIVE received"),
+    RING_REVIVALS("SM_SYSMESSAGE ring-revival hints received"),
+    GOLD_UPDATES("SM_GOLDCHANGED received"),
+    REPAIR_REPLIES("SM_SENDREPAIRCOST / SM_USERREPAIRITEM replies received"),
     OBSERVED_DEATHS("SM_DEATH observed for other objects"),
     GROUND_ITEMS_SEEN("SM_ITEMSHOW received"),
     POSITION_RESYNCS("sessions restarted to resynchronise position");

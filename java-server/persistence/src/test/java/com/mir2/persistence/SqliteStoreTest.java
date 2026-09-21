@@ -243,4 +243,42 @@ class SqliteStoreTest {
       Files.deleteIfExists(file);
     }
   }
+
+  @Test
+  void goldRoundTripsAndPreW15DatabasesDefaultToAnEmptyWallet() throws Exception {
+    Path file = Files.createTempFile("mir2-w15-", ".db");
+    String url = "jdbc:sqlite:" + file;
+    UUID characterId = UUID.randomUUID();
+
+    // A W14-era database: character_state exists but has no gold column yet.
+    try (SqliteStore legacy = new SqliteStore(url)) {
+      legacy.saveAccount("w15", new byte[] {7});
+      legacy.save(new Character(characterId, "w15", "商人", 0, 5, 0, 1, 0, 0));
+    }
+    try (java.sql.Connection raw = DriverManager.getConnection(url);
+        Statement statement = raw.createStatement()) {
+      statement.executeUpdate("ALTER TABLE character_state DROP COLUMN gold");
+    }
+
+    // Opening the legacy file upgrades it in place; the wallet defaults to zero.
+    try (SqliteStore upgraded = new SqliteStore(url)) {
+      PlayerState restored = upgraded.load(characterId).orElseThrow();
+      assertEquals(0, restored.gold());
+
+      // A repair's deduction and the resulting durability both survive a reopen.
+      BackpackItem sword = new BackpackItem(StdItems.woodenSword(), 301, 12, 18);
+      upgraded.save(new PlayerState(
+          characterId, Ability.defaultPlayer(), List.of(sword), Equipment.empty(), 4_500));
+    }
+    try (SqliteStore reopened = new SqliteStore(url)) {
+      PlayerState restored = reopened.load(characterId).orElseThrow();
+      assertEquals(4_500, restored.gold());
+      assertEquals(18, restored.backpack().getFirst().duraMax());
+      assertEquals(restored.withGold(0), new PlayerState(
+          restored.characterId(), restored.ability(), restored.backpack(),
+          restored.equipment(), 0));
+    } finally {
+      Files.deleteIfExists(file);
+    }
+  }
 }
