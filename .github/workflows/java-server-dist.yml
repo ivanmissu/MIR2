@@ -31,7 +31,7 @@ jobs:
           java-version: '21'
           cache: maven
       - name: Build executable JARs
-        run: mvn --batch-mode --no-transfer-progress -pl bootstrap,loadtest,wiretool -am -DskipTests package
+        run: mvn --batch-mode --no-transfer-progress -pl bootstrap,loadtest,wiretool,shadowdiff -am -DskipTests package
       - name: Publish JARs to dist branch
         shell: bash
         env:
@@ -41,11 +41,12 @@ jobs:
           publish_dir="${RUNNER_TEMP}/dist-publish"
           rm -rf "$publish_dir"
           mkdir -p "$publish_dir"
-          for jar in mir2-server mir2-loadtest mir2-wiretool; do
+          for jar in mir2-server mir2-loadtest mir2-wiretool mir2-shadowdiff; do
             case "$jar" in
               mir2-server) module=bootstrap ;;
               mir2-loadtest) module=loadtest ;;
               mir2-wiretool) module=wiretool ;;
+              mir2-shadowdiff) module=shadowdiff ;;
             esac
             cp "$module/target/$jar.jar" "$publish_dir/"
             sha256sum "$publish_dir/$jar.jar" | awk '{print $1}' > "$publish_dir/$jar.jar.sha256"
