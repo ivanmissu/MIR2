@@ -9,6 +9,8 @@ import {
   WorldObjectSnapshot,
   GroundItem,
   BackpackItem,
+  Ability,
+  EquipmentItem,
   BridgeEvent,
   WorldObjectType
 } from '@mir2/shared';
@@ -16,6 +18,7 @@ import { DefaultMessage } from '../protocol/DefaultMessage.js';
 import { WireMessageCodec, WirePacket, ParsedFrame } from '../protocol/WireMessageCodec.js';
 import { CharacterDescription } from '../protocol/CharacterDescription.js';
 import { ClientItemCodec } from '../protocol/ClientItemCodec.js';
+import { AbilityCodec } from '../protocol/AbilityCodec.js';
 import { MirTcpClient } from '../tcp/MirTcpClient.js';
 
 export enum SessionState {
@@ -66,9 +69,30 @@ export class GateSession extends EventEmitter {
   public level = 1;
   public exp = 0;
   public dayBright = 0;
+  public ability: Ability = {
+    level: 1,
+    hp: 15,
+    maxHp: 15,
+    mp: 15,
+    maxMp: 15,
+    ac: 0,
+    mac: 0,
+    dc: 1 | (2 << 16),
+    mc: 0,
+    sc: 0,
+    exp: 0,
+    maxExp: 100,
+    weight: 0,
+    maxWeight: 0
+  };
+  public gold = 0;
+  public weight = 0;
+  public wearWeight = 0;
+  public handWeight = 0;
 
   public readonly visibleObjects = new Map<number, WorldObjectSnapshot>();
   public readonly visibleItems = new Map<number, GroundItem>();
+  public readonly equipment = new Map<number, BackpackItem>();
   public backpack: BackpackItem[] = [];
 
   private loginClient: MirTcpClient | null = null;
@@ -81,6 +105,11 @@ export class GateSession extends EventEmitter {
     targetY?: number;
     targetDir?: Direction;
   } | null = null;
+  private pendingEquipment:
+    | { type: 'equip' | 'unequip'; slot: number; item: BackpackItem }
+    | null = null;
+  private pendingUse: { type: 'eat' | 'drop'; item: BackpackItem } | null = null;
+  private pendingRepair: BackpackItem | null = null;
 
   constructor(config?: Partial<GateSessionConfig>) {
     super();
@@ -795,7 +824,13 @@ export class GateSession extends EventEmitter {
       case ProtocolConstants.SM_ADDITEM: {
         try {
           const item = ClientItemCodec.decode(packet.encodedBody);
-          this.backpack.push(item);
+          if (!this.backpack.some(existing => existing.makeIndex === item.makeIndex)) {
+            this.backpack.push(item);
+          }
+          if (this.pendingEquipment?.type === 'unequip'
+              && this.pendingEquipment.item.makeIndex === item.makeIndex) {
+            this.pendingEquipment = null;
+          }
           this.log('info', `[7200] 获得物品: "${item.item.name}" (持久: ${item.dura}/${item.duraMax})`, 'GAME');
           this.emitEvent({ type: 'itemAdded', item });
           this.emitEvent({ type: 'bagUpdated', items: this.backpack });
@@ -815,6 +850,220 @@ export class GateSession extends EventEmitter {
         }
         break;
       }
+
+      case ProtocolConstants.SM_SENDUSEITEMS: {
+        try {
+          this.equipment.clear();
+          for (const [slot, item] of ClientItemCodec.decodeWornSet(packet.encodedBody)) {
+            this.equipment.set(slot, item);
+          }
+          this.emitEquipment();
+          this.log('info', `[7200] 装备同步完成，共 ${this.equipment.size} 件`, 'GAME');
+        } catch (err) {
+          this.log('error', `[7200] 解析装备失败: ${(err as Error).message}`, 'GAME');
+        }
+        break;
+      }
+
+      case ProtocolConstants.SM_ABILITY: {
+        try {
+          this.ability = AbilityCodec.decode(packet.encodedBody);
+          this.level = this.ability.level;
+          this.exp = this.ability.exp;
+          this.hp = this.ability.hp;
+          this.maxHp = this.ability.maxHp;
+          this.mp = this.ability.mp;
+          this.maxMp = this.ability.maxMp;
+          this.gold = unsignedWord(packet.message.recog);
+          this.emitEvent({
+            type: 'abilityUpdated',
+            ability: this.ability,
+            gold: this.gold,
+            job: packet.message.param & 0xff
+          });
+          this.log('debug', `[7200] 属性同步: Lv.${this.level} HP ${this.hp}/${this.maxHp} 金币 ${this.gold}`, 'GAME');
+        } catch (err) {
+          this.log('error', `[7200] 解析属性失败: ${(err as Error).message}`, 'GAME');
+        }
+        break;
+      }
+
+      case ProtocolConstants.SM_LEVELUP: {
+        this.level = packet.message.param;
+        this.exp = unsignedWord(packet.message.recog);
+        this.emitEvent({ type: 'levelUp', level: this.level, exp: this.exp });
+        this.log('info', `[7200] 升级到 ${this.level} 级`, 'GAME');
+        break;
+      }
+
+      case ProtocolConstants.SM_ALIVE: {
+        if (packet.message.recog === this.playerId) {
+          this.hp = this.maxHp;
+        }
+        this.log('info', `[7200] 对象 #${packet.message.recog} 已复活`, 'GAME');
+        break;
+      }
+
+      case ProtocolConstants.SM_WEIGHTCHANGED: {
+        this.weight = packet.message.recog;
+        this.wearWeight = packet.message.param;
+        this.handWeight = packet.message.tag;
+        this.emitEvent({
+          type: 'weightChanged',
+          weight: this.weight,
+          wearWeight: this.wearWeight,
+          handWeight: this.handWeight
+        });
+        break;
+      }
+
+      case ProtocolConstants.SM_GOLDCHANGED: {
+        this.gold = unsignedWord(packet.message.recog);
+        this.emitEvent({ type: 'goldChanged', gold: this.gold });
+        this.log('info', `[7200] 金币变化: ${this.gold}`, 'GAME');
+        break;
+      }
+
+      case ProtocolConstants.SM_DURACHANGE: {
+        const slot = packet.message.param;
+        const item = this.equipment.get(slot);
+        const dura = packet.message.recog;
+        const duraMax = (packet.message.tag & 0xffff) | ((packet.message.series & 0xffff) << 16);
+        if (item) {
+          const updated = { ...item, dura, duraMax: duraMax || item.duraMax };
+          if (dura === 0) this.equipment.delete(slot);
+          else this.equipment.set(slot, updated);
+          this.emitEquipment();
+          this.emitEvent({
+            type: 'durabilityChanged',
+            slot,
+            makeIndex: item.makeIndex,
+            dura,
+            duraMax: duraMax || item.duraMax,
+            broken: dura === 0
+          });
+        }
+        break;
+      }
+
+      case ProtocolConstants.SM_DELITEMS: {
+        const removed = parseRemovedItems(WireMessageCodec.decodeBody(packet.encodedBody));
+        for (const item of removed) {
+          this.backpack = this.backpack.filter(candidate => candidate.makeIndex !== item.makeIndex);
+          this.equipment.forEach((candidate, slot) => {
+            if (candidate.makeIndex === item.makeIndex) this.equipment.delete(slot);
+          });
+          this.emitEvent({ type: 'itemRemoved', makeIndex: item.makeIndex, name: item.name });
+        }
+        this.emitEquipment();
+        this.emitEvent({ type: 'bagUpdated', items: this.backpack });
+        break;
+      }
+
+      case ProtocolConstants.SM_TAKEON_OK: {
+        const pending = this.pendingEquipment;
+        if (pending?.type === 'equip') {
+          this.backpack = this.backpack.filter(item => item.makeIndex !== pending.item.makeIndex);
+          this.equipment.set(pending.slot, pending.item);
+          this.emitEquipment();
+          this.emitEvent({ type: 'bagUpdated', items: this.backpack });
+        }
+        this.pendingEquipment = null;
+        this.log('info', `[7200] 穿戴成功`, 'GAME');
+        break;
+      }
+
+      case ProtocolConstants.SM_TAKEON_FAIL:
+        this.pendingEquipment = null;
+        this.emitActionError('equip', `穿戴失败 (${packet.message.recog})`);
+        break;
+
+      case ProtocolConstants.SM_TAKEOFF_OK: {
+        const pending = this.pendingEquipment;
+        if (pending?.type === 'unequip') {
+          this.equipment.delete(pending.slot);
+          this.emitEquipment();
+        }
+        // The Java/Delphi-compatible adapter follows this with SM_TAKEOFF_FAIL(recog=0);
+        // only the OK packet performs the local state transition.
+        this.log('info', `[7200] 脱下成功`, 'GAME');
+        break;
+      }
+
+      case ProtocolConstants.SM_TAKEOFF_FAIL:
+        if (packet.message.recog !== 0) {
+          this.pendingEquipment = null;
+          this.emitActionError('unequip', `脱下失败 (${packet.message.recog})`);
+        }
+        break;
+
+      case ProtocolConstants.SM_EAT_OK: {
+        if (this.pendingUse?.type === 'eat') {
+          this.backpack = this.backpack.filter(item => item.makeIndex !== this.pendingUse!.item.makeIndex);
+          this.emitEvent({ type: 'bagUpdated', items: this.backpack });
+        }
+        this.pendingUse = null;
+        this.log('info', `[7200] 使用物品成功`, 'GAME');
+        break;
+      }
+
+      case ProtocolConstants.SM_EAT_FAIL:
+        this.pendingUse = null;
+        this.emitActionError('eat', '使用物品失败');
+        break;
+
+      case ProtocolConstants.SM_DROPITEM_SUCCESS: {
+        const dropped = this.pendingUse?.type === 'drop' ? this.pendingUse.item : undefined;
+        if (dropped) {
+          this.backpack = this.backpack.filter(item => item.makeIndex !== dropped.makeIndex);
+          this.emitEvent({ type: 'bagUpdated', items: this.backpack });
+        }
+        this.pendingUse = null;
+        this.log('info', `[7200] 丢弃物品成功`, 'GAME');
+        break;
+      }
+
+      case ProtocolConstants.SM_DROPITEM_FAIL:
+        this.pendingUse = null;
+        this.emitActionError('drop', '丢弃物品失败');
+        break;
+
+      case ProtocolConstants.SM_SENDUSERREPAIR:
+        this.emitEvent({ type: 'repairDialog', merchantId: packet.message.recog });
+        this.log('info', `[7200] 修理窗口已打开`, 'GAME');
+        break;
+
+      case ProtocolConstants.SM_SENDREPAIRCOST:
+        this.emitEvent({ type: 'repairCost', cost: packet.message.recog });
+        this.log('info', `[7200] 修理报价: ${packet.message.recog < 0 ? '不可修理' : packet.message.recog + ' 金币'}`, 'GAME');
+        break;
+
+      case ProtocolConstants.SM_USERREPAIRITEM_OK: {
+        this.gold = unsignedWord(packet.message.recog);
+        if (this.pendingRepair) {
+          const repaired = this.pendingRepair;
+          this.backpack = this.backpack.map(item => item.makeIndex === repaired.makeIndex
+            ? { ...item, dura: packet.message.param, duraMax: packet.message.tag }
+            : item);
+        }
+        this.pendingRepair = null;
+        this.emitEvent({
+          type: 'repairResult',
+          ok: true,
+          gold: this.gold,
+          dura: packet.message.param,
+          duraMax: packet.message.tag
+        });
+        this.emitEvent({ type: 'goldChanged', gold: this.gold });
+        this.emitEvent({ type: 'bagUpdated', items: this.backpack });
+        break;
+      }
+
+      case ProtocolConstants.SM_USERREPAIRITEM_FAIL:
+        this.pendingRepair = null;
+        this.emitEvent({ type: 'repairResult', ok: false });
+        this.emitActionError('repair', '修理失败或金币不足');
+        break;
     }
   }
 
@@ -844,6 +1093,17 @@ export class GateSession extends EventEmitter {
         'GAME'
       );
     }
+  }
+
+  private emitEquipment(): void {
+    const items: EquipmentItem[] = Array.from(this.equipment.entries())
+      .map(([slot, item]) => ({ slot, item }));
+    this.emitEvent({ type: 'equipmentUpdated', items });
+  }
+
+  private emitActionError(action: string, message: string): void {
+    this.emitEvent({ type: 'actionError', action, message });
+    this.log('warn', `[7200] ${message}`, 'GAME');
   }
 
   // --------------------------------------------------------------------------
@@ -935,6 +1195,90 @@ export class GateSession extends EventEmitter {
     );
   }
 
+  public async equip(slot: number, makeIndex: number, itemName: string): Promise<void> {
+    if (!this.gameClient || !this.gameClient.isOpen) return;
+    const item = this.backpack.find(candidate => candidate.makeIndex === makeIndex);
+    if (!item) {
+      this.emitActionError('equip', `找不到物品 #${makeIndex}`);
+      return;
+    }
+    this.pendingEquipment = { type: 'equip', slot, item };
+    await this.gameClient.sendPacket(
+      new DefaultMessage(makeIndex, ProtocolConstants.CM_TAKEONITEM, slot, 0, 0),
+      itemName
+    );
+  }
+
+  public async unequip(slot: number, makeIndex: number, itemName: string): Promise<void> {
+    if (!this.gameClient || !this.gameClient.isOpen) return;
+    const item = this.equipment.get(slot);
+    if (!item || item.makeIndex !== makeIndex) {
+      this.emitActionError('unequip', `找不到装备槽 ${slot} 中的物品`);
+      return;
+    }
+    this.pendingEquipment = { type: 'unequip', slot, item };
+    await this.gameClient.sendPacket(
+      new DefaultMessage(makeIndex, ProtocolConstants.CM_TAKEOFFITEM, slot, 0, 0),
+      itemName
+    );
+  }
+
+  public async eat(makeIndex: number, itemName: string): Promise<void> {
+    if (!this.gameClient || !this.gameClient.isOpen) return;
+    const item = this.backpack.find(candidate => candidate.makeIndex === makeIndex);
+    if (!item) {
+      this.emitActionError('eat', `找不到物品 #${makeIndex}`);
+      return;
+    }
+    this.pendingUse = { type: 'eat', item };
+    await this.gameClient.sendPacket(
+      new DefaultMessage(makeIndex, ProtocolConstants.CM_EAT, 0, 0, 0),
+      itemName
+    );
+  }
+
+  public async drop(makeIndex: number, itemName: string): Promise<void> {
+    if (!this.gameClient || !this.gameClient.isOpen) return;
+    const item = this.backpack.find(candidate => candidate.makeIndex === makeIndex);
+    if (!item) {
+      this.emitActionError('drop', `找不到物品 #${makeIndex}`);
+      return;
+    }
+    this.pendingUse = { type: 'drop', item };
+    await this.gameClient.sendPacket(
+      new DefaultMessage(makeIndex, ProtocolConstants.CM_DROPITEM, 0, 0, 0),
+      itemName
+    );
+  }
+
+  public async selectMerchantLabel(merchantId: number, label: '@repair' | '@s_repair'): Promise<void> {
+    if (!this.gameClient || !this.gameClient.isOpen) return;
+    await this.gameClient.sendPacket(
+      new DefaultMessage(merchantId, ProtocolConstants.CM_MERCHANTDLGSELECT, 0, 0, 0),
+      label
+    );
+  }
+
+  public async queryRepairCost(makeIndex: number, itemName: string): Promise<void> {
+    if (!this.gameClient || !this.gameClient.isOpen) return;
+    this.pendingRepair = this.backpack.find(item => item.makeIndex === makeIndex) ?? null;
+    await this.gameClient.sendPacket(
+      new DefaultMessage(makeIndex, ProtocolConstants.CM_MERCHANTQUERYREPAIRCOST,
+        makeIndex & 0xffff, (makeIndex >>> 16) & 0xffff, 0),
+      itemName
+    );
+  }
+
+  public async repairItem(makeIndex: number, itemName: string): Promise<void> {
+    if (!this.gameClient || !this.gameClient.isOpen) return;
+    this.pendingRepair = this.backpack.find(item => item.makeIndex === makeIndex) ?? null;
+    await this.gameClient.sendPacket(
+      new DefaultMessage(makeIndex, ProtocolConstants.CM_USERREPAIRITEM,
+        makeIndex & 0xffff, (makeIndex >>> 16) & 0xffff, 0),
+      itemName
+    );
+  }
+
   public async say(message: string): Promise<void> {
     if (!this.gameClient || !this.gameClient.isOpen) return;
     const defMsg = new DefaultMessage(0, ProtocolConstants.CM_SAY, 0, 0, 0);
@@ -965,7 +1309,11 @@ export class GateSession extends EventEmitter {
     this.state = SessionState.DISCONNECTED;
     this.visibleObjects.clear();
     this.visibleItems.clear();
+    this.equipment.clear();
     this.backpack = [];
+    this.pendingEquipment = null;
+    this.pendingUse = null;
+    this.pendingRepair = null;
     this.emitEvent({ type: 'disconnected', reason: '客户端主动断开连接' });
   }
 
@@ -982,4 +1330,18 @@ export class GateSession extends EventEmitter {
   private emitEvent(event: BridgeEvent): void {
     this.emit('event', event);
   }
+}
+
+function unsignedWord(value: number): number {
+  return value >>> 0;
+}
+
+function parseRemovedItems(body: string): Array<{ name: string; makeIndex: number }> {
+  const fields = body.split('/').filter(field => field.length > 0);
+  const removed: Array<{ name: string; makeIndex: number }> = [];
+  for (let index = 0; index + 1 < fields.length; index += 2) {
+    const makeIndex = Number.parseInt(fields[index + 1], 10);
+    if (Number.isInteger(makeIndex)) removed.push({ name: fields[index], makeIndex });
+  }
+  return removed;
 }

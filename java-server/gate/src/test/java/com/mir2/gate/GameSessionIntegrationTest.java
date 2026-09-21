@@ -40,9 +40,9 @@ class GameSessionIntegrationTest {
         int certificationTwo = prepareCharacter(handler, "two", "乙");
 
         try (Socket one = connectGame(ports.game(), "one", "甲", certificationOne)) {
-          List<WirePacket> oneEntry = readPackets(one, 3);
+          List<WirePacket> oneEntry = readPackets(one, 4);
           assertEquals(List.of(ProtocolConstants.SM_NEWMAP, ProtocolConstants.SM_LOGON,
-              ProtocolConstants.SM_MAPDESCRIPTION), idents(oneEntry));
+              ProtocolConstants.SM_MAPDESCRIPTION, ProtocolConstants.SM_ABILITY), idents(oneEntry));
           byte[] logonBody = SixBitCodec.decodeString(oneEntry.get(1).encodedBody());
           assertEquals(0x01050100,
               ByteBuffer.wrap(logonBody).order(ByteOrder.LITTLE_ENDIAN).getInt(),
@@ -50,9 +50,9 @@ class GameSessionIntegrationTest {
 
           Socket two = connectGame(ports.game(), "two", "乙", certificationTwo);
           try (two) {
-            List<WirePacket> twoEntry = readPackets(two, 4);
+            List<WirePacket> twoEntry = readPackets(two, 5);
             assertEquals(List.of(ProtocolConstants.SM_NEWMAP, ProtocolConstants.SM_LOGON,
-                ProtocolConstants.SM_MAPDESCRIPTION, ProtocolConstants.SM_TURN), idents(twoEntry));
+                ProtocolConstants.SM_MAPDESCRIPTION, ProtocolConstants.SM_ABILITY, ProtocolConstants.SM_TURN), idents(twoEntry));
             Position twoPosition = new Position(twoEntry.getFirst().message().param(),
                 twoEntry.getFirst().message().tag());
 
@@ -113,7 +113,7 @@ class GameSessionIntegrationTest {
         int certification = prepareCharacter(handler, "solo", "甲");
 
         try (Socket first = connectGame(ports.game(), "solo", "甲", certification)) {
-          readPackets(first, 3);
+          readPackets(first, 4);
         }
         assertEquals(0, awaitOnlinePlayers(world, 0), "first session must leave the world on disconnect");
 

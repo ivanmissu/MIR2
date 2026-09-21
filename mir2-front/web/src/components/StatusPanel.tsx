@@ -1,7 +1,7 @@
 import React from 'react';
 import { GameState } from '../store/gameStore.js';
 import { Direction, WorldObjectType } from '@mir2/shared';
-import { Heart, Activity, Compass, MapPin, Eye, Award } from 'lucide-react';
+import { Heart, Activity, Compass, MapPin, Eye, Award, Coins } from 'lucide-react';
 
 interface StatusPanelProps {
   state: GameState;
@@ -94,6 +94,22 @@ export const StatusPanel: React.FC<StatusPanelProps> = ({ state }) => {
             累计经验 (EXP)
           </span>
           <span className="font-mono text-slate-300">{state.exp}</span>
+        </div>
+      </div>
+
+      {/* W15 wallet and weight buckets */}
+      <div className="grid grid-cols-3 gap-2 text-xs">
+        <div className="p-2 bg-slate-950 rounded-xl border border-slate-800/80">
+          <div className="text-[10px] text-slate-400 flex items-center gap-1"><Coins className="w-3 h-3 text-amber-400" />金币</div>
+          <div className="font-mono font-bold text-amber-300">{state.gold}</div>
+        </div>
+        <div className="p-2 bg-slate-950 rounded-xl border border-slate-800/80">
+          <div className="text-[10px] text-slate-400">负重</div>
+          <div className="font-mono font-bold text-slate-200">{state.weight}</div>
+        </div>
+        <div className="p-2 bg-slate-950 rounded-xl border border-slate-800/80">
+          <div className="text-[10px] text-slate-400">装备/手持</div>
+          <div className="font-mono font-bold text-slate-200">{state.wearWeight}/{state.handWeight}</div>
         </div>
       </div>
 
