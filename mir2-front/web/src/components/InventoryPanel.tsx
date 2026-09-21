@@ -1,16 +1,66 @@
 import React, { useState } from 'react';
 import { GameState } from '../store/gameStore.js';
 import { BackpackItem } from '@mir2/shared';
-import { Backpack, RefreshCw, Swords, Coins, Sparkles } from 'lucide-react';
+import { Backpack, RefreshCw, Swords, Coins, Sparkles, Wrench, Utensils, Trash2 } from 'lucide-react';
 
 interface InventoryPanelProps {
   state: GameState;
   onRefreshBag: () => void;
+  onEquip: (slot: number, item: BackpackItem) => void;
+  onUnequip: (slot: number, item: BackpackItem) => void;
+  onEat: (item: BackpackItem) => void;
+  onDrop: (item: BackpackItem) => void;
+  onOpenRepair: (special?: boolean) => void;
+  onQueryRepairCost: (item: BackpackItem) => void;
+  onRepair: (item: BackpackItem) => void;
 }
 
 const TOTAL_SLOTS = 46;
 
-export const InventoryPanel: React.FC<InventoryPanelProps> = ({ state, onRefreshBag }) => {
+/** Mirrors the live CheckUserItems StdMode-to-slot matrix for the supported slots. */
+const slotForItem = (item: BackpackItem): number | null => {
+  switch (item.item.stdMode) {
+    case 5:
+    case 6:
+      return 1;
+    case 10:
+    case 11:
+      return 0;
+    case 28:
+    case 29:
+    case 30:
+      return 2;
+    case 19:
+    case 20:
+    case 21:
+      return 3;
+    case 15:
+      return 4;
+    case 24:
+    case 26:
+      return 5;
+    case 22:
+    case 23:
+      return 7;
+    case 25:
+    case 51:
+      return 9;
+    default:
+      return null;
+  }
+};
+
+export const InventoryPanel: React.FC<InventoryPanelProps> = ({
+  state,
+  onRefreshBag,
+  onEquip,
+  onUnequip,
+  onEat,
+  onDrop,
+  onOpenRepair,
+  onQueryRepairCost,
+  onRepair
+}) => {
   const [selectedItem, setSelectedItem] = useState<BackpackItem | null>(
     state.backpack.length > 0 ? state.backpack[0] : null
   );
@@ -48,13 +98,27 @@ export const InventoryPanel: React.FC<InventoryPanelProps> = ({ state, onRefresh
           </p>
         </div>
 
-        <button
-          onClick={onRefreshBag}
-          className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium rounded-xl border border-slate-700 transition-colors flex items-center gap-1.5 cursor-pointer"
-        >
-          <RefreshCw className="w-3.5 h-3.5" />
-          刷新背包
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => onOpenRepair(false)}
+            className="px-2.5 py-1.5 bg-amber-950/70 hover:bg-amber-900 text-amber-300 text-xs rounded-xl border border-amber-800 flex items-center gap-1"
+          >
+            <Wrench className="w-3.5 h-3.5" /> 普修
+          </button>
+          <button
+            onClick={() => onOpenRepair(true)}
+            className="px-2.5 py-1.5 bg-orange-950/70 hover:bg-orange-900 text-orange-300 text-xs rounded-xl border border-orange-800"
+          >
+            特修
+          </button>
+          <button
+            onClick={onRefreshBag}
+            className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium rounded-xl border border-slate-700 transition-colors flex items-center gap-1.5 cursor-pointer"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            刷新背包
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -97,6 +161,32 @@ export const InventoryPanel: React.FC<InventoryPanelProps> = ({ state, onRefresh
                     <span className="text-[10px] text-slate-700 font-mono">{index + 1}</span>
                   )}
                 </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Worn equipment snapshot (SM_SENDUSEITEMS) */}
+        <div className="md:col-span-2 p-4 bg-slate-950/70 rounded-2xl border border-slate-800/80">
+          <div className="text-xs font-bold text-slate-300 mb-3 flex items-center gap-2">
+            <Swords className="w-3.5 h-3.5 text-indigo-400" />
+            当前装备 (13 槽)
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+            {Array.from({ length: 13 }).map((_, slot) => {
+              const item = state.equipment.get(slot);
+              return (
+                <button
+                  key={slot}
+                  onClick={() => item && onUnequip(slot, item)}
+                  disabled={!item}
+                  className="text-left p-2 rounded-lg border border-slate-800 bg-slate-900/60 hover:border-indigo-500 disabled:opacity-60 disabled:cursor-default"
+                  title={item ? `点击脱下 ${item.item.name}` : '空槽'}
+                >
+                  <div className="text-[10px] text-slate-500">槽位 {slot}</div>
+                  <div className="text-[11px] text-indigo-300 truncate">{item?.item.name || '空'}</div>
+                  {item && <div className="text-[10px] text-slate-500 font-mono">{item.dura}/{item.duraMax}</div>}
+                </button>
               );
             })}
           </div>
@@ -162,6 +252,48 @@ export const InventoryPanel: React.FC<InventoryPanelProps> = ({ state, onRefresh
                 <div className="pt-2 border-t border-slate-800/80 text-[11px] text-slate-500 font-mono">
                   MakeIndex: #{selectedItem.makeIndex} | Looks: #{selectedItem.item.looks}
                 </div>
+
+                <div className="grid grid-cols-2 gap-2 pt-1">
+                  {selectedItem.item.stdMode <= 3 && (
+                    <button
+                      onClick={() => onEat(selectedItem)}
+                      className="px-2 py-1.5 rounded-lg bg-emerald-950/70 border border-emerald-800 text-emerald-300 text-[11px] flex items-center justify-center gap-1"
+                    >
+                      <Utensils className="w-3 h-3" /> 使用
+                    </button>
+                  )}
+                  {slotForItem(selectedItem) !== null && (
+                    <button
+                      onClick={() => onEquip(slotForItem(selectedItem)!, selectedItem)}
+                      className="px-2 py-1.5 rounded-lg bg-indigo-950/70 border border-indigo-800 text-indigo-300 text-[11px] flex items-center justify-center gap-1"
+                    >
+                      <Swords className="w-3 h-3" /> 穿戴
+                    </button>
+                  )}
+                  <button
+                    onClick={() => onDrop(selectedItem)}
+                    className="px-2 py-1.5 rounded-lg bg-rose-950/70 border border-rose-800 text-rose-300 text-[11px] flex items-center justify-center gap-1"
+                  >
+                    <Trash2 className="w-3 h-3" /> 丢弃
+                  </button>
+                  <button
+                    onClick={() => onQueryRepairCost(selectedItem)}
+                    className="px-2 py-1.5 rounded-lg bg-amber-950/70 border border-amber-800 text-amber-300 text-[11px] flex items-center justify-center gap-1"
+                  >
+                    <Wrench className="w-3 h-3" /> 报价
+                  </button>
+                  <button
+                    onClick={() => onRepair(selectedItem)}
+                    className="px-2 py-1.5 rounded-lg bg-amber-950/70 border border-amber-800 text-amber-300 text-[11px] flex items-center justify-center gap-1"
+                  >
+                    <Wrench className="w-3 h-3" /> 修理
+                  </button>
+                </div>
+                {state.repairCost !== null && (
+                  <div className="text-[11px] text-amber-300 pt-1">
+                    当前报价: {state.repairCost < 0 ? '不可修理' : `${state.repairCost} 金币`}
+                  </div>
+                )}
               </div>
             </div>
           ) : (

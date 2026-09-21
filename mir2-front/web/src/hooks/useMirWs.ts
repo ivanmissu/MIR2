@@ -368,8 +368,105 @@ export function useMirWs() {
       case 'experienceGained': {
         setState(prev => ({
           ...prev,
-          exp: event.total
+          exp: event.total,
+          ability: { ...prev.ability, exp: event.total }
         }));
+        break;
+      }
+
+      case 'levelUp': {
+        setState(prev => ({
+          ...prev,
+          level: event.level,
+          exp: event.exp,
+          ability: { ...prev.ability, level: event.level, exp: event.exp }
+        }));
+        addLog({ level: 'info', message: `[升级] 当前等级 ${event.level}`, timestamp: Date.now(), gate: 'GAME' });
+        break;
+      }
+
+      case 'abilityUpdated': {
+        setState(prev => ({
+          ...prev,
+          ability: event.ability,
+          level: event.ability.level,
+          exp: event.ability.exp,
+          hp: event.ability.hp,
+          maxHp: event.ability.maxHp,
+          mp: event.ability.mp,
+          maxMp: event.ability.maxMp,
+          gold: event.gold
+        }));
+        break;
+      }
+
+      case 'goldChanged': {
+        setState(prev => ({ ...prev, gold: event.gold }));
+        break;
+      }
+
+      case 'weightChanged': {
+        setState(prev => ({
+          ...prev,
+          weight: event.weight,
+          wearWeight: event.wearWeight,
+          handWeight: event.handWeight
+        }));
+        break;
+      }
+
+      case 'equipmentUpdated': {
+        const equipment = new Map<number, import('@mir2/shared').BackpackItem>();
+        for (const entry of event.items) equipment.set(entry.slot, entry.item);
+        setState(prev => ({ ...prev, equipment }));
+        break;
+      }
+
+      case 'durabilityChanged': {
+        setState(prev => {
+          const next = new Map(prev.equipment);
+          const item = next.get(event.slot);
+          if (event.broken) next.delete(event.slot);
+          else if (item) next.set(event.slot, { ...item, dura: event.dura, duraMax: event.duraMax });
+          return { ...prev, equipment: next };
+        });
+        break;
+      }
+
+      case 'itemRemoved': {
+        setState(prev => ({
+          ...prev,
+          backpack: prev.backpack.filter(item => item.makeIndex !== event.makeIndex),
+          equipment: new Map(Array.from(prev.equipment.entries()).filter(([, item]) => item.makeIndex !== event.makeIndex))
+        }));
+        break;
+      }
+
+      case 'repairDialog': {
+        setState(prev => ({ ...prev, repairCost: null }));
+        addLog({ level: 'info', message: `修理窗口已打开（商人 #${event.merchantId}）`, timestamp: Date.now(), gate: 'GAME' });
+        break;
+      }
+
+      case 'repairCost': {
+        setState(prev => ({ ...prev, repairCost: event.cost }));
+        break;
+      }
+
+      case 'repairResult': {
+        setState(prev => ({
+          ...prev,
+          gold: event.gold ?? prev.gold,
+          repairCost: null,
+          backpack: prev.backpack.map(item => event.dura !== undefined && item.dura === item.duraMax
+            ? { ...item, dura: event.dura, duraMax: event.duraMax ?? item.duraMax }
+            : item)
+        }));
+        break;
+      }
+
+      case 'actionError': {
+        addLog({ level: 'warn', message: `[${event.action}] ${event.message}`, timestamp: Date.now(), gate: 'GAME' });
         break;
       }
 
@@ -576,6 +673,34 @@ export function useMirWs() {
     sendCommand({ type: 'queryBagItems' });
   }, [sendCommand]);
 
+  const equip = useCallback((slot: number, item: import('@mir2/shared').BackpackItem) => {
+    sendCommand({ type: 'equip', slot, makeIndex: item.makeIndex, itemName: item.item.name });
+  }, [sendCommand]);
+
+  const unequip = useCallback((slot: number, item: import('@mir2/shared').BackpackItem) => {
+    sendCommand({ type: 'unequip', slot, makeIndex: item.makeIndex, itemName: item.item.name });
+  }, [sendCommand]);
+
+  const eat = useCallback((item: import('@mir2/shared').BackpackItem) => {
+    sendCommand({ type: 'eat', makeIndex: item.makeIndex, itemName: item.item.name });
+  }, [sendCommand]);
+
+  const drop = useCallback((item: import('@mir2/shared').BackpackItem) => {
+    sendCommand({ type: 'drop', makeIndex: item.makeIndex, itemName: item.item.name });
+  }, [sendCommand]);
+
+  const openRepair = useCallback((special = false) => {
+    sendCommand({ type: 'merchantLabel', merchantId: 1, label: special ? '@s_repair' : '@repair' });
+  }, [sendCommand]);
+
+  const queryRepairCost = useCallback((item: import('@mir2/shared').BackpackItem) => {
+    sendCommand({ type: 'queryRepairCost', makeIndex: item.makeIndex, itemName: item.item.name });
+  }, [sendCommand]);
+
+  const repairItem = useCallback((item: import('@mir2/shared').BackpackItem) => {
+    sendCommand({ type: 'repairItem', makeIndex: item.makeIndex, itemName: item.item.name });
+  }, [sendCommand]);
+
   const disconnect = useCallback(() => {
     sendCommand({ type: 'disconnect' });
     if (wsRef.current) {
@@ -617,6 +742,13 @@ export function useMirWs() {
     say,
     openDoor,
     queryBagItems,
+    equip,
+    unequip,
+    eat,
+    drop,
+    openRepair,
+    queryRepairCost,
+    repairItem,
     disconnect,
     setLogFilter,
     clearLogs,

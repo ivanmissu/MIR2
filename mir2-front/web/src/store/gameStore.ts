@@ -3,6 +3,7 @@ import {
   Direction,
   GroundItem,
   BackpackItem,
+  Ability,
   WorldObjectSnapshot,
   ChatMessage
 } from '@mir2/shared';
@@ -61,6 +62,13 @@ export interface GameState {
   maxMp: number;
   level: number;
   exp: number;
+  ability: Ability;
+  gold: number;
+  weight: number;
+  wearWeight: number;
+  handWeight: number;
+  equipment: Map<number, BackpackItem>;
+  repairCost: number | null;
   feature: number;
   dayBright: number;
 
@@ -108,6 +116,28 @@ export const initialGameState: GameState = {
   maxMp: 50,
   level: 1,
   exp: 0,
+  ability: {
+    level: 1,
+    hp: 15,
+    maxHp: 15,
+    mp: 15,
+    maxMp: 15,
+    ac: 0,
+    mac: 0,
+    dc: 1 | (2 << 16),
+    mc: 0,
+    sc: 0,
+    exp: 0,
+    maxExp: 100,
+    weight: 0,
+    maxWeight: 0
+  },
+  gold: 0,
+  weight: 0,
+  wearWeight: 0,
+  handWeight: 0,
+  equipment: new Map(),
+  repairCost: null,
   feature: 0,
   dayBright: 0,
 

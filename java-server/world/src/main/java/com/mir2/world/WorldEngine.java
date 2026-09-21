@@ -930,6 +930,10 @@ public final class WorldEngine implements AutoCloseable {
     if (!player.equipment.isEmpty()) {
       emit(player, new WorldEvent.EquipmentSent(player.id, player.equipment));
     }
+    // RM_ABILITY is part of the login refresh in the Delphi server. Sending the complete
+    // packed ability immediately after the map bootstrap prevents a fresh client from
+    // retaining placeholder HP/MP/level values until its first later mutation.
+    emit(player, new WorldEvent.AbilityChanged(player.id, player.ability, player.gold, player.job));
     WorldEvent appeared = new WorldEvent.ObjectAppeared(player.snapshot());
     for (int viewerId : visibleIds) emit(players.get(viewerId), appeared);
     // The test-gold floor is announced once the client can actually see itself.

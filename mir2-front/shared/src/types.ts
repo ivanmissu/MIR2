@@ -82,6 +82,12 @@ export interface GroundItem {
   y: number;
 }
 
+/** An item currently occupying one of the 13 Delphi equipment slots. */
+export interface EquipmentItem {
+  slot: number;
+  item: BackpackItem;
+}
+
 export interface ChatMessage {
   speakerId: number;
   speakerName: string;
@@ -107,6 +113,13 @@ export type ClientCommand =
   | { type: 'openDoor'; x: number; y: number }
   | { type: 'say'; message: string }
   | { type: 'queryBagItems' }
+  | { type: 'equip'; slot: number; makeIndex: number; itemName: string }
+  | { type: 'unequip'; slot: number; makeIndex: number; itemName: string }
+  | { type: 'eat'; makeIndex: number; itemName: string }
+  | { type: 'drop'; makeIndex: number; itemName: string }
+  | { type: 'merchantLabel'; merchantId?: number; label: '@repair' | '@s_repair' }
+  | { type: 'queryRepairCost'; makeIndex: number; itemName: string }
+  | { type: 'repairItem'; makeIndex: number; itemName: string }
   | { type: 'disconnect' };
 
 // ----------------------------------------------------
@@ -153,5 +166,16 @@ export type BridgeEvent =
   | { type: 'itemHide'; itemId: number }
   | { type: 'bagUpdated'; items: BackpackItem[] }
   | { type: 'itemAdded'; item: BackpackItem }
+  | { type: 'itemRemoved'; makeIndex: number; name: string }
+  | { type: 'equipmentUpdated'; items: EquipmentItem[] }
+  | { type: 'abilityUpdated'; ability: Ability; gold: number; job: Job }
+  | { type: 'goldChanged'; gold: number }
+  | { type: 'weightChanged'; weight: number; wearWeight: number; handWeight: number }
+  | { type: 'durabilityChanged'; slot: number; makeIndex: number; dura: number; duraMax: number; broken: boolean }
+  | { type: 'levelUp'; level: number; exp: number }
+  | { type: 'repairDialog'; merchantId: number }
+  | { type: 'repairCost'; cost: number }
+  | { type: 'repairResult'; ok: boolean; gold?: number; dura?: number; duraMax?: number }
+  | { type: 'actionError'; action: string; message: string }
   | { type: 'log'; level: 'info' | 'warn' | 'error' | 'debug'; message: string; timestamp?: number; gate?: string }
   | { type: 'disconnected'; reason: string };

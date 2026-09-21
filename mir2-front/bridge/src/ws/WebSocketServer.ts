@@ -136,6 +136,27 @@ export class BridgeWebSocketServer {
       case 'queryBagItems':
         await session.queryBagItems();
         break;
+      case 'equip':
+        await session.equip(cmd.slot, cmd.makeIndex, cmd.itemName);
+        break;
+      case 'unequip':
+        await session.unequip(cmd.slot, cmd.makeIndex, cmd.itemName);
+        break;
+      case 'eat':
+        await session.eat(cmd.makeIndex, cmd.itemName);
+        break;
+      case 'drop':
+        await session.drop(cmd.makeIndex, cmd.itemName);
+        break;
+      case 'merchantLabel':
+        await session.selectMerchantLabel(cmd.merchantId ?? 1, cmd.label);
+        break;
+      case 'queryRepairCost':
+        await session.queryRepairCost(cmd.makeIndex, cmd.itemName);
+        break;
+      case 'repairItem':
+        await session.repairItem(cmd.makeIndex, cmd.itemName);
+        break;
       case 'say':
         await session.say(cmd.message);
         break;

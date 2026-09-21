@@ -4,4 +4,5 @@ export * from './DefaultMessage.js';
 export * from './MessageCodec.js';
 export * from './CharacterDescription.js';
 export * from './ClientItemCodec.js';
+export * from './AbilityCodec.js';
 export * from './WireMessageCodec.js';

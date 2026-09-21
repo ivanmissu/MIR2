@@ -130,4 +130,26 @@ export class ClientItemCodec {
     const parts = encodedBag.split(ClientItemCodec.SEPARATOR).filter(p => p.length > 0);
     return parts.map(part => ClientItemCodec.decode(part));
   }
+
+  /**
+   * Decodes the legacy SM_SENDUSEITEMS body: slot/encoded TClientItem/ repeated.
+   * The slot number and separators are deliberately outside the six-bit item payload,
+   * matching GameProtocolAdapter.sendWornSet on the Java side.
+   */
+  public static decodeWornSet(body: string): Map<number, BackpackItem> {
+    const worn = new Map<number, BackpackItem>();
+    if (!body) return worn;
+    const parts = body.split(ClientItemCodec.SEPARATOR).filter(part => part.length > 0);
+    if (parts.length % 2 !== 0) {
+      throw new Error(`SM_SENDUSEITEMS body has an incomplete slot/item pair: ${parts.length}`);
+    }
+    for (let index = 0; index < parts.length; index += 2) {
+      const slot = Number.parseInt(parts[index], 10);
+      if (!Number.isInteger(slot) || slot < 0 || slot > 12) {
+        throw new Error(`SM_SENDUSEITEMS slot out of range: ${parts[index]}`);
+      }
+      worn.set(slot, ClientItemCodec.decode(parts[index + 1]));
+    }
+    return worn;
+  }
 }

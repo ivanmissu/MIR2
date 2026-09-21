@@ -28,6 +28,13 @@ export const App: React.FC = () => {
     say,
     openDoor,
     queryBagItems,
+    equip,
+    unequip,
+    eat,
+    drop,
+    openRepair,
+    queryRepairCost,
+    repairItem,
     disconnect,
     setLogFilter,
     clearLogs,
@@ -124,6 +131,13 @@ export const App: React.FC = () => {
                   <InventoryPanel
                     state={state}
                     onRefreshBag={queryBagItems}
+                    onEquip={equip}
+                    onUnequip={unequip}
+                    onEat={eat}
+                    onDrop={drop}
+                    onOpenRepair={openRepair}
+                    onQueryRepairCost={queryRepairCost}
+                    onRepair={repairItem}
                   />
                 ) : (
                   /* Help & Shortcuts Guide */

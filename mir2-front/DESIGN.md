@@ -277,8 +277,15 @@ mir2-front/
 4. **M3：战斗 + 拾取** —— 近战攻击、受击/死亡反馈、地面物品显示与拾取、背包同步。
 5. **M4：多会话联调打磨** —— 多标签页互相可见的验收场景、断线/异常的清晰提示、
    README/操作手册。
-6. **M5（可选二期）**：severity 更高的可观测性（比如把 wiretool 的注解能力做成
-   前端可选的"高级模式"）、地图背景网格可视化（用 `.map` 尺寸画网格而不是空白画布）等。
+6. **M5：装备 / 消耗 / 修理验证台** —— 将 W12/W15 已落地的 `CM_TAKEONITEM`、
+   `CM_TAKEOFFITEM`、`CM_EAT`、`CM_DROPITEM`、修理三消息、`SM_ABILITY`、
+   `SM_SENDUSEITEMS`、`SM_DURACHANGE` 和金币/负重事件贯通到 Bridge + React，作为
+   下一步服务端协议对拍前的可操作验收面板。（已完成）
+7. **M6：真实客户端对拍与协议冻结** —— 使用 Windows 上未修改的 `mir2.exe` 捕获
+   LOGIN/SELECT/GAME golden，先做 `wiretool inspect` 结构核对，再逐帧修正 W12/W15
+   字段和消息顺序；没有 golden 前不扩展 NPC 脚本或交易语义。
+8. **M7（可选）**：在协议 golden 稳定后，增加 NPC 对象/距离校验和 Market_Def
+   脚本最小切片；地图背景网格和 wiretool 高级可视化仍属于二期。
 
 每期都以"人能用浏览器点出一个可验证的操作结果"为验收标准，而不是先把所有编解码
 一次性搬完。
