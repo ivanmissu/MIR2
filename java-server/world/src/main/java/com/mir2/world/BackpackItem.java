@@ -43,6 +43,11 @@ public record BackpackItem(StdItem item, int makeIndex, int dura, int duraMax) {
     return new BackpackItem(item, newMakeIndex, dura, duraMax);
   }
 
+  /** Returns the same item instance with updated current durability. */
+  public BackpackItem withDura(int newDura) {
+    return new BackpackItem(item, makeIndex, newDura, duraMax);
+  }
+
   private static void requireU16(String field, int value) {
     if (value < 0 || value > 0xffff) throw new IllegalArgumentException(field + " must be an unsigned word");
   }

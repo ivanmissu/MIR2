@@ -44,7 +44,8 @@ public sealed interface WorldEvent
         WorldEvent.DropItemRejected,
         WorldEvent.WeightChanged,
         WorldEvent.AbilityChanged,
-        WorldEvent.EquipmentSent {
+        WorldEvent.EquipmentSent,
+        WorldEvent.ItemDurabilityChanged {
 
   record MapEntered(
       WorldObjectSnapshot player,
@@ -393,6 +394,25 @@ public sealed interface WorldEvent
     public EquipmentSent {
       if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
       Objects.requireNonNull(equipment, "equipment");
+    }
+  }
+
+  /**
+   * A worn item's instance durability changed ({@code RM_DURACHANGE -> SM_DURACHANGE}).
+   * At zero the Delphi server destroys the item and clears its slot rather than returning it
+   * to the bag; {@code broken} exposes that lifecycle transition to non-wire consumers.
+   */
+  record ItemDurabilityChanged(
+      int playerId, EquipmentSlot slot, int makeIndex, int dura, int duraMax, boolean broken)
+      implements WorldEvent {
+    public ItemDurabilityChanged {
+      if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
+      Objects.requireNonNull(slot, "slot");
+      if (makeIndex < 0) throw new IllegalArgumentException("makeIndex must not be negative");
+      if (dura < 0 || dura > 0xffff || duraMax < 0 || duraMax > 0xffff) {
+        throw new IllegalArgumentException("durability must be an unsigned word");
+      }
+      if (broken != (dura == 0)) throw new IllegalArgumentException("broken must match zero durability");
     }
   }
 

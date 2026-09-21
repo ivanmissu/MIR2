@@ -219,6 +219,13 @@ public final class GameProtocolAdapter implements WorldEventSink {
       case WorldEvent.EquipmentSent sent -> {
         if (sent.playerId() == playerId) sendWornSet(sent.equipment());
       }
+      case WorldEvent.ItemDurabilityChanged changed -> {
+        if (changed.playerId() == playerId) {
+          output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_DURACHANGE,
+              changed.dura(), changed.slot().index(), changed.duraMax() & 0xffff,
+              (changed.duraMax() >>> 16) & 0xffff, "")));
+        }
+      }
       case WorldEvent.DayChanging dayChanging -> output.accept(new GameOutbound.Packet(
           packet(ProtocolConstants.SM_DAYCHANGING, 0, dayChanging.gameTime(), dayChanging.dayBright(), 0, "")));
       default -> {
