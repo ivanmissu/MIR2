@@ -143,6 +143,9 @@ public final class GameProtocolAdapter implements WorldEventSink {
       case WorldEvent.ObjectAttacked attacked -> sendAttack(attacked);
       case WorldEvent.ObjectStruck struck -> sendStruck(struck);
       case WorldEvent.ObjectDied died -> sendDeath(died);
+      case WorldEvent.ObjectRevived revived -> sendAlive(revived.object());
+      case WorldEvent.LevelUp levelUp -> sendLevelUp(levelUp);
+      case WorldEvent.ItemsRemoved removed -> sendDeletedItems(removed);
       case WorldEvent.HealthChanged changed -> sendHealth(changed.object());
       case WorldEvent.ExperienceGained gained -> sendExperience(gained);
       case WorldEvent.ItemAppeared appeared -> sendItemShow(appeared.item());
@@ -342,6 +345,46 @@ public final class GameProtocolAdapter implements WorldEventSink {
     String body = new CharacterDescription(victim.feature(), victim.status()).encode();
     output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_DEATH, victim.id(),
         position.x(), position.y(), victim.direction().code(), body)));
+  }
+
+  /**
+   * {@code RM_ALIVE} -> {@code SM_ALIVE} (ObjBase.pas:6066): recog=object, param/tag=cell,
+   * series=direction, body=TCharDesc. The client reads param/tag as HP/MaxHP in its own
+   * handler comment (ClMain.pas:4192) but only uses them to resurrect the sprite, and the
+   * server sends the {@code SendRefMsg(RM_ALIVE, m_btDirection, m_nCurrX, m_nCurrY, 0, '')}
+   * cell triple — so the cell is what actually goes on the wire.
+   */
+  private void sendAlive(WorldObjectSnapshot object) {
+    Position position = object.position();
+    String body = new CharacterDescription(object.feature(), object.status()).encode();
+    output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_ALIVE, object.id(),
+        position.x(), position.y(), object.direction().code(), body)));
+  }
+
+  /**
+   * {@code RM_LEVELUP} -> {@code SM_LEVELUP} (ObjBase.pas:5584): recog=total experience,
+   * param=level, empty body. The Delphi branch immediately follows it with the full
+   * {@code SM_ABILITY} block, which the world emits as a separate AbilityChanged event.
+   */
+  private void sendLevelUp(WorldEvent.LevelUp levelUp) {
+    if (levelUp.playerId() != playerId) return;
+    int experience = (int) Math.min(levelUp.experience(), 0xFFFFFFFFL);
+    output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_LEVELUP,
+        experience, levelUp.level(), 0, 0, "")));
+  }
+
+  /**
+   * {@code TPlayObject.SendDelItemList} (ObjBase.pas:22857) -> {@code SM_DELITEMS}:
+   * series=item count, body={@code <name>/<MakeIndex>/} repeated.
+   */
+  private void sendDeletedItems(WorldEvent.ItemsRemoved removed) {
+    if (removed.playerId() != playerId) return;
+    StringBuilder body = new StringBuilder();
+    for (com.mir2.world.BackpackItem item : removed.items()) {
+      body.append(item.name()).append('/').append(item.makeIndex()).append('/');
+    }
+    output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_DELITEMS, 0, 0, 0,
+        removed.items().size(), WireMessageCodec.encodeBody(body.toString()))));
   }
 
   /** {@code SM_HEALTHSPELLCHANGED}: recog=object, param=HP, tag=MP, series=MaxHP, empty body. */

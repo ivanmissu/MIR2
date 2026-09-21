@@ -18,6 +18,9 @@ public sealed interface WorldEvent
         WorldEvent.ObjectAttacked,
         WorldEvent.ObjectStruck,
         WorldEvent.ObjectDied,
+        WorldEvent.ObjectRevived,
+        WorldEvent.LevelUp,
+        WorldEvent.ItemsRemoved,
         WorldEvent.HealthChanged,
         WorldEvent.ExperienceGained,
         WorldEvent.AttackAccepted,
@@ -172,6 +175,44 @@ public sealed interface WorldEvent
     public ExperienceGained {
       if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
       if (gained < 0 || total < 0) throw new IllegalArgumentException("experience must not be negative");
+    }
+  }
+
+  /**
+   * {@code HasLevelUp} raised the character's level ({@code RM_LEVELUP -> SM_LEVELUP} plus
+   * the {@code SM_ABILITY} refresh the same Delphi branch sends).
+   *
+   * @param ability the working ability after {@code RecalcLevelAbilitys} and {@code RecalcAbilitys}
+   */
+  record LevelUp(int playerId, int level, long experience, Ability ability) implements WorldEvent {
+    public LevelUp {
+      if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
+      if (level < 1) throw new IllegalArgumentException("level must be at least one");
+      if (experience < 0) throw new IllegalArgumentException("experience must not be negative");
+      Objects.requireNonNull(ability, "ability");
+    }
+  }
+
+  /**
+   * {@code TBaseObject.ReAlive} (ObjBase.pas:21199): the object is alive again on the same
+   * cell, broadcast as {@code RM_ALIVE -> SM_ALIVE} to everyone who can see it.
+   */
+  record ObjectRevived(WorldObjectSnapshot object) implements WorldEvent {
+    public ObjectRevived {
+      Objects.requireNonNull(object, "object");
+    }
+  }
+
+  /**
+   * {@code TPlayObject.SendDelItemList} ({@code RM_SENDDELITEMLIST -> SM_DELITEMS}): the bag
+   * entries the server destroyed server-side, so the client can drop them from its window.
+   * Emitted after a death scatter.
+   */
+  record ItemsRemoved(int playerId, List<BackpackItem> items) implements WorldEvent {
+    public ItemsRemoved {
+      if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
+      items = List.copyOf(items);
+      if (items.isEmpty()) throw new IllegalArgumentException("removal list must not be empty");
     }
   }
 

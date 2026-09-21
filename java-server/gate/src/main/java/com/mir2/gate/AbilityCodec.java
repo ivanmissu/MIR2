@@ -40,8 +40,10 @@ public final class AbilityCodec {
     buffer.putShort((short) ability.maxHp());
     buffer.putShort((short) ability.maxMp());
     buffer.putInt((int) Math.min(ability.experience(), 0xFFFFFFFFL));
-    // MaxExp belongs to the level table, which has not been migrated yet.
-    buffer.putInt(0);
+    // MaxExp = GetLevelExp(Level) (ObjBase.pas:19184). The shipped table tops out at
+    // 4,000,000,000, which is an unsigned DWord on the wire and overflows a signed int —
+    // the cast below reproduces the same 32 bits Delphi writes.
+    buffer.putInt((int) (ability.maxExperience() & 0xFFFFFFFFL));
     // Weight/MaxWeight/WearWeight/MaxWearWeight/HandWeight/MaxHandWeight are reported
     // separately through SM_WEIGHTCHANGED, so this body leaves them zero.
     buffer.putShort((short) 0);

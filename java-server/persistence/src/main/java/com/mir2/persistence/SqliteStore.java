@@ -150,11 +150,17 @@ public final class SqliteStore implements AutoCloseable,
           )
           """);
       statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_characters_account ON characters(account)");
-      statement.executeUpdate("""
+      // Backfill pre-W03 characters with the same naked baseline a new character gets, so a
+      // schema upgrade and a fresh creation never disagree.
+      Ability baseline = Ability.defaultPlayer();
+      statement.executeUpdate(String.format(
+          """
           INSERT OR IGNORE INTO character_state(
             character_id, hp, max_hp, mp, max_mp, min_dc, max_dc, min_ac, max_ac, level, experience)
-          SELECT id, 100, 100, 20, 20, 3, 8, 0, 2, level, 0 FROM characters
-          """);
+          SELECT id, %d, %d, %d, %d, %d, %d, %d, %d, level, 0 FROM characters
+          """,
+          baseline.hp(), baseline.maxHp(), baseline.mp(), baseline.maxMp(),
+          baseline.minDc(), baseline.maxDc(), baseline.minAc(), baseline.maxAc()));
     }
 
     // Upgrade W03 inventories in place: rows predating W04 carry no make index or durability.

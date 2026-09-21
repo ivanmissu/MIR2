@@ -167,9 +167,20 @@ public final class LoadtestMain {
     int spawnX = intOption(options, "spawn-x", 10);
     int spawnY = intOption(options, "spawn-y", 10);
     Path mapFile = options.containsKey("map-file") ? Path.of(options.get("map-file")) : null;
+    // Every bot dials in from 127.0.0.1, so the whole swarm shares one AccessPolicy bucket.
+    // The shipped per-IP defaults (128 active, 300 attempts/minute) are sized for real
+    // players behind distinct addresses: a 50-bot run opens three connections per session
+    // (login + select + game) and relogs on a timer, which lands right on top of the
+    // 300/minute ceiling and makes the verdict depend on how many sessions happen to fit in
+    // the window. Scale both limits with the swarm so the run measures the server, not the
+    // anti-abuse guard. Real deployments keep the defaults.
+    int loginsPerSession = 3;
+    int maxActivePerIp = Math.max(128, fallbackSpec.bots() * loginsPerSession);
+    // Budget every bot for a relog every 10s of the window, then double it for headroom.
+    int attemptsPerWindow = Math.max(300, fallbackSpec.bots() * loginsPerSession * 12);
     ServerConfig config = new ServerConfig(database, ports, "127.0.0.1",
-        fallbackSpec.serverName(), mapFile, "0", spawnX, spawnY, tickMillis, monsters,
-        monsterKind, null, null);
+        fallbackSpec.serverName(), mapFile, null, "0", spawnX, spawnY, tickMillis, monsters,
+        monsterKind, null, null, null, maxActivePerIp, attemptsPerWindow, 60, 900, 600);
     Mir2Server server = new Mir2Server(config);
     server.start();
 

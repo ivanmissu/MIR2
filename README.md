@@ -69,6 +69,20 @@ Java 服务端。
   装备槽由 SQLite `character_equipment` 表持久化，旧库开库即原位升级。
   原版 quirk 忠实复刻：成功取下装备后会尾随一条 `SM_TAKEOFF_FAIL(recog=0)`
   （Delphi 成功路径 `n10` 保持 0，而出口判定是 `if n10 <= 0`）
+- **等级提升 / 死亡 / 复活闭环（W14）**：完整复刻 `g_dwOldNeedExps` 升级经验表（1..500 级，
+  51 级起恒定 4,000,000,000）与 `GetLevelExp` 的越界钳制；`RecalcLevelAbilitys` 的战士 / 法师 /
+  道士三条成长曲线（HP、MP、DC、AC、三桶负重上限），Delphi 的银行家舍入按 `Math.rint` 复刻；
+  `GetExp / HasLevelUp` 升级链路（一次只扣一档经验、`MAXUPLEVEL` 封顶、升级即
+  `IncHealthSpell(2000, 2000)` 回满）与 `SM_LEVELUP`；玩家死亡按 `nDieScatterBagRate = 3`
+  掉落约三分之一背包（`DropWide = 2` 落点，地图 `NODROPITEM` 整体豁免）并用 `SM_DELITEMS`
+  回推掉落清单；`ReAlive` 原地复活 + `SM_ALIVE`（8 字节 `TCharDesc` 体）、3 分钟
+  `MakeGhost` 尸体离场、重登时 `HP <= 0 → 14` 的救场规则；`TBaseObject.Run` 的 HP/MP
+  自然回复（6 秒回 `MaxHP div 75 + 1`、16 秒回 `MaxMP div 18 + 1`，死亡期间不回）；
+  GM `@Level` 命令语义。
+  **注意**：新建角色的初始属性已从 PoC 占位（100 HP / DC 3-8）改为忠实的原版建号块
+  （1 级、HP/MP 15、DC 1-2、升级经验 100），世界难度因此回到原版水平——一个 1 级角色
+  确实会被几只鸡打死。另一处 quirk 也一并复刻：角色升到 2 级时 DC 反而从建号字面量
+  1-2 收窄为成长曲线的 1-1
 - **bot 压测军团（loadtest 模块）**：走真实 TCP 三端口全链路（登录→建号→进图→走/打/捡→周期性重登）
   的 50+ 机器人稳定性压测工具，输出中文 Markdown/CSV 报告（进图率、重登数、动作 +GOOD/+FAIL/超时、
   p50/p90/p99/max 应答延迟、服务端消息分布、错误分类）；支持 embedded（进程内起服务端 + JVM 堆采样）
@@ -274,8 +288,12 @@ docker compose -f java-server/compose.yml up --build
   载荷（`TStdItem` 为 66 字节：`String[20]` 占 21 字节，Delphi 源码 "60 bytes" 注释已过时）；
   物品数值仍是最小占位目录，待导入真实 StdItems 数据后校正；W12 已补齐装备穿脱、使用（`CM_EAT`）与
   丢弃（`CM_DROPITEM`），但装备属性映射虽逐条取自 `ItmUnit.pas`，具体数值同样等 `StdItems.DB`
-  导入才算权威；套装/特戒效果（Shape/AniCount 111-217 那张表）、物品耐久消耗与修理、
-  技能/魔法、远程攻击与剩余 47 种怪物仍未实现；
+  导入才算权威；套装/特戒效果（Shape/AniCount 111-217 那张表）、修理 NPC、复活戒指
+  （`ItemDamageRevivalRing`）、技能/魔法、远程攻击与剩余 47 种怪物仍未实现；
+- 等级提升与死亡/复活闭环（W14）已实现，但死亡掉落**只覆盖背包**：`DropUseItems`（死亡掉
+  已穿装备）依赖尚未迁移的 `StdItem.Reserved` 位，红名全掉（`boDieRedScatterBagAll`）依赖
+  尚未迁移的 PK 等级模型，两者都记为 `TODO(verify)`；复活目前只有 GM 语义的服务端入口
+  （`WorldEngine.revive`），玩家自助复活与死亡后回城在原版里走的是重新登录路径；
 - 门与地图连接点（W10）已实现：`.map` 门锚点 + `CM_OPENDOOR` + 5 秒自动关门、`MapInfo.txt` 多图与
   连接点换图（含目标不可走整步回滚）；昼夜亮暗（`DayBright`）、地图旗标（SAFE/FIGHT/NORECONNECT 等）、
   城堡门差异分支与跨服切换（`nServerIndex` 不同）仍未实现；

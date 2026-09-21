@@ -129,8 +129,10 @@ final class Mir2Bot implements Runnable {
             }
           }
           case DEAD -> {
+            // W14 gave the world a death/revival loop: a character saved at zero HP is
+            // brought back at 14 HP when it re-enters (UsrEngn.pas:600), so a dead bot
+            // reconnects and keeps generating load instead of ending its run.
             metrics.count(BotMetrics.Key.PLAYERS_DIED);
-            return;
           }
           case STOPPED -> {
             return;
@@ -735,6 +737,18 @@ final class Mir2Bot implements Runnable {
         }
       }
       case ProtocolConstants.SM_WINEXP -> metrics.count(BotMetrics.Key.EXPERIENCE_UPDATES);
+      case ProtocolConstants.SM_LEVELUP -> metrics.count(BotMetrics.Key.LEVEL_UPS);
+      case ProtocolConstants.SM_ALIVE -> {
+        if (recog == selfId) {
+          synchronized (stateLock) {
+            // SM_ALIVE carries the cell, not the health; the SM_ABILITY that follows it
+            // refreshes the pools. Clearing the zero marker is what lets the bot act again.
+            hp = -1;
+            position = new Position(param, tag);
+          }
+        }
+        metrics.count(BotMetrics.Key.REVIVALS_SEEN);
+      }
       case ProtocolConstants.SM_CLEAROBJECTS -> {
         synchronized (stateLock) {
           objects.clear();

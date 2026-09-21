@@ -43,7 +43,7 @@ public final class BotMetrics {
     ENTER_RETRIES("game-enter attempts retried (e.g. the leave-race after a fast relog)"),
     RELOGS_COMPLETED("voluntary relogs completed"),
     SESSIONS_ENDED("game sessions ended"),
-    PLAYERS_DIED("bot deaths observed (no revival exists in the PoC world)"),
+    PLAYERS_DIED("bot deaths observed (the bot relogs and is revived at 14 HP)"),
     ACK_TIMEOUTS("action acknowledgements that timed out"),
     SOCKET_ERRORS("in-world socket errors not caused by the bot itself"),
     UNEXPECTED_DISCONNECTS("game sockets closed by the server"),
@@ -54,6 +54,8 @@ public final class BotMetrics {
     BAG_LISTS_RECEIVED("SM_BAGITEMS received"),
     ITEMS_PICKED_UP("SM_ADDITEM received"),
     EXPERIENCE_UPDATES("SM_WINEXP received"),
+    LEVEL_UPS("SM_LEVELUP received"),
+    REVIVALS_SEEN("SM_ALIVE received"),
     OBSERVED_DEATHS("SM_DEATH observed for other objects"),
     GROUND_ITEMS_SEEN("SM_ITEMSHOW received"),
     POSITION_RESYNCS("sessions restarted to resynchronise position");
