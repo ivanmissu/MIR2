@@ -740,6 +740,8 @@ public final class WorldEngine implements AutoCloseable {
 
     int damage = rollDamage(player.ability, target.ability());
     applyDamage(target, player, damage);
+    // AttackTarget.GetHitStruckDamage only assigns weapon wear when the blow penetrates AC.
+    if (damage > 0) damageEquipment(player, EquipmentSlot.WEAPON, random.nextInt(5) + 2);
     return new AttackResult(true, attacker, target.snapshot(), damage);
   }
 
@@ -1275,6 +1277,7 @@ public final class WorldEngine implements AutoCloseable {
         player.setAbility(before);
         throw failure;
       }
+      wearArmorOnStruck(player);
     }
     broadcastStruck(victim, attacker.id(), damage);
     if (updated.alive()) {
@@ -1282,6 +1285,56 @@ public final class WorldEngine implements AutoCloseable {
       emitToObserversAndSelf(victim, health);
     } else {
       handleDeath(victim, attacker);
+    }
+  }
+
+  /** {@code StruckDamage}: dress always wears; every occupied slot also has a 1/8 chance. */
+  private void wearArmorOnStruck(Player player) {
+    if (player.equipment.isEmpty()) return;
+    int wear = random.nextInt(10) + 5;
+    damageEquipment(player, EquipmentSlot.DRESS, wear);
+    // Snapshot the slots because a zero-durability item is removed during iteration.
+    List<EquipmentSlot> occupied = player.equipment.inSlotOrder().stream()
+        .map(Map.Entry::getKey).toList();
+    for (EquipmentSlot slot : occupied) {
+      if (random.nextInt(8) == 0) damageEquipment(player, slot, wear);
+    }
+  }
+
+  /**
+   * Applies instance wear and persists it. At zero, Delphi SendDelItems clears wIndex: the
+   * item is destroyed (not moved to the bag), its bonuses disappear, and appearance updates.
+   */
+  private void damageEquipment(Player player, EquipmentSlot slot, int amount) {
+    if (amount <= 0) return;
+    BackpackItem worn = player.equipment.at(slot).orElse(null);
+    if (worn == null || worn.dura() <= 0) return;
+    int nextDura = Math.max(0, worn.dura() - amount);
+    Equipment previous = player.equipment;
+    Ability previousAbility = player.ability;
+    EquipmentBonus previousBonus = player.bonus;
+    boolean broken = nextDura == 0;
+    player.equipment = broken
+        ? player.equipment.without(slot)
+        : player.equipment.with(slot, worn.withDura(nextDura));
+    if (broken) recalculateAbilities(player);
+    try {
+      persist(player);
+    } catch (RuntimeException failure) {
+      player.equipment = previous;
+      player.ability = previousAbility;
+      player.bonus = previousBonus;
+      throw failure;
+    }
+    emit(player, new WorldEvent.ItemDurabilityChanged(
+        player.id, slot, worn.makeIndex(), nextDura, worn.duraMax(), broken));
+    if (broken) {
+      emit(player, new WorldEvent.AbilityChanged(player.id, player.ability));
+      emitWeight(player);
+      WorldEvent appearance = new WorldEvent.ObjectAppeared(player.snapshot());
+      for (int viewerId : visibleIds(player.map, player.position, player.id)) {
+        emit(players.get(viewerId), appearance);
+      }
     }
   }
 

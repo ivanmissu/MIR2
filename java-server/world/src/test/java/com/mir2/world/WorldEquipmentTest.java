@@ -189,6 +189,32 @@ class WorldEquipmentTest {
   }
 
   @Test
+  void successfulMeleeHitWearsAndDestroysAZeroDurabilityWeapon() {
+    StdItem fragile = new StdItem("练习剑", 5, 0, 1, 0, 0, 0, 77, 1, 0, 0,
+        StdItem.packedRange(100, 100), 0, 0, 0, 0, 1);
+    List<WorldEvent> events = new ArrayList<>();
+    try (WorldEngine world = engine(GameMap.empty("0", "PoC", 20, 20), fragile)) {
+      WorldObjectSnapshot player = enterWith(world, events, fragile);
+      assertTrue(run(world, world.equip(player.id(), EquipmentSlot.WEAPON.index(), 1, "练习剑")));
+      run(world, world.spawnMonster(MonsterTemplate.orc(), "0",
+          new Position(6, 5), Direction.LEFT));
+      events.clear();
+      advance(1_000);
+
+      AttackResult hit = run(world,
+          world.attack(player.id(), new Position(5, 5), Direction.RIGHT, AttackKind.HIT));
+
+      assertTrue(hit.damage() > 0);
+      assertTrue(run(world, world.equipment(player.id())).at(EquipmentSlot.WEAPON).isEmpty());
+      WorldEvent.ItemDurabilityChanged wear =
+          single(events, WorldEvent.ItemDurabilityChanged.class);
+      assertEquals(0, wear.dura());
+      assertTrue(wear.broken());
+      assertEquals(1, wear.makeIndex());
+    }
+  }
+
+  @Test
   void wornEquipmentSurvivesRelogAndItsBonusIsReapplied() {
     RecordingStore store = new RecordingStore();
     java.util.UUID characterId = java.util.UUID.randomUUID();
