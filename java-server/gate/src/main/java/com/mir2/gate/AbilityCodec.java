@@ -2,6 +2,8 @@ package com.mir2.gate;
 
 import com.mir2.protocol.SixBitCodec;
 import com.mir2.world.Ability;
+import com.mir2.world.LevelAbilities;
+import com.mir2.world.WeightLimits;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
@@ -22,11 +24,19 @@ public final class AbilityCodec {
   private AbilityCodec() {}
 
   public static String encode(Ability ability) {
-    return new String(SixBitCodec.encode(bytes(ability)), StandardCharsets.ISO_8859_1);
+    return encode(ability, WeightLimits.forLevel(LevelAbilities.JOB_WARRIOR, ability.level()));
+  }
+
+  public static String encode(Ability ability, WeightLimits weights) {
+    return new String(SixBitCodec.encode(bytes(ability, weights)), StandardCharsets.ISO_8859_1);
+  }
+
+  static byte[] bytes(Ability ability) {
+    return bytes(ability, WeightLimits.forLevel(LevelAbilities.JOB_WARRIOR, ability.level()));
   }
 
   /** Serialises the exact little-endian field order of the packed record. */
-  static byte[] bytes(Ability ability) {
+  static byte[] bytes(Ability ability, WeightLimits weights) {
     ByteBuffer buffer = ByteBuffer.allocate(ABILITY_BYTES).order(ByteOrder.LITTLE_ENDIAN);
     buffer.putShort((short) ability.level());
     buffer.putInt(packRange(ability.minAc(), ability.maxAc()));
@@ -44,19 +54,26 @@ public final class AbilityCodec {
     // 4,000,000,000, which is an unsigned DWord on the wire and overflows a signed int —
     // the cast below reproduces the same 32 bits Delphi writes.
     buffer.putInt((int) (ability.maxExperience() & 0xFFFFFFFFL));
-    // Weight/MaxWeight/WearWeight/MaxWearWeight/HandWeight/MaxHandWeight are reported
-    // separately through SM_WEIGHTCHANGED, so this body leaves them zero.
-    buffer.putShort((short) 0);
-    buffer.putShort((short) 0);
-    buffer.putShort((short) 0);
-    buffer.putShort((short) 0);
-    buffer.putShort((short) 0);
-    buffer.putShort((short) 0);
+    // SM_WEIGHTCHANGED only refreshes the three current totals (ClMain.pas:4473), so the
+    // maxima can only reach the client here. They must not stay zero: FState.pas:3646 hides
+    // the bottom status bars unless (MaxExp > 0) and (MaxWeight > 0), and Actor.pas:2633
+    // divides by MaxWeight/MaxWearWeight/MaxHandWeight to shade the overload icons.
+    buffer.putShort((short) clampWord(weights.weight()));
+    buffer.putShort((short) clampWord(weights.maxWeight()));
+    buffer.putShort((short) clampWord(weights.wearWeight()));
+    buffer.putShort((short) clampWord(weights.maxWearWeight()));
+    buffer.putShort((short) clampWord(weights.handWeight()));
+    buffer.putShort((short) clampWord(weights.maxHandWeight()));
     return buffer.array();
   }
 
   /** {@code MakeLong(min, max)}: low word lower bound, high word upper bound. */
   private static int packRange(int min, int max) {
     return ((max & 0xffff) << 16) | (min & 0xffff);
+  }
+
+  /** The weight fields are {@code Word}s; Delphi saturates rather than wrapping. */
+  private static int clampWord(int value) {
+    return Math.max(0, Math.min(value, 0xffff));
   }
 }

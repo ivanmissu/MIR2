@@ -29,7 +29,8 @@ public record ServerConfig(
     int idleTimeoutSeconds,
     int saveIntervalSeconds,
     long testGold,
-    Long worldSeed) {
+    Long worldSeed,
+    int safeZoneSize) {
 
   /** Compatibility constructor for embedded tests and load-test callers. */
   public ServerConfig(Path database, GatePorts ports, String advertisedHost, String serverName,
@@ -37,7 +38,7 @@ public record ServerConfig(
       String monsterKind, String bootstrapUser, String bootstrapPassword) {
     this(database, ports, advertisedHost, serverName, mapFile, null, mapId, spawnX, spawnY,
         worldTickMillis, monsterCount, monsterKind, null, bootstrapUser, bootstrapPassword,
-        128, 300, 60, 900, 600, 0, null);
+        128, 300, 60, 900, 600, 0, null, com.mir2.world.StartPoint.DEFAULT_SAFE_ZONE_SIZE);
   }
 
   /** Compatibility constructor that also pins the world seed (shadow comparison harness). */
@@ -46,7 +47,7 @@ public record ServerConfig(
       String monsterKind, String bootstrapUser, String bootstrapPassword, Long worldSeed) {
     this(database, ports, advertisedHost, serverName, mapFile, null, mapId, spawnX, spawnY,
         worldTickMillis, monsterCount, monsterKind, null, bootstrapUser, bootstrapPassword,
-        128, 300, 60, 900, 600, 0, worldSeed);
+        128, 300, 60, 900, 600, 0, worldSeed, com.mir2.world.StartPoint.DEFAULT_SAFE_ZONE_SIZE);
   }
 
   public ServerConfig {
@@ -69,6 +70,8 @@ public record ServerConfig(
       throw new IllegalArgumentException("access-layer limits and timeouts must be positive");
     if (saveIntervalSeconds < 1)
       throw new IllegalArgumentException("save interval must be a positive number of seconds");
+    if (safeZoneSize < 0 || safeZoneSize > 100)
+      throw new IllegalArgumentException("safe zone size must be between 0 and 100");
     if (testGold < 0 || testGold > com.mir2.world.PlayerState.MAX_GOLD)
       throw new IllegalArgumentException("test gold must be within 0.."
           + com.mir2.world.PlayerState.MAX_GOLD);
@@ -87,6 +90,21 @@ public record ServerConfig(
 
   public static ServerConfig fromEnvironment() {
     return from(System.getenv());
+  }
+
+  /**
+   * Returns a copy with a different start-point safe-zone radius.
+   *
+   * <p>Test harnesses use this to opt out: they seed the debug monster ring specifically so
+   * that creatures stand next to the spawn, which a production-sized safe zone pushes out of
+   * reach.
+   */
+  public ServerConfig withSafeZoneSize(int newSafeZoneSize) {
+    return new ServerConfig(database, ports, advertisedHost, serverName, mapFile, mapInfoFile,
+        mapId, spawnX, spawnY, worldTickMillis, monsterCount, monsterKind, monGenFile,
+        bootstrapUser, bootstrapPassword, maxConnectionsPerIp, connectionAttemptsPerWindow,
+        connectionAttemptWindowSeconds, idleTimeoutSeconds, saveIntervalSeconds, testGold,
+        worldSeed, newSafeZoneSize);
   }
 
   static ServerConfig from(Map<String, String> environment) {
@@ -122,7 +140,11 @@ public record ServerConfig(
         // like Delphi's global Random. Setting it splits randomness into independent
         // per-subsystem streams derived from this seed so two servers can be 对拍'd with
         // monsters alive; see WorldRandom.
-        nullableLong(environment, "MIR2_WORLD_SEED"));
+        nullableLong(environment, "MIR2_WORLD_SEED"),
+        // g_Config.nSafeZoneSize (!Setup.txt SafeZoneSize=10): the radius around every
+        // StartPoint.txt entry in which monsters may not choose a player as their target.
+        nonNegativeInt(environment, "MIR2_SAFE_ZONE_SIZE",
+            com.mir2.world.StartPoint.DEFAULT_SAFE_ZONE_SIZE));
   }
 
   /**

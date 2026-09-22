@@ -23,6 +23,21 @@ class ServerConfigTest {
     assertEquals("鸡", config.monsterTemplate().name());
     assertEquals(600, config.saveIntervalSeconds());
     assertNull(config.bootstrapUser());
+    // !Setup.txt SafeZoneSize=10.
+    assertEquals(10, config.safeZoneSize());
+  }
+
+  @Test
+  void safeZoneSizeMatchesSetupTxtAndIsOverridable() {
+    assertEquals(10, ServerConfig.from(Map.of()).safeZoneSize());
+    assertEquals(3, ServerConfig.from(Map.of("MIR2_SAFE_ZONE_SIZE", "3")).safeZoneSize());
+    // A zero radius is legal: it turns the start-point protection off without disabling maps
+    // that carry the boSAFE flag outright.
+    assertEquals(0, ServerConfig.from(Map.of("MIR2_SAFE_ZONE_SIZE", "0")).safeZoneSize());
+    assertThrows(IllegalArgumentException.class,
+        () -> ServerConfig.from(Map.of("MIR2_SAFE_ZONE_SIZE", "-1")));
+    assertThrows(IllegalArgumentException.class,
+        () -> ServerConfig.from(Map.of("MIR2_SAFE_ZONE_SIZE", "101")));
   }
 
   @Test

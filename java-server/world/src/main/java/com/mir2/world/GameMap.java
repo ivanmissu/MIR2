@@ -19,7 +19,13 @@ public final class GameMap {
   public static final byte WALKABLE = 0;
   public static final byte BACKGROUND_BLOCKED = 1;
   public static final byte FOREGROUND_BLOCKED = 2;
-  public static final int MAX_CELLS = 1_000_000;
+  /**
+   * Upper bound on a map's cell count, a sanity check against a corrupt {@code .map} header
+   * rather than a format limit (the header stores width and height as {@code Word}s).
+   * 比奇省 — {@code 0.map}, the default spawn map — is right at 1000x1000, so the cap has to
+   * sit comfortably above a million; each cell costs five bytes of collision and occupancy.
+   */
+  public static final int MAX_CELLS = 4_000_000;
 
   private final String id;
   private final String title;
@@ -33,6 +39,9 @@ public final class GameMap {
   private final Map<Position, DoorInfo> doorAnchors = new LinkedHashMap<>();
   private final List<DoorInfo> doorList = new ArrayList<>();
   private final Map<Position, TeleportRoute> gates = new HashMap<>();
+  // g_StartPoint (LocalDB.pas:LoadStartPoint): the town squares players spawn on. Each one
+  // radiates a safe zone of nSafeZoneSize cells, checked by TBaseObject.InSafeZone.
+  private final List<StartPoint> startPoints = new ArrayList<>();
 
   private GameMap(String id, String title, int width, int height, byte[] collisionFlags, MapFlags flags) {
     if (id == null || id.isBlank()) throw new IllegalArgumentException("map id must not be blank");
@@ -98,6 +107,7 @@ public final class GameMap {
     doorAnchors.putAll(source.doorAnchors);
     doorList.addAll(source.doorList);
     gates.putAll(source.gates);
+    startPoints.addAll(source.startPoints);
   }
 
   /**
@@ -144,6 +154,33 @@ public final class GameMap {
 
   public boolean isSafeZone() {
     return flags.safeZone();
+  }
+
+  /**
+   * {@code TBaseObject.InSafeZone} (ObjBase.pas:21527): true when the whole map carries
+   * {@code boSAFE}, or when the cell lies within {@code nSafeZoneSize} of one of this map's
+   * start points. Delphi compares each axis separately, so the zone is a square.
+   */
+  public boolean isSafeZone(Position position) {
+    Objects.requireNonNull(position, "position");
+    if (flags.safeZone()) return true;
+    for (StartPoint startPoint : startPoints) {
+      if (Math.abs(position.x() - startPoint.position().x()) <= startPoint.safeZoneSize()
+          && Math.abs(position.y() - startPoint.position().y()) <= startPoint.safeZoneSize()) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Registers a {@code StartPoint.txt} entry on this map. */
+  public void addStartPoint(StartPoint startPoint) {
+    Objects.requireNonNull(startPoint, "startPoint");
+    startPoints.add(startPoint);
+  }
+
+  public List<StartPoint> startPoints() {
+    return List.copyOf(startPoints);
   }
 
   public boolean isDarkness() {

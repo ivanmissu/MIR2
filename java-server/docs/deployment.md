@@ -49,7 +49,8 @@ cat > .env <<'EOF'
 MIR2_ADVERTISED_HOST=192.168.1.10      # ← 改成客户端实际可访问的服务器 IP（本机试玩可用 127.0.0.1）
 MIR2_BOOTSTRAP_USER=hero
 MIR2_BOOTSTRAP_PASSWORD=change-me      # ← 务必改掉
-MIR2_MONSTER_COUNT=8
+MIR2_CLIENT_MAP_DIR=/srv/mir2-client/Map   # ← 客户端 Map 目录，只读挂进容器加载真实比奇省
+MIR2_MONSTER_COUNT=8                   # 出生点安全区之外刷 8 只鸡；村里不会被攻击
 MIR2_MONSTER_KIND=chicken
 EOF
 
@@ -162,6 +163,10 @@ MIR2_DATABASE=/opt/mir2/data/mir2.db
 MIR2_ADVERTISED_HOST=192.168.1.10
 MIR2_BOOTSTRAP_USER=hero
 MIR2_BOOTSTRAP_PASSWORD=change-me
+# 裸 JAR 不走 compose，需显式指向客户端地图与原版出生点
+MIR2_MAP_FILE=/srv/mir2-client/Map/0.map
+MIR2_SPAWN_X=289
+MIR2_SPAWN_Y=618
 MIR2_MONSTER_COUNT=8
 
 # 启用
@@ -225,17 +230,18 @@ $JAVA --enable-native-access=ALL-UNNAMED -XX:MaxRAMPercentage=75 \
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `MIR2_DATABASE` | `data/mir2.db` | SQLite 数据库路径（相对路径基于进程工作目录；容器内固定为 `/app/data/mir2.db`） |
-| `MIR2_MAP_FILE` | 未设置 | 可选：Delphi `.map` 地图文件路径；未设置时使用 256×256 空白 PoC 地图（与 `MIR2_MAPINFO_FILE` 互斥） |
+| `MIR2_MAP_FILE` | `/maps/0.map`（compose）/ 未设置（裸 JAR） | Delphi `.map` 地图文件路径。`compose.yml` 默认把客户端 Map 目录只读挂到 `/maps` 并指向比奇省 `0.map`；未设置时回退到 256×256 空白 PoC 地图并打印告警（与 `MIR2_MAPINFO_FILE` 互斥） |
 | `MIR2_MAPINFO_FILE` | 未设置 | 可选：经典 `MapInfo.txt` 路径（W10）；文件内每个 `[id desc idx]` 条目从同目录加载 `<id>.map`，缺失文件告警并跳过（Delphi `AddMapInfo` 语义）；路线行 `src srcX srcY -> dst dstX dstY` 注册为地图连接点，`loadmapinfo` 从 `MapInfo/` 子目录包含子文件 |
 | `MIR2_MAP_ID` | `0` | 地图 ID（对应客户端地图文件名；`MIR2_MAPINFO_FILE` 多图模式下必须是已加载地图之一，否则启动 fail-fast） |
-| `MIR2_SPAWN_X` / `MIR2_SPAWN_Y` | `10` / `10` | 首次进图出生点；被占用时自动选择邻近可行走格 |
+| `MIR2_SPAWN_X` / `MIR2_SPAWN_Y` | `289` / `618`（compose）/ `10` / `10`（裸 JAR 默认） | 首次进图出生点。compose 默认用原版比奇省新手村坐标（`!Setup.txt`：`HomeMap=0 HomeX=289 HomeY=618`）；被占用或不可走时自动选择邻近可行走格 |
 
 ### 5.3 世界与战斗
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `MIR2_WORLD_TICK_MS` | `50` | 世界逻辑 Tick 间隔，1–10000ms |
-| `MIR2_MONSTER_COUNT` | `0` | 启动时在出生点四周生成的怪物数，0–1000 |
+| `MIR2_MONSTER_COUNT` | `0` | 启动时在出生点四周生成的怪物数，0–1000。怪物**均匀分布在安全区之外的一圈**（半径 `MIR2_SAFE_ZONE_SIZE + 1`），不会贴脸生成 |
+| `MIR2_SAFE_ZONE_SIZE` | `10` | 出生点安全区半径（对应 `!Setup.txt` 的 `SafeZoneSize`）。对应 Delphi `TBaseObject.InSafeZone`：站在安全区内的玩家**不会被怪物选为攻击目标**（`IsAttackTarget`）。设为 0 可关闭（压测/对拍用），地图自带的 `boSAFE` 标志不受影响 |
 | `MIR2_MONSTER_KIND` | `chicken` | 首批 10 种模板之一：`chicken`（鸡）、`deer`（鹿，逃跑型）、`scarecrow`（稻草人）、`hookcat`（多钩猫）、`rakecat`（钉耙猫）、`cavemaggot`（洞蛆）、`scorpion`（蝎子）、`orc`（半兽人）、`orcwarrior`（半兽勇士）、`orcfighter`（半兽战士）；另有 `trainer`（木桩，站桩不还手，对应 Delphi `TRAINER`=55 / `TTrainer` 伤害测试木桩，供对拍用）；中文名同样有效 |
 | `MIR2_MONGEN_FILE` | 未设置 | 可选的经典 `MonGen.txt` 路径；支持 `loadgen`、引号怪物名、范围/数量/分钟/刷新率字段；每行注册为自动刷新的 spawner（对应 `TUserEngine.RegenMonsters`），按行内分钟数补足被击杀的怪物 |
 | `MIR2_SAVE_INTERVAL_SECONDS` | `600` | 在线玩家周期存档间隔（对应 Delphi `SaveHumanRcdTime`，默认 10 分钟）；事件型存档（伤害/拾取/离场）不受影响 |
@@ -316,41 +322,44 @@ remote 模式的 bot 账号须先用 `--prepare-db` 播种到**服务端使用�
 `<id>.map` 与 `MapInfo.txt` 放到同一目录（`loadmapinfo` 子文件放 `MapInfo/` 子目录），
 出生图由 `MIR2_MAP_ID` 指定；路线行两端地图未加载时该行被丢弃并告警。
 
-**Q9：mir2.exe 能登录/选人，但进游戏后世界是空的（左下角显示 `PoC empty map`）。**
-这是**默认配置的预期表现**：不设 `MIR2_MAP_FILE`/`MIR2_MAPINFO_FILE` 时服务端建立的是
-256×256 空白 PoC 地图（无地形碰撞数据、无 NPC——NPC 系统尚未迁移），且默认出生点
-`(10, 10)` 落在比奇省（`0.map`）的西北角空白区，客户端按**本地** `Map\0.map` 渲染出来的
-就是黑乎乎一片。注意：客户端地形永远来自它自己的 Map 目录，服务端加载的 `.map` 只提供
-**碰撞判定**与地图 ID——两边文件必须同名同源。
+**Q9：进游戏后世界是空的（左下角显示 `PoC empty map`），或出生点被一群鸡围住。**
+2026-09-22 已修复默认配置。`compose.yml` 现在默认：
 
-推荐用 mir2.exe 客户端自带的 `0.map` 快速跑起真实比奇省（无需完整服务端数据包）：
+- 把客户端 Map 目录只读挂到容器 `/maps`，`MIR2_MAP_FILE=/maps/0.map` 加载**真实比奇省**；
+- 出生点用原版 `!Setup.txt` 的 `HomeX=289 HomeY=618`（比奇省新手村）；
+- `MIR2_SAFE_ZONE_SIZE=10` 建立出生点安全区，怪物不会攻击区内玩家，刷怪圈也被推到安全区外。
+
+只需在 `.env` 里指出客户端 Map 目录：
+
+```bash
+# .env（与 compose.yml 同目录）
+MIR2_CLIENT_MAP_DIR=/srv/mir2-client/Map      # Windows 例：D:/传奇客户端/Map
+```
+
+```bash
+docker compose up -d --build
+```
+
+裸 JAR 方式等价配置：
 
 ```bat
-:: Windows 裸 JAR 方式
 set MIR2_MAP_FILE=C:\传奇客户端\Map\0.map
 set MIR2_MAP_ID=0
 set MIR2_SPAWN_X=289
 set MIR2_SPAWN_Y=618
-set MIR2_MONSTER_COUNT=8
 java -jar mir2-server.jar
 ```
 
-- `(289, 618)` 是原版 Delphi 服务端的默认回城/出生点（`M2Share.pas`：`sHomeMap='0';
-  nHomeX=289; nHomeY=618`，比奇省新手村），走/跑碰撞由 `0.map` 的真实数据决定；
-- 若启动报 `configured spawn is outside the map or blocked`，说明该版本 `0.map` 出生格
-  不可走，把坐标微调一两格即可；
-- Docker Compose 部署时把客户端 Map 目录挂进容器再指向容器内路径，`.env`：
+要点：
 
-  ```yaml
-  # compose.yml 的 services.mir2-server 追加：
-  #   volumes:
-  #     - mir2-data:/app/data
-  #     - "C:/传奇客户端/Map:/app/clientmaps:ro"
-  #   environment 追加：
-  #     MIR2_MAP_FILE: /app/clientmaps/0.map
-  #     MIR2_SPAWN_X: 289
-  #     MIR2_SPAWN_Y: 618
-  ```
+- **客户端地形永远来自它自己的 `Map\0.map`**，服务端加载的 `.map` 只提供碰撞判定与地图 ID
+  ——两边文件必须同名同源，否则会出现"人在墙里走"；
+- 启动日志里的 `map=0(1000x1000)` 与客户端左下角的地图名（比奇省）可用来确认加载成功；
+  若仍显示 `PoC empty map`，说明 `MIR2_MAP_FILE` 没生效，日志会有一条明确告警；
+- 出生格若恰好不可走，服务端不再启动失败，而是告警并让玩家落在最近的可行走格
+  （对应 `enterPlayerNear`）；
+- 想要新手村外有怪练级，设 `MIR2_MONSTER_COUNT=8`：怪会均匀分布在安全区外围一圈，
+  走出村子就能打到，站在村里不会被攻击。
 
 **Q10：怪物在 mir2.exe 里显示成大刀守卫/卫士。**
 2026-09-22 已修复：怪物线上的 Feature 外观编码此前是占位值（Appr 一律 0），客户端
@@ -360,6 +369,18 @@ java -jar mir2-server.jar
 半兽勇士 19/102、练功师 19/72），回归测试见
 `world/src/test/java/com/mir2/world/MonsterAppearanceTest.java`。更新到含此修复的
 构建（`dist` 分支产物或重新 `docker compose up --build`）即可。
+
+**Q11：角色血条/蓝条是空的，底部经验条和负重也不显示。**
+2026-09-22 已修复。`SM_ABILITY` 的 50 字节 `TAbility` 包尾部有六个负重字段
+（`Weight/MaxWeight/WearWeight/MaxWearWeight/HandWeight/MaxHandWeight`），此前一律写 0。
+`SM_WEIGHTCHANGED` 只携带三个**当前**值（`ClMain.pas:4473`），上限只能靠 `SM_ABILITY`
+下发，而客户端 `FState.pas:3646` 要求 `(MaxExp > 0) and (MaxWeight > 0)` 才绘制底部状态条，
+`Actor.pas:2633` 还会拿它做除数。现已按 `RecalcLevelAbilitys`（`ObjBase.pas:1889`）的
+职业/等级曲线下发真实上限（战士 1 级为 50/15/12）。回归测试见
+`gate/src/test/java/com/mir2/gate/AbilityWeightBlockTest.java`。
+
+若仍是空条，请确认客户端连的是含此修复的构建（`dist` 分支产物或重新
+`docker compose up --build`）。
 
 ## 8. 生产环境建议（P4 前的过渡态）
 
