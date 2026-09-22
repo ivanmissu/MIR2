@@ -316,6 +316,51 @@ remote 模式的 bot 账号须先用 `--prepare-db` 播种到**服务端使用�
 `<id>.map` 与 `MapInfo.txt` 放到同一目录（`loadmapinfo` 子文件放 `MapInfo/` 子目录），
 出生图由 `MIR2_MAP_ID` 指定；路线行两端地图未加载时该行被丢弃并告警。
 
+**Q9：mir2.exe 能登录/选人，但进游戏后世界是空的（左下角显示 `PoC empty map`）。**
+这是**默认配置的预期表现**：不设 `MIR2_MAP_FILE`/`MIR2_MAPINFO_FILE` 时服务端建立的是
+256×256 空白 PoC 地图（无地形碰撞数据、无 NPC——NPC 系统尚未迁移），且默认出生点
+`(10, 10)` 落在比奇省（`0.map`）的西北角空白区，客户端按**本地** `Map\0.map` 渲染出来的
+就是黑乎乎一片。注意：客户端地形永远来自它自己的 Map 目录，服务端加载的 `.map` 只提供
+**碰撞判定**与地图 ID——两边文件必须同名同源。
+
+推荐用 mir2.exe 客户端自带的 `0.map` 快速跑起真实比奇省（无需完整服务端数据包）：
+
+```bat
+:: Windows 裸 JAR 方式
+set MIR2_MAP_FILE=C:\传奇客户端\Map\0.map
+set MIR2_MAP_ID=0
+set MIR2_SPAWN_X=289
+set MIR2_SPAWN_Y=618
+set MIR2_MONSTER_COUNT=8
+java -jar mir2-server.jar
+```
+
+- `(289, 618)` 是原版 Delphi 服务端的默认回城/出生点（`M2Share.pas`：`sHomeMap='0';
+  nHomeX=289; nHomeY=618`，比奇省新手村），走/跑碰撞由 `0.map` 的真实数据决定；
+- 若启动报 `configured spawn is outside the map or blocked`，说明该版本 `0.map` 出生格
+  不可走，把坐标微调一两格即可；
+- Docker Compose 部署时把客户端 Map 目录挂进容器再指向容器内路径，`.env`：
+
+  ```yaml
+  # compose.yml 的 services.mir2-server 追加：
+  #   volumes:
+  #     - mir2-data:/app/data
+  #     - "C:/传奇客户端/Map:/app/clientmaps:ro"
+  #   environment 追加：
+  #     MIR2_MAP_FILE: /app/clientmaps/0.map
+  #     MIR2_SPAWN_X: 289
+  #     MIR2_SPAWN_Y: 618
+  ```
+
+**Q10：怪物在 mir2.exe 里显示成大刀守卫/卫士。**
+2026-09-22 已修复：怪物线上的 Feature 外观编码此前是占位值（Appr 一律 0），客户端
+`GetMonImg(0)` 会取 `Mon1.wil` 第 0 块贴图——正是卫士。现已按官方 1.76 Monster.DB
+（GEEM2 基线转储）校正全部模板的 RaceImg/Appr（鸡 11/160、鹿 11/161、稻草人 18/27、
+多钩猫 17/25、钉耙猫 17/26、洞蛆 16/24、蝎子 32/83、半兽人 19/100、半兽战士 19/101、
+半兽勇士 19/102、练功师 19/72），回归测试见
+`world/src/test/java/com/mir2/world/MonsterAppearanceTest.java`。更新到含此修复的
+构建（`dist` 分支产物或重新 `docker compose up --build`）即可。
+
 ## 8. 生产环境建议（P4 前的过渡态）
 
 当前版本（W08）适合内网联调、压测与对拍环境，**尚未**完成真实 `mir2.exe` 字节级对拍。

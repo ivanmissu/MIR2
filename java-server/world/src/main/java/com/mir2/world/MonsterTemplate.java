@@ -89,73 +89,87 @@ public record MonsterTemplate(
   }
 
   // ------------------------------------------------------------------ first-ten templates
-  // All numeric stats below the two shipped W03 templates are TODO(verify) placeholders in
-  // classic Monster.DB magnitude; the real import lands with the P2 data work and must be
-  // confirmed by the byte-level client comparison before being treated as canonical.
+  //
+  // APPEARANCE IS NOW DATA-VERIFIED. The (raceImg, appr) pairs below are taken from the
+  // official 1.76 Monster.DB (GEEM2 baseline, GPL dump of the 2005 leak — e.g.
+  // cjlaaa/Mir2-GeeM2 数据库/GEEM2.db.sql, Monster table columns Name/Race/RaceImg/Appr).
+  // The wire feature must carry the DB's RaceImg (not the server-side Race!) plus Appr:
+  // the client decodes RACEfeature(feature)=byte0 as RaceImg to pick its actor class and
+  // action table (PlayScn.pas NewActor / Actor.pas GetRaceByPM), and APPRfeature(feature)
+  // = high word as Appr to pick the sprite: GetMonImg(appr) opens Data\Mon(appr div 10 + 1)
+  // .wil and GetOffset(appr) selects the (appr mod 10) frame block. With the old
+  // placeholders every monster carried appr=0, which rendered as Mon1.wil block 0 — the
+  // 大刀守卫/卫士 sprite (Monster.DB row '卫士': Race 11, RaceImg 12, Appr 0): a real
+  // mir2.exe showed a flock of guards instead of chickens.
+  //
+  // Numeric combat stats below the two shipped W03 templates are still TODO(verify)
+  // placeholders in classic Monster.DB magnitude; the real import lands with the P2 data
+  // work and must be confirmed by the byte-level client comparison before being treated
+  // as canonical.
 
   /** 鸡 (chicken): the weakest melee target, used for the first kill/drop/pickup loop. */
   // TODO(verify): Delphi TChickenDeer is a fleeing animal; the W03 slice shipped it as an
   // aggressive target because the whole kill/drop/pickup loop (tests, bot-swarm, CI) hunts it.
   // Flip to PASSIVE_FLEE once the client comparison fixture validates the flee broadcasts.
   public static MonsterTemplate chicken() {
-    return new MonsterTemplate("鸡", packFeature(4, 0, 0), Ability.monster(6, 1, 2, 0, 0),
+    return new MonsterTemplate("鸡", packFeature(11, 0, 160), Ability.monster(6, 1, 2, 0, 0),
         6, 800, 1200, 6, MonsterBehavior.AGGRESSIVE, List.of(new ItemDrop("鸡肉", 41, 1)));
   }
 
   /** 鹿 (deer): TChickenDeer flee AI — never attacks, walks away from the nearest player. */
   public static MonsterTemplate deer() {
     // TChickenDeer.Create sets m_nViewRange := 5.
-    return new MonsterTemplate("鹿", packFeature(5, 0, 0), Ability.monster(30, 0, 1, 0, 0),
+    return new MonsterTemplate("鹿", packFeature(11, 0, 161), Ability.monster(30, 0, 1, 0, 0),
         5, 800, 2000, 8, MonsterBehavior.PASSIVE_FLEE, List.of(new ItemDrop("鹿肉", 42, 1)));
   }
 
   /** 稻草人 (scarecrow): the first aggressive melee mob outside the farm animals. */
   public static MonsterTemplate scarecrow() {
-    return new MonsterTemplate("稻草人", packFeature(1, 0, 0), Ability.monster(15, 2, 4, 0, 0),
+    return new MonsterTemplate("稻草人", packFeature(18, 0, 27), Ability.monster(15, 2, 4, 0, 0),
         7, 700, 1100, 12, MonsterBehavior.AGGRESSIVE, List.of(new ItemDrop("金创药(小量)", 40, 8)));
   }
 
   /** 多钩猫 (hook cat): faster melee chaser of the Bichon outskirts. */
   public static MonsterTemplate hookCat() {
-    return new MonsterTemplate("多钩猫", packFeature(2, 0, 0), Ability.monster(32, 4, 7, 0, 1),
+    return new MonsterTemplate("多钩猫", packFeature(17, 0, 25), Ability.monster(32, 4, 7, 0, 1),
         8, 600, 1000, 26, MonsterBehavior.AGGRESSIVE, List.of(new ItemDrop("金创药(小量)", 40, 6)));
   }
 
   /** 钉耙猫 (rake cat): tougher sibling of the hook cat. */
   public static MonsterTemplate rakeCat() {
-    return new MonsterTemplate("钉耙猫", packFeature(3, 0, 0), Ability.monster(45, 5, 9, 0, 2),
+    return new MonsterTemplate("钉耙猫", packFeature(17, 0, 26), Ability.monster(45, 5, 9, 0, 2),
         8, 600, 1000, 44, MonsterBehavior.AGGRESSIVE, List.of(new ItemDrop("金创药(小量)", 40, 5)));
   }
 
   /** 洞蛆 (cave maggot): slow, tanky cave dweller (TSlowATMonster pacing). */
   public static MonsterTemplate caveMaggot() {
-    return new MonsterTemplate("洞蛆", packFeature(6, 0, 0), Ability.monster(60, 4, 8, 2, 5),
+    return new MonsterTemplate("洞蛆", packFeature(16, 0, 24), Ability.monster(60, 4, 8, 2, 5),
         5, 1400, 1800, 50, MonsterBehavior.AGGRESSIVE, List.of(new ItemDrop("金创药(小量)", 40, 5)));
   }
 
   /** 蝎子 (scorpion): TScorpion melee, hits noticeably harder than the cats. */
   public static MonsterTemplate scorpion() {
-    return new MonsterTemplate("蝎子", packFeature(7, 0, 0), Ability.monster(70, 10, 14, 2, 4),
+    return new MonsterTemplate("蝎子", packFeature(32, 0, 83), Ability.monster(70, 10, 14, 2, 4),
         8, 700, 1100, 100, MonsterBehavior.AGGRESSIVE, List.of(new ItemDrop("金创药(小量)", 40, 4)));
   }
 
   /** 半兽人 (orc): a melee monster strong enough to damage a level-one player. */
   public static MonsterTemplate orc() {
-    return new MonsterTemplate("半兽人", packFeature(21, 0, 0), Ability.monster(45, 4, 9, 0, 2),
+    return new MonsterTemplate("半兽人", packFeature(19, 0, 100), Ability.monster(45, 4, 9, 0, 2),
         8, 600, 1000, 60, MonsterBehavior.AGGRESSIVE,
         List.of(new ItemDrop("鹿肉", 42, 2), new ItemDrop("木剑", 1, 20)));
   }
 
   /** 半兽勇士 (orc warrior): mid-tier orc cave melee. */
   public static MonsterTemplate orcWarrior() {
-    return new MonsterTemplate("半兽勇士", packFeature(22, 0, 0), Ability.monster(80, 8, 13, 1, 3),
+    return new MonsterTemplate("半兽勇士", packFeature(19, 0, 102), Ability.monster(80, 8, 13, 1, 3),
         8, 600, 1000, 90, MonsterBehavior.AGGRESSIVE,
         List.of(new ItemDrop("木剑", 1, 15), new ItemDrop("金创药(小量)", 40, 4)));
   }
 
   /** 半兽战士 (orc fighter): strongest of the first-ten batch. */
   public static MonsterTemplate orcFighter() {
-    return new MonsterTemplate("半兽战士", packFeature(23, 0, 0), Ability.monster(110, 12, 18, 2, 5),
+    return new MonsterTemplate("半兽战士", packFeature(19, 0, 101), Ability.monster(110, 12, 18, 2, 5),
         9, 550, 950, 140, MonsterBehavior.AGGRESSIVE,
         List.of(new ItemDrop("木剑", 1, 10), new ItemDrop("金创药(小量)", 40, 3)));
   }
@@ -175,11 +189,12 @@ public record MonsterTemplate(
    * Its HP is deliberately large enough to survive a scripted melee sequence, and it drops
    * nothing so a comparison run cannot be perturbed by loot timing.
    */
-  // TODO(verify): Delphi builds the trainer from Monster.DB row 55, so HP/AC are whatever
-  // that row carries; the values below are placeholders chosen to be a stable punching bag
-  // until the real Monster.DB import lands.
+  // TODO(verify): Delphi builds the trainer from Monster.DB row '练功师' (Race 55,
+  // RaceImg 19, Appr 72 — 1.76 GEEM2 dump), so HP/AC are whatever that row carries; the
+  // values below are placeholders chosen to be a stable punching bag until the real
+  // Monster.DB import lands. The wire feature now carries the verified RaceImg/Appr pair.
   public static MonsterTemplate trainer() {
-    return new MonsterTemplate("木桩", packFeature(55, 0, 0), Ability.monster(5_000, 0, 0, 0, 0),
+    return new MonsterTemplate("木桩", packFeature(19, 0, 72), Ability.monster(5_000, 0, 0, 0, 0),
         1, 1_000, 1_000, 0, MonsterBehavior.STATIONARY, List.of());
   }
 }
