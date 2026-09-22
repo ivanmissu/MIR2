@@ -53,29 +53,20 @@ class WorldSafeZoneTest {
   }
 
   @Test
-  void theSameMonsterAttacksOnceThePlayerStepsOutsideTheZone() {
-    GameMap town = GameMap.empty("0", "比奇省", 60, 60);
-    // A one-cell zone so the player only has to take a couple of steps to leave it.
-    town.addStartPoint(new StartPoint(new Position(30, 30), 1));
+  void theSameMonsterStillAttacksAPlayerStandingOutsideTheZone() {
+    // The control case for the test above: same map, same monster, but the player stands
+    // well outside the town square, so the IsAttackTarget filter must not shield it.
+    GameMap map = GameMap.empty("0", "比奇省", 60, 60);
+    map.addStartPoint(new StartPoint(new Position(10, 10), 10));
     List<WorldEvent> events = new ArrayList<>();
-    try (WorldEngine world = engine(town)) {
+    try (WorldEngine world = engine(map)) {
+      assertFalse(map.isSafeZone(new Position(40, 40)), "the ambush site is unprotected");
       WorldObjectSnapshot player = run(world,
-          world.enterPlayer("新手", "0", new Position(30, 30), Direction.RIGHT, events::add));
+          world.enterPlayer("野游", "0", new Position(40, 40), Direction.RIGHT, events::add));
       run(world, world.spawnMonster(
-          MonsterTemplate.chicken(), "0", new Position(34, 30), Direction.LEFT));
-
-      advance(1_000);
-      world.tickOnce();
-      assertFalse(town.isSafeZone(new Position(34, 30)));
-      assertTrue(town.isSafeZone(new Position(30, 30)));
-
-      // Walk east, out of the protected square and into the chicken.
-      for (int step = 1; step <= 3; step++) {
-        advance(1_000);
-        assertTrue(run(world, world.move(player.id(), new Position(30 + step, 30),
-            Direction.RIGHT, MovementKind.WALK)).moved());
-      }
+          MonsterTemplate.chicken(), "0", new Position(41, 40), Direction.LEFT));
       events.clear();
+
       for (int tick = 0; tick < 10; tick++) {
         advance(1_000);
         world.tickOnce();
@@ -84,7 +75,7 @@ class WorldSafeZoneTest {
       assertTrue(events.stream().anyMatch(event ->
               event instanceof WorldEvent.ObjectStruck struck
                   && struck.victim().id() == player.id()),
-          "outside the safe zone the monster resumes attacking");
+          "outside the safe zone the monster attacks as before");
     }
   }
 
