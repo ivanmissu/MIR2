@@ -22,6 +22,8 @@ import org.junit.jupiter.api.io.TempDir;
  */
 class ShadowSessionEmbeddedTest {
   private static final Duration SETTLE = Duration.ofMillis(300);
+  /** Any fixed value; both sides of a comparison must merely agree on it. */
+  private static final long SEED = 20260922L;
 
   @TempDir
   Path tempDir;
@@ -106,6 +108,57 @@ class ShadowSessionEmbeddedTest {
     }
   }
 
+  @Test
+  void seededWorldsAgreeOnPveDamageAgainstTheTrainerDummy() throws Exception {
+    // The W17 payoff: with a pinned world seed and stationary dummies, a combat script
+    // produces byte-identical damage on two independent server processes. Before the
+    // seed split this could not even be attempted — the harness had to run monsterless.
+    List<Op> script = Op.pveScript();
+    try (World left = World.bootSeeded(tempDir.resolve("pve-left"), SEED, 8, "trainer");
+        World right = World.bootSeeded(tempDir.resolve("pve-right"), SEED, 8, "trainer")) {
+      List<OpObservation> leftRun = ShadowDiffMain.observe(left.target(), script, SETTLE,
+          "shadow01", "shadow-pw", "MIR2");
+      List<OpObservation> rightRun = ShadowDiffMain.observe(right.target(), script, SETTLE,
+          "shadow01", "shadow-pw", "MIR2");
+
+      ShadowDiff.Result result = ShadowDiff.compare("left", "right", leftRun, rightRun, false);
+      assertTrue(result.passed(), () -> ShadowReport.markdown(result, script));
+
+      // The run must actually have fought something, otherwise the PASS is vacuous.
+      List<String> combat = leftRun.stream()
+          .flatMap(observation -> observation.state().combat().stream()).toList();
+      assertTrue(combat.stream().anyMatch(line -> line.startsWith("struck other")),
+          () -> "the script must land blows on a dummy, saw: " + combat);
+      assertTrue(combat.stream().anyMatch(line -> line.contains("dmg=")
+              && !line.contains("dmg=0")),
+          () -> "at least one blow must deal non-zero damage, saw: " + combat);
+    }
+  }
+
+  @Test
+  void differentSeedsAreCaughtByTheCombatDiff() throws Exception {
+    // Proves the PvE comparison is a real measurement: two worlds that differ ONLY in
+    // their damage seed must be reported as divergent. If this ever goes green the
+    // harness has stopped observing combat.
+    List<Op> script = Op.pveScript();
+    try (World left = World.bootSeeded(tempDir.resolve("seed-a"), SEED, 8, "trainer");
+        World right = World.bootSeeded(tempDir.resolve("seed-b"), SEED + 7_919, 8, "trainer")) {
+      List<OpObservation> leftRun = ShadowDiffMain.observe(left.target(), script, SETTLE,
+          "shadow01", "shadow-pw", "MIR2");
+      List<OpObservation> rightRun = ShadowDiffMain.observe(right.target(), script, SETTLE,
+          "shadow01", "shadow-pw", "MIR2");
+
+      ShadowDiff.Result result = ShadowDiff.compare("left", "right", leftRun, rightRun, false);
+      assertTrue(result.count(ShadowDiff.Severity.STATE) >= 1,
+          () -> "a different damage seed must surface as a state difference:\n"
+              + ShadowReport.markdown(result, script));
+      assertTrue(result.entries().stream()
+              .flatMap(entry -> entry.details().stream())
+              .anyMatch(detail -> detail.startsWith("combat:")),
+          "the difference must be attributed to the combat observations");
+    }
+  }
+
   // ------------------------------------------------------------ harness
 
   private record World(Mir2Server server, WireTarget target) implements AutoCloseable {
@@ -115,6 +168,17 @@ class ShadowSessionEmbeddedTest {
     }
 
     static World boot(Path directory, int spawnX, int spawnY) throws Exception {
+      return boot(directory, spawnX, spawnY, null, 0, "chicken");
+    }
+
+    /** Boots a world with a pinned seed and a ring of monsters (the PvE comparison setup). */
+    static World bootSeeded(Path directory, long seed, int monsters, String monsterKind)
+        throws Exception {
+      return boot(directory, 20, 20, seed, monsters, monsterKind);
+    }
+
+    static World boot(Path directory, int spawnX, int spawnY, Long seed, int monsters,
+        String monsterKind) throws Exception {
       Path database = directory.resolve("mir2.db");
       java.nio.file.Files.createDirectories(directory);
       try (SqliteStore store = new SqliteStore("jdbc:sqlite:" + database.toAbsolutePath())) {
@@ -123,7 +187,7 @@ class ShadowSessionEmbeddedTest {
       }
       GatePorts ports = freePorts();
       ServerConfig config = new ServerConfig(database, ports, "127.0.0.1", "MIR2",
-          null, "0", spawnX, spawnY, 50, 0, "chicken", null, null);
+          null, "0", spawnX, spawnY, 50, monsters, monsterKind, null, null, seed);
       Mir2Server server = new Mir2Server(config);
       server.start();
       return new World(server, WireTarget.of(directory.getFileName().toString(),

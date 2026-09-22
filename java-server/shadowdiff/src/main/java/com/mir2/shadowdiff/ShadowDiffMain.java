@@ -84,10 +84,16 @@ public final class ShadowDiffMain {
       String account, String password, String serverName) throws Exception {
     Path workDir = Files.createTempDirectory("mir2-shadowdiff-");
     long seed = longOption(options, "seed", 20260921);
+    // Stationary trainer dummies by default: they neither chase nor retaliate, so the only
+    // thing a `hit` op depends on is the seeded damage stream — the whole point of the PvE
+    // comparison. `--monster-kind` can point at a walking monster, but then only the
+    // clock-independent parts of the state stay comparable.
+    int monsters = (int) longOption(options, "monsters", options.containsKey("pve") ? 8 : 0);
+    String monsterKind = options.getOrDefault("monster-kind", "trainer");
     try (EmbeddedWorld left = EmbeddedWorld.boot(workDir.resolve("left"), "embedded-left",
-            account, password, serverName, seed);
+            account, password, serverName, seed, monsters, monsterKind);
         EmbeddedWorld right = EmbeddedWorld.boot(workDir.resolve("right"), "embedded-right",
-            account, password, serverName, seed)) {
+            account, password, serverName, seed, monsters, monsterKind)) {
       return compare(left.target(), right.target(), script, settle, strictMessages,
           reportDir, account, password, serverName);
     }
@@ -158,7 +164,7 @@ public final class ShadowDiffMain {
   private record EmbeddedWorld(Mir2Server server, WireTarget target) implements AutoCloseable {
 
     static EmbeddedWorld boot(Path directory, String label, String account, String password,
-        String serverName, long seed) throws Exception {
+        String serverName, long seed, int monsters, String monsterKind) throws Exception {
       Files.createDirectories(directory);
       Path database = directory.resolve("mir2.db");
       try (SqliteStore store = new SqliteStore("jdbc:sqlite:" + database.toAbsolutePath())) {
@@ -166,16 +172,18 @@ public final class ShadowDiffMain {
         if (store.find(account).isEmpty()) auth.register(account, password);
       }
       GatePorts ports = freePorts();
-      // Both worlds must share the map and spawn; monsters stay off so combat outcomes do
-      // not depend on each server's independent Random. Deterministic PvE 对拍 needs the
-      // seeded-random slice, noted in the module docs.
+      // Both worlds share the map, the spawn cell AND the world seed: with MIR2_WORLD_SEED
+      // pinned, each subsystem draws from its own stream (WorldRandom), so the Nth damage
+      // roll is the same on both servers regardless of how the clock-driven subsystems
+      // interleave. That is what makes the PvE ops below comparable at all.
       ServerConfig config = new ServerConfig(database, ports, "127.0.0.1", serverName,
-          null, "0", 20, 20, 50, 0, "chicken", null, null);
+          null, "0", 20, 20, 50, monsters, monsterKind, null, null, seed);
       Mir2Server server = new Mir2Server(config);
       server.start();
       System.out.printf(Locale.ROOT,
-          "[shadowdiff] %s up: login=%d select=%d game=%d db=%s (seed=%d)%n",
-          label, ports.login(), ports.select(), ports.game(), database, seed);
+          "[shadowdiff] %s up: login=%d select=%d game=%d db=%s seed=%d monsters=%dx%s%n",
+          label, ports.login(), ports.select(), ports.game(), database, seed,
+          monsters, monsterKind);
       return new EmbeddedWorld(server, WireTarget.of(label, "127.0.0.1", ports.login()));
     }
 
@@ -204,8 +212,12 @@ public final class ShadowDiffMain {
 
   private static List<Op> loadScript(Map<String, String> options) throws IOException {
     String scriptFile = options.get("script");
-    if (scriptFile == null) return Op.defaultScript();
-    return Op.parseScript(Files.readString(Path.of(scriptFile), StandardCharsets.UTF_8));
+    if (scriptFile != null) {
+      return Op.parseScript(Files.readString(Path.of(scriptFile), StandardCharsets.UTF_8));
+    }
+    // --pve selects the built-in combat script; it only means anything with a pinned seed
+    // and trainer dummies, which is exactly what --pve configures below.
+    return options.containsKey("pve") ? Op.pveScript() : Op.defaultScript();
   }
 
   private static String require(Map<String, String> options, String key) {
@@ -227,7 +239,8 @@ public final class ShadowDiffMain {
         if (!argument.startsWith("--"))
           throw new IllegalArgumentException("unexpected argument: " + argument);
         String key = argument.substring(2);
-        if (key.equals("embedded") || key.equals("help") || key.equals("strict-messages")) {
+        if (key.equals("embedded") || key.equals("help") || key.equals("strict-messages")
+            || key.equals("pve")) {
           options.put(key, "true");
           continue;
         }
@@ -262,12 +275,21 @@ public final class ShadowDiffMain {
         --account S            测试账号（默认 shadow01；角色同名）
         --password S           密码（默认 shadow-pw；remote 模式须两边都能登录）
         --server-name NAME     服务器名（默认 MIR2，须与两边一致）
-        --seed N               （embedded）预留的世界随机种子标注（默认 20260921）
+        --seed N               （embedded）世界随机种子（默认 20260921）。两侧共用同一个种子，
+                               伤害/掉落等各自独立成流，PvE 对拍才可复现；生产默认不设种子
+                               （等价 Delphi 的全局 Random）。remote 模式请用 MIR2_WORLD_SEED
+                               给两台服务端配同一个值。
+        --pve                  用内置 PvE 对拍脚本（走到木桩前连续攻击），并默认放 8 个木桩。
+                               需要两侧同种子；这是「带怪对拍」的开箱即用入口。
+        --monsters N           （embedded）出生点周围放 N 只怪（默认 0；--pve 时默认 8）
+        --monster-kind NAME    （embedded）怪物模板（默认 trainer/木桩：站桩不还手，
+                               行为与墙钟无关，是唯一可确定性对拍的 PvE 目标）
         --left-label/-host/-login-port/-select-port/-game-port    左侧目标
         --right-label/-host/-login-port/-select-port/-game-port   右侧目标
 
       判定:
-        STATE   状态快照差异（地图/坐标/朝向/HP/MP/等级/金币/背包/装备）→ FAIL
+        STATE   状态快照差异（地图/坐标/朝向/HP/MP/等级/经验/金币/背包/装备/战斗）→ FAIL
+                战斗 = 本 op 期间观测到的 SM_STRUCK 伤害与 HP、SM_DEATH、SM_WINEXP
         ACKS    +GOOD/+FAIL 应答序列差异 → FAIL
         MESSAGES 服务端消息集合差异 → 提示（--strict-messages 时 FAIL）
 

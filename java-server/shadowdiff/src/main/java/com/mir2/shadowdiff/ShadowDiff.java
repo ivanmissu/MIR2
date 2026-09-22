@@ -108,7 +108,13 @@ public final class ShadowDiff {
       out.add("mp: " + a.mp() + "/" + a.maxMp() + " vs " + b.mp() + "/" + b.maxMp());
     }
     if (a.level() != b.level()) out.add("level: " + a.level() + " vs " + b.level());
+    if (a.experience() != b.experience()) {
+      out.add("exp: " + a.experience() + " vs " + b.experience());
+    }
     if (a.gold() != b.gold()) out.add("gold: " + a.gold() + " vs " + b.gold());
+    if (!a.combat().equals(b.combat())) {
+      out.add("combat: " + a.combat() + " vs " + b.combat());
+    }
     if (!a.bagItems().equals(b.bagItems())) {
       out.add("bag: " + a.bagItems() + " vs " + b.bagItems());
     }
