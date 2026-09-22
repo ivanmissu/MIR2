@@ -87,7 +87,9 @@ public final class Mir2Server implements AutoCloseable {
         Path mapFile = config.mapFile().toAbsolutePath().normalize();
         if (!Files.isRegularFile(mapFile))
           throw new IllegalArgumentException("MIR2_MAP_FILE does not exist: " + mapFile
-              + " (mount your client's Map directory into the container, read-only)");
+              + ". Under Docker Compose this usually means MIR2_CLIENT_MAP_DIR is unset or points"
+              + " somewhere without a 0.map: set it to your client's Map directory (it is mounted"
+              + " read-only at /maps), or clear MIR2_MAP_FILE to boot on the blank PoC map.");
         worldMaps = List.of(Mir2MapLoader.load(config.mapId(), mapFile));
       }
       initialMap = worldMaps.stream().filter(map -> map.id().equals(config.mapId())).findFirst()
