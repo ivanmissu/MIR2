@@ -69,7 +69,9 @@ public record MonsterTemplate(
       Map.entry("orcwarrior", MonsterTemplate::orcWarrior),
       Map.entry("半兽勇士", MonsterTemplate::orcWarrior),
       Map.entry("orcfighter", MonsterTemplate::orcFighter),
-      Map.entry("半兽战士", MonsterTemplate::orcFighter));
+      Map.entry("半兽战士", MonsterTemplate::orcFighter),
+      Map.entry("trainer", MonsterTemplate::trainer),
+      Map.entry("木桩", MonsterTemplate::trainer));
 
   /** Resolves the templates currently supported by the Java combat slice. */
   public static MonsterTemplate forName(String name) {
@@ -156,5 +158,28 @@ public record MonsterTemplate(
     return new MonsterTemplate("半兽战士", packFeature(23, 0, 0), Ability.monster(110, 12, 18, 2, 5),
         9, 550, 950, 140, MonsterBehavior.AGGRESSIVE,
         List.of(new ItemDrop("木剑", 1, 10), new ItemDrop("金创药(小量)", 40, 3)));
+  }
+
+  /**
+   * 木桩 (training dummy): the Delphi {@code TRAINER} (M2Share.pas:152 → {@code TTrainer},
+   * ObjNpc.pas:2626) — the damage-test object that stands still, never retaliates and
+   * reports 破坏力/平均值 for every blow it absorbs.
+   *
+   * <p>It is modelled here as a {@link MonsterBehavior#STATIONARY} monster rather than an
+   * NPC because the NPC/script engine is still behind the red line: the observable wire
+   * behaviour needed (stand, take damage, die, drop nothing) is fully covered by the monster
+   * object, and no script hook is introduced.
+   *
+   * <p>This is the one target whose behaviour is independent of the wall clock, so it is
+   * what the shadow-comparison harness attacks when 对拍'ing PvE damage across two servers.
+   * Its HP is deliberately large enough to survive a scripted melee sequence, and it drops
+   * nothing so a comparison run cannot be perturbed by loot timing.
+   */
+  // TODO(verify): Delphi builds the trainer from Monster.DB row 55, so HP/AC are whatever
+  // that row carries; the values below are placeholders chosen to be a stable punching bag
+  // until the real Monster.DB import lands.
+  public static MonsterTemplate trainer() {
+    return new MonsterTemplate("木桩", packFeature(55, 0, 0), Ability.monster(5_000, 0, 0, 0, 0),
+        1, 1_000, 1_000, 0, MonsterBehavior.STATIONARY, List.of());
   }
 }

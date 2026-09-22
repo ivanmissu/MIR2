@@ -59,7 +59,14 @@ final class ShadowSession implements AutoCloseable {
   private int mp = -1;
   private int maxMp = -1;
   private int level = -1;
+  private long experience = -1;
   private long gold = -1;
+  /**
+   * Combat facts observed during the current op's drain window, normalised to be
+   * server-independent: object ids are replaced by "self" / "other" because each server
+   * allocates its own. Cleared at the start of every op so each bucket stands alone.
+   */
+  private final List<String> combat = new ArrayList<>();
   private final Map<Integer, BackpackItem> bag = new LinkedHashMap<>();
   private final Map<Integer, BackpackItem> worn = new LinkedHashMap<>();
 
@@ -84,6 +91,7 @@ final class ShadowSession implements AutoCloseable {
    * the real client, a {@code CM_QUERYBAGITEMS} follows immediately after entry.
    */
   OpObservation enter() throws IOException {
+    combat.clear();
     LoginRoute route = login();
     String gameEndpoint = selectCharacter(route);
 
@@ -108,6 +116,7 @@ final class ShadowSession implements AutoCloseable {
   /** Executes one op and returns its observation bucket. */
   OpObservation perform(Op op) throws IOException {
     Objects.requireNonNull(op, "op");
+    combat.clear();
     switch (op.kind()) {
       case SLEEP -> {
         sleep(Duration.ofMillis(op.millis()));
@@ -174,7 +183,8 @@ final class ShadowSession implements AutoCloseable {
 
   StateSnapshot snapshot() {
     return new StateSnapshot(mapId, position.x(), position.y(), direction.code(),
-        hp, maxHp, mp, maxMp, level, gold, itemLines(bag), itemLines(worn));
+        hp, maxHp, mp, maxMp, level, experience, gold, itemLines(bag), itemLines(worn),
+        List.copyOf(combat));
   }
 
   @Override
@@ -396,7 +406,33 @@ final class ShadowSession implements AutoCloseable {
         applyAbility(packet.encodedBody());
       }
       case ProtocolConstants.SM_GOLDCHANGED -> gold = Integer.toUnsignedLong(message.recog());
-      case ProtocolConstants.SM_LEVELUP -> level = message.param();
+      case ProtocolConstants.SM_LEVELUP -> {
+        level = message.param();
+        experience = Integer.toUnsignedLong(message.tag());
+      }
+      // SM_STRUCK: recog=victim, param=HP, tag=MaxHP, series=damage. The victim id is
+      // server-local, so it is reduced to self/other; the damage and the resulting pools
+      // are exactly what the seeded damage stream must reproduce on both servers.
+      case ProtocolConstants.SM_STRUCK -> {
+        boolean self = message.recog() == selfId;
+        combat.add("struck " + (self ? "self" : "other")
+            + " dmg=" + message.series() + " hp=" + message.param() + "/" + message.tag());
+        if (self) {
+          hp = message.param();
+          maxHp = message.tag();
+        }
+      }
+      // SM_DEATH: recog=victim, param/tag=cell. Reported without the id for the same reason.
+      case ProtocolConstants.SM_DEATH -> combat.add("death "
+          + (message.recog() == selfId ? "self" : "other")
+          + " at=(" + message.param() + "," + message.tag() + ")");
+      // SM_WINEXP: recog=total experience, param/tag=low/high word of the gained amount.
+      case ProtocolConstants.SM_WINEXP -> {
+        experience = Integer.toUnsignedLong(message.recog());
+        long gained = (Integer.toUnsignedLong(message.tag()) << 16)
+            | Integer.toUnsignedLong(message.param());
+        combat.add("exp +" + gained + " total=" + experience);
+      }
       case ProtocolConstants.SM_BAGITEMS -> {
         bag.clear();
         for (BackpackItem item : decodeItemBlocks(packet.encodedBody())) {
@@ -484,6 +520,7 @@ final class ShadowSession implements AutoCloseable {
     mp = buffer.getShort() & 0xffff;
     maxHp = buffer.getShort() & 0xffff;
     maxMp = buffer.getShort() & 0xffff;
+    experience = Integer.toUnsignedLong(buffer.getInt());
   }
 
   private static List<BackpackItem> decodeItemBlocks(String encodedBody) {

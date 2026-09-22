@@ -89,6 +89,33 @@ class ServerConfigTest {
   }
 
   @Test
+  void worldSeedIsUnsetByDefaultAndSplitsTheStreamsWhenPinned() {
+    // Production default: no seed => one shared generator, i.e. Delphi's global Random.
+    ServerConfig unseeded = ServerConfig.from(Map.of());
+    assertNull(unseeded.worldSeed());
+    assertFalse(unseeded.worldRandom().isSeeded());
+
+    ServerConfig seeded = ServerConfig.from(Map.of("MIR2_WORLD_SEED", "20260922"));
+    assertEquals(20260922L, seeded.worldSeed());
+    assertTrue(seeded.worldRandom().isSeeded());
+    assertEquals(20260922L, seeded.worldRandom().seed().orElseThrow());
+
+    // Negative seeds are legal (it is a 64-bit seed, not a count).
+    assertEquals(-5L, ServerConfig.from(Map.of("MIR2_WORLD_SEED", "-5")).worldSeed());
+    assertThrows(IllegalArgumentException.class,
+        () -> ServerConfig.from(Map.of("MIR2_WORLD_SEED", "not-a-number")));
+  }
+
+  @Test
+  void trainerDummyIsASelectableMonsterKind() {
+    // The shadow harness boots worlds with --monster-kind trainer, so the name must resolve.
+    assertEquals("木桩",
+        ServerConfig.from(Map.of("MIR2_MONSTER_KIND", "trainer")).monsterTemplate().name());
+    assertEquals("木桩",
+        ServerConfig.from(Map.of("MIR2_MONSTER_KIND", "木桩")).monsterTemplate().name());
+  }
+
+  @Test
   void partialCredentialsAndInvalidPortsFailFast() {
     assertThrows(IllegalArgumentException.class,
         () -> ServerConfig.from(Map.of("MIR2_BOOTSTRAP_USER", "admin")));

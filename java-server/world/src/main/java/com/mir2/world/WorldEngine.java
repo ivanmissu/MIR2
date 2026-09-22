@@ -163,7 +163,7 @@ public final class WorldEngine implements AutoCloseable {
   private final AtomicBoolean closed = new AtomicBoolean();
   private final AtomicLong tickCount = new AtomicLong();
   private final LongSupplier clock;
-  private final Random random;
+  private final WorldRandom random;
   private final PlayerStateStore playerStateStore;
   private final ItemDatabase itemDatabase;
   private final IntSupplier hourSupplier;
@@ -172,11 +172,13 @@ public final class WorldEngine implements AutoCloseable {
   private int nextItemMakeIndex = 1;
 
   public WorldEngine(Config config, Collection<GameMap> maps) {
-    this(config, maps, System::currentTimeMillis, new Random(), PlayerStateStore.none());
+    this(config, maps, System::currentTimeMillis, WorldRandom.unseeded(), PlayerStateStore.none(),
+        ItemDatabase.empty());
   }
 
   public WorldEngine(Config config, Collection<GameMap> maps, PlayerStateStore playerStateStore) {
-    this(config, maps, System::currentTimeMillis, new Random(), playerStateStore, ItemDatabase.empty());
+    this(config, maps, System::currentTimeMillis, WorldRandom.unseeded(), playerStateStore,
+        ItemDatabase.empty());
   }
 
   public WorldEngine(
@@ -184,7 +186,22 @@ public final class WorldEngine implements AutoCloseable {
       Collection<GameMap> maps,
       PlayerStateStore playerStateStore,
       ItemDatabase itemDatabase) {
-    this(config, maps, System::currentTimeMillis, new Random(), playerStateStore, itemDatabase);
+    this(config, maps, System::currentTimeMillis, WorldRandom.unseeded(), playerStateStore,
+        itemDatabase);
+  }
+
+  /**
+   * Production constructor with an explicit randomness policy. Pass
+   * {@link WorldRandom#seeded(long)} to make the damage/loot streams reproducible across two
+   * server processes — the precondition for PvE 影子对拍.
+   */
+  public WorldEngine(
+      Config config,
+      Collection<GameMap> maps,
+      PlayerStateStore playerStateStore,
+      ItemDatabase itemDatabase,
+      WorldRandom random) {
+    this(config, maps, System::currentTimeMillis, random, playerStateStore, itemDatabase);
   }
 
   public WorldEngine(Collection<GameMap> maps) {
@@ -193,7 +210,7 @@ public final class WorldEngine implements AutoCloseable {
 
   /** Deterministic constructor: tests inject a virtual clock and a seeded damage generator. */
   public WorldEngine(Config config, Collection<GameMap> maps, LongSupplier clock, Random random) {
-    this(config, maps, clock, random, PlayerStateStore.none(), ItemDatabase.empty());
+    this(config, maps, clock, WorldRandom.of(random), PlayerStateStore.none(), ItemDatabase.empty());
   }
 
   /** Deterministic constructor with a durable player-state port. */
@@ -203,7 +220,7 @@ public final class WorldEngine implements AutoCloseable {
       LongSupplier clock,
       Random random,
       PlayerStateStore playerStateStore) {
-    this(config, maps, clock, random, playerStateStore, ItemDatabase.empty());
+    this(config, maps, clock, WorldRandom.of(random), playerStateStore, ItemDatabase.empty());
   }
 
   /** Deterministic constructor with a durable player-state port and the standard-item catalog. */
@@ -214,6 +231,17 @@ public final class WorldEngine implements AutoCloseable {
       Random random,
       PlayerStateStore playerStateStore,
       ItemDatabase itemDatabase) {
+    this(config, maps, clock, WorldRandom.of(random), playerStateStore, itemDatabase);
+  }
+
+  /** Deterministic constructor taking the split-stream randomness policy directly. */
+  public WorldEngine(
+      Config config,
+      Collection<GameMap> maps,
+      LongSupplier clock,
+      WorldRandom random,
+      PlayerStateStore playerStateStore,
+      ItemDatabase itemDatabase) {
     this(config, maps, clock, random, playerStateStore, itemDatabase, () -> LocalTime.now().getHour());
   }
 
@@ -222,6 +250,17 @@ public final class WorldEngine implements AutoCloseable {
       Collection<GameMap> maps,
       LongSupplier clock,
       Random random,
+      PlayerStateStore playerStateStore,
+      ItemDatabase itemDatabase,
+      IntSupplier hourSupplier) {
+    this(config, maps, clock, WorldRandom.of(random), playerStateStore, itemDatabase, hourSupplier);
+  }
+
+  public WorldEngine(
+      Config config,
+      Collection<GameMap> maps,
+      LongSupplier clock,
+      WorldRandom random,
       PlayerStateStore playerStateStore,
       ItemDatabase itemDatabase,
       IntSupplier hourSupplier) {
@@ -255,6 +294,15 @@ public final class WorldEngine implements AutoCloseable {
 
   public long tickCount() {
     return tickCount.get();
+  }
+
+  /**
+   * The world seed when this engine draws from independent per-stream generators
+   * ({@link WorldRandom#seeded(long)}), otherwise empty. Two engines reporting the same seed
+   * produce the same damage and loot sequences, which is what makes PvE 影子对拍 meaningful.
+   */
+  public java.util.OptionalLong worldSeed() {
+    return random.seed();
   }
 
   public CompletableFuture<WorldObjectSnapshot> enterPlayer(
@@ -1042,7 +1090,8 @@ public final class WorldEngine implements AutoCloseable {
     int damage = rollDamage(player.ability, target.ability());
     applyDamage(target, player, damage);
     // AttackTarget.GetHitStruckDamage only assigns weapon wear when the blow penetrates AC.
-    if (damage > 0) damageEquipment(player, EquipmentSlot.WEAPON, random.nextInt(5) + 2);
+    if (damage > 0) damageEquipment(player, EquipmentSlot.WEAPON,
+        random.nextInt(WorldRandom.Stream.EQUIPMENT_WEAR, 5) + 2);
     return new AttackResult(true, attacker, target.snapshot(), damage);
   }
 
@@ -1605,7 +1654,7 @@ public final class WorldEngine implements AutoCloseable {
 
   private int randomBetween(int min, int max) {
     if (min >= max) return min;
-    return min + random.nextInt(max - min + 1);
+    return random.between(WorldRandom.Stream.DAMAGE, min, max);
   }
 
   private void applyDamage(WorldObject victim, WorldObject attacker, int damage) {
@@ -1722,13 +1771,14 @@ public final class WorldEngine implements AutoCloseable {
   /** {@code StruckDamage}: dress always wears; every occupied slot also has a 1/8 chance. */
   private void wearArmorOnStruck(Player player) {
     if (player.equipment.isEmpty()) return;
-    int wear = random.nextInt(10) + 5;
+    int wear = random.nextInt(WorldRandom.Stream.EQUIPMENT_WEAR, 10) + 5;
     damageEquipment(player, EquipmentSlot.DRESS, wear);
     // Snapshot the slots because a zero-durability item is removed during iteration.
     List<EquipmentSlot> occupied = player.equipment.inSlotOrder().stream()
         .map(Map.Entry::getKey).toList();
     for (EquipmentSlot slot : occupied) {
-      if (random.nextInt(8) == 0) damageEquipment(player, slot, wear);
+      if (random.nextInt(WorldRandom.Stream.EQUIPMENT_WEAR, 8) == 0)
+        damageEquipment(player, slot, wear);
     }
   }
 
@@ -1821,7 +1871,7 @@ public final class WorldEngine implements AutoCloseable {
     List<GroundItem> landed = new ArrayList<>();
     // Delphi walks the bag backwards so removals do not disturb the remaining indexes.
     for (int index = player.backpack.size() - 1; index >= 0; index--) {
-      if (random.nextInt(DIE_SCATTER_BAG_RATE) != 0) continue;
+      if (random.nextInt(WorldRandom.Stream.DEATH_SCATTER, DIE_SCATTER_BAG_RATE) != 0) continue;
       BackpackItem item = player.backpack.get(index);
       Position cell = findDropPosition(player.map, player.position);
       if (cell == null) continue; // DropItemDown failed: the entry stays in the bag.
@@ -2001,7 +2051,7 @@ public final class WorldEngine implements AutoCloseable {
 
   private void dropLoot(Monster monster) {
     for (ItemDrop drop : monster.template.drops()) {
-      if (random.nextInt(drop.oneIn()) != 0) continue;
+      if (random.nextInt(WorldRandom.Stream.LOOT_DROP, drop.oneIn()) != 0) continue;
       Position dropPosition = findDropPosition(monster.map, monster.position);
       if (dropPosition == null) continue;
       int itemId = allocateObjectId();
@@ -2076,7 +2126,7 @@ public final class WorldEngine implements AutoCloseable {
       for (int i = 0; i < missing; i++) {
         Position pos = pickSpawnerCell(spawner.map, spawner.center, spawner.radius);
         if (pos == null) break;
-        Direction dir = Direction.fromCode(random.nextInt(8));
+        Direction dir = Direction.fromCode(random.nextInt(WorldRandom.Stream.SPAWN, 8));
         WorldObjectSnapshot snapshot = spawn(spawner.template, spawner.map.id(), pos, dir);
         spawner.spawnedMonsterIds.add(snapshot.id());
       }
@@ -2088,8 +2138,8 @@ public final class WorldEngine implements AutoCloseable {
       return map.canWalk(center) ? center : null;
     }
     for (int attempt = 0; attempt < 30; attempt++) {
-      int x = center.x() + random.nextInt(2 * radius + 1) - radius;
-      int y = center.y() + random.nextInt(2 * radius + 1) - radius;
+      int x = center.x() + random.nextInt(WorldRandom.Stream.SPAWN, 2 * radius + 1) - radius;
+      int y = center.y() + random.nextInt(WorldRandom.Stream.SPAWN, 2 * radius + 1) - radius;
       Position candidate = new Position(x, y);
       if (map.canWalk(candidate)) return candidate;
     }
@@ -2124,6 +2174,9 @@ public final class WorldEngine implements AutoCloseable {
         }
         continue;
       }
+      // TMonster.Run with m_boNoAttackMode (ObjMon.pas:449) skips the entire
+      // target/chase/attack block, so a stationary dummy never even looks for a player.
+      if (monster.template.behavior() == MonsterBehavior.STATIONARY) continue;
       Player target = acquireTarget(monster);
       if (target == null) continue;
       int distance = monster.position.distanceTo(target.position);

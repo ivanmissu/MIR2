@@ -184,4 +184,45 @@ public record Op(Kind kind, Direction direction, String text, long millis) {
         turn 0
         """);
   }
+
+  /**
+   * The PvE comparison script: walk onto a stationary trainer dummy and hit it repeatedly.
+   *
+   * <p>This only produces a meaningful verdict when both servers run the same world seed
+   * (see {@code WorldRandom}): each blow's damage is drawn from the seeded DAMAGE stream, so
+   * two correctly-matched servers must report the identical {@code SM_STRUCK} damage
+   * sequence and the identical remaining HP on the dummy. The dummy neither moves nor
+   * retaliates, so nothing here depends on the wall clock; the sleeps only clear the shared
+   * {@code CM_HIT} action interval (900ms).
+   *
+   * <p>Assumes the harness booted the world with {@code --monsters N --monster-kind trainer}.
+   * {@code Mir2Server.spawnMonsters} rings the spawn cell at radius 2 scanning {@code dx}
+   * then {@code dy} from -2 upward, so with spawn (20,20) the first dummies land on the
+   * x=18 column — i.e. two cells to the <em>west</em>. The script therefore steps west once
+   * to (19,20) and beats on the dummy standing at (18,20).
+   */
+  public static List<Op> pveScript() {
+    return parseScript("""
+        # --- close on the dummy ring (spawn 20,20; first dummies sit on the x=18 column) ---
+        bag
+        turn 6
+        walk 6
+        # --- melee the dummy now standing due west; sleeps clear the 900ms CM_HIT interval ---
+        hit 6
+        sleep 1000
+        hit 6
+        sleep 1000
+        hit 6
+        sleep 1000
+        heavyhit 6
+        sleep 1000
+        bighit 6
+        sleep 1000
+        hit 6
+        sleep 1000
+        # --- state must survive the persistence round trip identically ---
+        relog
+        bag
+        """);
+  }
 }

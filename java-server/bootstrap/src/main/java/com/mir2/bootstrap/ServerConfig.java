@@ -28,7 +28,8 @@ public record ServerConfig(
     int connectionAttemptWindowSeconds,
     int idleTimeoutSeconds,
     int saveIntervalSeconds,
-    long testGold) {
+    long testGold,
+    Long worldSeed) {
 
   /** Compatibility constructor for embedded tests and load-test callers. */
   public ServerConfig(Path database, GatePorts ports, String advertisedHost, String serverName,
@@ -36,7 +37,16 @@ public record ServerConfig(
       String monsterKind, String bootstrapUser, String bootstrapPassword) {
     this(database, ports, advertisedHost, serverName, mapFile, null, mapId, spawnX, spawnY,
         worldTickMillis, monsterCount, monsterKind, null, bootstrapUser, bootstrapPassword,
-        128, 300, 60, 900, 600, 0);
+        128, 300, 60, 900, 600, 0, null);
+  }
+
+  /** Compatibility constructor that also pins the world seed (shadow comparison harness). */
+  public ServerConfig(Path database, GatePorts ports, String advertisedHost, String serverName,
+      Path mapFile, String mapId, int spawnX, int spawnY, int worldTickMillis, int monsterCount,
+      String monsterKind, String bootstrapUser, String bootstrapPassword, Long worldSeed) {
+    this(database, ports, advertisedHost, serverName, mapFile, null, mapId, spawnX, spawnY,
+        worldTickMillis, monsterCount, monsterKind, null, bootstrapUser, bootstrapPassword,
+        128, 300, 60, 900, 600, 0, worldSeed);
   }
 
   public ServerConfig {
@@ -107,7 +117,23 @@ public record ServerConfig(
         positiveInt(environment, "MIR2_SAVE_INTERVAL_SECONDS", 600),
         // g_Config.nTestGold defaults to 0 under boTestServer (ObjBase.pas:16360): a login
         // wallet floor for test servers, kept at the shipped no-op default.
-        nonNegativeLong(environment, "MIR2_TEST_GOLD", 0));
+        nonNegativeLong(environment, "MIR2_TEST_GOLD", 0),
+        // Unset (the production default) = one shared, randomly seeded generator, exactly
+        // like Delphi's global Random. Setting it splits randomness into independent
+        // per-subsystem streams derived from this seed so two servers can be 对拍'd with
+        // monsters alive; see WorldRandom.
+        nullableLong(environment, "MIR2_WORLD_SEED"));
+  }
+
+  /**
+   * The randomness policy for the world engine: unseeded (Delphi's shared global generator)
+   * unless {@code MIR2_WORLD_SEED} pins it, in which case each subsystem draws from its own
+   * stream so two processes stay in step.
+   */
+  public com.mir2.world.WorldRandom worldRandom() {
+    return worldSeed == null
+        ? com.mir2.world.WorldRandom.unseeded()
+        : com.mir2.world.WorldRandom.seeded(worldSeed);
   }
 
   /** Resolves the configured melee monster used to populate the PoC map. */
@@ -158,6 +184,16 @@ public record ServerConfig(
       return result;
     } catch (NumberFormatException error) {
       throw new IllegalArgumentException(key + " must be a non-negative integer", error);
+    }
+  }
+
+  private static Long nullableLong(Map<String, String> environment, String key) {
+    String raw = nullable(environment.get(key));
+    if (raw == null) return null;
+    try {
+      return Long.parseLong(raw);
+    } catch (NumberFormatException error) {
+      throw new IllegalArgumentException(key + " must be a 64-bit integer seed", error);
     }
   }
 
