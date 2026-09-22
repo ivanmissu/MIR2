@@ -231,27 +231,64 @@ public final class Mir2Server implements AutoCloseable {
     int placed = 0;
     // Start outside the spawn's safe zone. Monsters may not attack anyone standing in it
     // anyway, but a ring of creatures pressed against the town square is not what the
-    // original looks like — MonGen.txt keeps its spawn points off the start squares.
+    // original looks like -- MonGen.txt keeps its spawn points off the start squares.
     int firstRadius = config.safeZoneSize() + 1;
-    for (int radius = firstRadius; radius < Math.max(map.width(), map.height()) && placed < config.monsterCount(); radius++) {
-      for (int dx = -radius; dx <= radius && placed < config.monsterCount(); dx++) {
-        for (int dy = -radius; dy <= radius && placed < config.monsterCount(); dy++) {
-          if (Math.abs(dx) != radius && Math.abs(dy) != radius) continue;
-          Position candidate = new Position(spawn.x() + dx, spawn.y() + dy);
-          if (!map.canWalk(candidate)) continue;
-          try {
-            world.spawnMonster(template, map.id(), candidate, Direction.DOWN)
-                .get(5, TimeUnit.SECONDS);
-            placed++;
-          } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-            return;
-          } catch (ExecutionException | TimeoutException error) {
-            LOG.log(Level.WARNING, "monster spawn failed at " + candidate, error);
-          }
+    int maxRadius = Math.max(map.width(), map.height());
+    for (int radius = firstRadius; radius < maxRadius && placed < config.monsterCount(); radius++) {
+      // Spread the group evenly around the perimeter. Scanning the bounding box row by row
+      // (or even walking the ring in order) packs every monster onto a single edge.
+      for (Position candidate : spreadAroundRing(spawn, radius, config.monsterCount() - placed)) {
+        if (placed >= config.monsterCount()) break;
+        if (!map.canWalk(candidate)) continue;
+        try {
+          world.spawnMonster(template, map.id(), candidate, Direction.DOWN)
+              .get(5, TimeUnit.SECONDS);
+          placed++;
+        } catch (InterruptedException interrupted) {
+          Thread.currentThread().interrupt();
+          return;
+        } catch (ExecutionException | TimeoutException error) {
+          LOG.log(Level.WARNING, "monster spawn failed at " + candidate, error);
         }
       }
     }
+    if (placed < config.monsterCount())
+      LOG.warning("Only placed " + placed + " of " + config.monsterCount()
+          + " monsters: no walkable cells left around " + spawn);
+  }
+
+  /**
+   * The ring's cells reordered so that taking the first {@code wanted} of them spaces the
+   * group evenly around the spawn instead of bunching it against one edge. The remaining
+   * cells follow in perimeter order as fallbacks for blocked terrain.
+   */
+  private static List<Position> spreadAroundRing(Position centre, int radius, int wanted) {
+    List<Position> perimeter = ringCells(centre, radius);
+    if (wanted <= 0 || wanted >= perimeter.size()) return perimeter;
+    List<Position> ordered = new java.util.ArrayList<>(perimeter.size());
+    boolean[] taken = new boolean[perimeter.size()];
+    for (int i = 0; i < wanted; i++) {
+      int index = (int) ((long) i * perimeter.size() / wanted);
+      if (taken[index]) continue;
+      taken[index] = true;
+      ordered.add(perimeter.get(index));
+    }
+    for (int i = 0; i < perimeter.size(); i++) {
+      if (!taken[i]) ordered.add(perimeter.get(i));
+    }
+    return ordered;
+  }
+
+  /** The cells exactly {@code radius} away from {@code centre}, clockwise from the top-left. */
+  private static List<Position> ringCells(Position centre, int radius) {
+    List<Position> cells = new java.util.ArrayList<>(Math.max(1, radius * 8));
+    int low = -radius;
+    int high = radius;
+    for (int dx = low; dx <= high; dx++) cells.add(new Position(centre.x() + dx, centre.y() + low));
+    for (int dy = low + 1; dy <= high; dy++) cells.add(new Position(centre.x() + high, centre.y() + dy));
+    for (int dx = high - 1; dx >= low; dx--) cells.add(new Position(centre.x() + dx, centre.y() + high));
+    for (int dy = high - 1; dy >= low + 1; dy--) cells.add(new Position(centre.x() + low, centre.y() + dy));
+    return cells;
   }
 
   public boolean isRunning() {

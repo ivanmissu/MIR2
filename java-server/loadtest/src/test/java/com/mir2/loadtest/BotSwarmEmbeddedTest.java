@@ -97,8 +97,10 @@ class BotSwarmEmbeddedTest {
     Path database = tempDir.resolve("mir2-" + System.nanoTime() + ".db");
     LoadtestMain.seedAccounts(database, "tb", bots, "pw");
     GatePorts ports = freePorts();
+    // The swarm measures combat throughput, so the bots need monsters they can actually
+    // reach; disable the start-point safe zone the way the shadow harness does.
     ServerConfig config = new ServerConfig(database, ports, "127.0.0.1", "MIR2",
-        null, "0", 20, 20, 50, monsters, "chicken", null, null);
+        null, "0", 20, 20, 50, monsters, "chicken", null, null).withSafeZoneSize(0);
     Mir2Server server = new Mir2Server(config);
     server.start();
     BotSwarm.Spec spec = new BotSwarm.Spec(bots, duration, Duration.ofMillis(40L * bots),

@@ -92,6 +92,21 @@ public record ServerConfig(
     return from(System.getenv());
   }
 
+  /**
+   * Returns a copy with a different start-point safe-zone radius.
+   *
+   * <p>Test harnesses use this to opt out: they seed the debug monster ring specifically so
+   * that creatures stand next to the spawn, which a production-sized safe zone pushes out of
+   * reach.
+   */
+  public ServerConfig withSafeZoneSize(int newSafeZoneSize) {
+    return new ServerConfig(database, ports, advertisedHost, serverName, mapFile, mapInfoFile,
+        mapId, spawnX, spawnY, worldTickMillis, monsterCount, monsterKind, monGenFile,
+        bootstrapUser, bootstrapPassword, maxConnectionsPerIp, connectionAttemptsPerWindow,
+        connectionAttemptWindowSeconds, idleTimeoutSeconds, saveIntervalSeconds, testGold,
+        worldSeed, newSafeZoneSize);
+  }
+
   static ServerConfig from(Map<String, String> environment) {
     return new ServerConfig(
         Path.of(value(environment, "MIR2_DATABASE", "data/mir2.db")),

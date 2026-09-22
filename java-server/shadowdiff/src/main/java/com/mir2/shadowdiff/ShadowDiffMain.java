@@ -176,8 +176,11 @@ public final class ShadowDiffMain {
       // pinned, each subsystem draws from its own stream (WorldRandom), so the Nth damage
       // roll is the same on both servers regardless of how the clock-driven subsystems
       // interleave. That is what makes the PvE ops below comparable at all.
+      // The comparison worlds deliberately seat their dummies right next to the spawn so the
+      // PvE script can reach them, so the start-point safe zone is switched off here. A real
+      // deployment keeps the shipped nSafeZoneSize=10.
       ServerConfig config = new ServerConfig(database, ports, "127.0.0.1", serverName,
-          null, "0", 20, 20, 50, monsters, monsterKind, null, null, seed);
+          null, "0", 20, 20, 50, monsters, monsterKind, null, null, seed).withSafeZoneSize(0);
       Mir2Server server = new Mir2Server(config);
       server.start();
       System.out.printf(Locale.ROOT,

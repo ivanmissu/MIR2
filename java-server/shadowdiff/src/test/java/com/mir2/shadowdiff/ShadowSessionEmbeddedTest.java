@@ -186,8 +186,10 @@ class ShadowSessionEmbeddedTest {
         if (store.find("shadow01").isEmpty()) auth.register("shadow01", "shadow-pw");
       }
       GatePorts ports = freePorts();
+      // Same as ShadowDiffMain: the dummies have to stand within the PvE script's reach.
       ServerConfig config = new ServerConfig(database, ports, "127.0.0.1", "MIR2",
-          null, "0", spawnX, spawnY, 50, monsters, monsterKind, null, null, seed);
+          null, "0", spawnX, spawnY, 50, monsters, monsterKind, null, null, seed)
+          .withSafeZoneSize(0);
       Mir2Server server = new Mir2Server(config);
       server.start();
       return new World(server, WireTarget.of(directory.getFileName().toString(),

@@ -181,7 +181,9 @@ public final class LoadtestMain {
     ServerConfig config = new ServerConfig(database, ports, "127.0.0.1",
         fallbackSpec.serverName(), mapFile, null, "0", spawnX, spawnY, tickMillis, monsters,
         monsterKind, null, null, null, maxActivePerIp, attemptsPerWindow, 60, 900, 600, 0, null,
-        com.mir2.world.StartPoint.DEFAULT_SAFE_ZONE_SIZE);
+        // The swarm exists to hammer the combat path, so the debug monster ring has to sit
+        // within reach of the spawn: no start-point safe zone in this harness.
+        0);
     Mir2Server server = new Mir2Server(config);
     server.start();
 
