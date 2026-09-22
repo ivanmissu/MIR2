@@ -180,7 +180,8 @@ public final class LoadtestMain {
     int attemptsPerWindow = Math.max(300, fallbackSpec.bots() * loginsPerSession * 12);
     ServerConfig config = new ServerConfig(database, ports, "127.0.0.1",
         fallbackSpec.serverName(), mapFile, null, "0", spawnX, spawnY, tickMillis, monsters,
-        monsterKind, null, null, null, maxActivePerIp, attemptsPerWindow, 60, 900, 600, 0, null);
+        monsterKind, null, null, null, maxActivePerIp, attemptsPerWindow, 60, 900, 600, 0, null,
+        com.mir2.world.StartPoint.DEFAULT_SAFE_ZONE_SIZE);
     Mir2Server server = new Mir2Server(config);
     server.start();
 

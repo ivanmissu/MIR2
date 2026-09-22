@@ -15,6 +15,7 @@ import com.mir2.world.MonGenLoader;
 import com.mir2.world.MonsterSpawnDefinition;
 import com.mir2.world.MonsterTemplate;
 import com.mir2.world.Position;
+import com.mir2.world.StartPoint;
 import com.mir2.world.WorldEngine;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -75,9 +76,18 @@ public final class Mir2Server implements AutoCloseable {
             ? Path.of(".") : mapInfoFile.getParent(), mapInfo);
         pendingRoutes = mapInfo.routes();
       } else if (config.mapFile() == null) {
+        // No real map was configured. This featureless fallback only exists so the process
+        // can boot in tests and smoke runs; a playable server must point MIR2_MAP_FILE at a
+        // client .map (see docs/deployment.md).
+        LOG.warning("No MIR2_MAP_FILE or MIR2_MAPINFO_FILE configured — falling back to a blank "
+            + "generated map. Mount your client's Map directory and set MIR2_MAP_FILE to play "
+            + "on the real 比奇省 terrain.");
         worldMaps = List.of(GameMap.empty(config.mapId(), "PoC empty map", 256, 256));
       } else {
         Path mapFile = config.mapFile().toAbsolutePath().normalize();
+        if (!Files.isRegularFile(mapFile))
+          throw new IllegalArgumentException("MIR2_MAP_FILE does not exist: " + mapFile
+              + " (mount your client's Map directory into the container, read-only)");
         worldMaps = List.of(Mir2MapLoader.load(config.mapId(), mapFile));
       }
       initialMap = worldMaps.stream().filter(map -> map.id().equals(config.mapId())).findFirst()
@@ -85,8 +95,20 @@ public final class Mir2Server implements AutoCloseable {
               "spawn map '" + config.mapId() + "' is not among the loaded maps" + worldMaps.stream()
                   .map(GameMap::id).collect(java.util.stream.Collectors.joining(", ", " [", "]"))));
       Position spawn = new Position(config.spawnX(), config.spawnY());
+      if (!initialMap.contains(spawn))
+        throw new IllegalArgumentException("configured spawn lies outside map '" + initialMap.id()
+            + "' (" + initialMap.width() + "x" + initialMap.height() + "): " + spawn);
+      // A blocked cell is not fatal: logins go through enterPlayerNear, which walks out to the
+      // nearest free cell. 289,618 on the real 比奇省 sits by the fountain and can be occupied
+      // by scenery in some client revisions, so warn instead of refusing to boot.
       if (!initialMap.isTerrainWalkable(spawn))
-        throw new IllegalArgumentException("configured spawn is outside the map or blocked: " + spawn);
+        LOG.warning("Configured spawn " + spawn + " is blocked terrain on map '" + initialMap.id()
+            + "'; players will enter at the nearest walkable cell.");
+      // g_StartPoint (LocalDB.pas:LoadStartPoint): the spawn is a town square, and every start
+      // point radiates a safe zone of nSafeZoneSize cells. TBaseObject.IsAttackTarget refuses
+      // to let a monster pick a player standing inside one, which is what keeps a freshly
+      // created character from being mobbed the moment it logs in.
+      initialMap.addStartPoint(new StartPoint(spawn, config.safeZoneSize()));
       world = new WorldEngine(
           new WorldEngine.Config(Duration.ofMillis(config.worldTickMillis()), 12, 10_000,
               900, 5_000, 180_000, 200, config.saveIntervalSeconds() * 1_000L,
@@ -207,7 +229,11 @@ public final class Mir2Server implements AutoCloseable {
     if (config.monsterCount() == 0) return;
     MonsterTemplate template = config.monsterTemplate();
     int placed = 0;
-    for (int radius = 2; radius < Math.max(map.width(), map.height()) && placed < config.monsterCount(); radius++) {
+    // Start outside the spawn's safe zone. Monsters may not attack anyone standing in it
+    // anyway, but a ring of creatures pressed against the town square is not what the
+    // original looks like — MonGen.txt keeps its spawn points off the start squares.
+    int firstRadius = config.safeZoneSize() + 1;
+    for (int radius = firstRadius; radius < Math.max(map.width(), map.height()) && placed < config.monsterCount(); radius++) {
       for (int dx = -radius; dx <= radius && placed < config.monsterCount(); dx++) {
         for (int dy = -radius; dy <= radius && placed < config.monsterCount(); dy++) {
           if (Math.abs(dx) != radius && Math.abs(dy) != radius) continue;

@@ -981,7 +981,8 @@ public final class WorldEngine implements AutoCloseable {
     // RM_ABILITY is part of the login refresh in the Delphi server. Sending the complete
     // packed ability immediately after the map bootstrap prevents a fresh client from
     // retaining placeholder HP/MP/level values until its first later mutation.
-    emit(player, new WorldEvent.AbilityChanged(player.id, player.ability, player.gold, player.job));
+    emit(player, new WorldEvent.AbilityChanged(
+        player.id, player.ability, player.gold, player.job, player.weights()));
     WorldEvent appeared = new WorldEvent.ObjectAppeared(player.snapshot());
     for (int viewerId : visibleIds) emit(players.get(viewerId), appeared);
     // The test-gold floor is announced once the client can actually see itself.
@@ -1492,7 +1493,8 @@ public final class WorldEngine implements AutoCloseable {
    */
   private void emitEquipmentChange(Player player, WorldEvent change) {
     emit(player, change);
-    emit(player, new WorldEvent.AbilityChanged(player.id, player.ability, player.gold, player.job));
+    emit(player, new WorldEvent.AbilityChanged(
+        player.id, player.ability, player.gold, player.job, player.weights()));
     emitWeight(player);
     // FeatureChanged() broadcasts the new look to everyone who can see the player.
     WorldObjectSnapshot snapshot = player.snapshot();
@@ -1810,7 +1812,8 @@ public final class WorldEngine implements AutoCloseable {
     emit(player, new WorldEvent.ItemDurabilityChanged(
         player.id, slot, worn.makeIndex(), nextDura, worn.duraMax(), broken));
     if (broken) {
-      emit(player, new WorldEvent.AbilityChanged(player.id, player.ability, player.gold, player.job));
+      emit(player, new WorldEvent.AbilityChanged(
+        player.id, player.ability, player.gold, player.job, player.weights()));
       emitWeight(player);
       WorldEvent appearance = new WorldEvent.ObjectAppeared(player.snapshot());
       for (int viewerId : visibleIds(player.map, player.position, player.id)) {
@@ -1920,7 +1923,8 @@ public final class WorldEngine implements AutoCloseable {
       throw failure;
     }
     emitToObserversAndSelf(player, new WorldEvent.ObjectRevived(player.snapshot()));
-    emit(player, new WorldEvent.AbilityChanged(player.id, player.ability, player.gold, player.job));
+    emit(player, new WorldEvent.AbilityChanged(
+        player.id, player.ability, player.gold, player.job, player.weights()));
     return true;
   }
 
@@ -2045,7 +2049,8 @@ public final class WorldEngine implements AutoCloseable {
     emit(player, new WorldEvent.LevelUp(
         player.id, reached.level(), reached.experience(), reached));
     // RM_LEVELUP's handler also refreshes the whole ability block (ObjBase.pas:5584).
-    emit(player, new WorldEvent.AbilityChanged(player.id, reached, player.gold, player.job));
+    emit(player, new WorldEvent.AbilityChanged(
+        player.id, reached, player.gold, player.job, player.weightsAtLevel(reached.level())));
     emitToObserversAndSelf(player, new WorldEvent.HealthChanged(player.snapshot()));
   }
 
@@ -2194,7 +2199,7 @@ public final class WorldEngine implements AutoCloseable {
 
   private Player acquireTarget(Monster monster) {
     Player current = players.get(monster.targetId);
-    if (current != null && current.ability.alive() && current.map.id().equals(monster.map.id())
+    if (current != null && isAttackTarget(current) && current.map.id().equals(monster.map.id())
         && monster.position.distanceTo(current.position) <= config.viewRange()) {
       return current;
     }
@@ -2203,7 +2208,7 @@ public final class WorldEngine implements AutoCloseable {
     int closestDistance = Integer.MAX_VALUE;
     for (int viewerId : visibleIds(monster.map, monster.position, monster.id)) {
       Player candidate = players.get(viewerId);
-      if (candidate == null || !candidate.ability.alive()) continue;
+      if (candidate == null || !isAttackTarget(candidate)) continue;
       int distance = monster.position.distanceTo(candidate.position);
       if (distance < closestDistance) {
         closestDistance = distance;
@@ -2212,6 +2217,15 @@ public final class WorldEngine implements AutoCloseable {
     }
     if (closest != null) monster.targetId = closest.id;
     return closest;
+  }
+
+  /**
+   * The monster half of {@code TBaseObject.IsAttackTarget} (ObjBase.pas:21370): a creature
+   * never picks a player standing in a safe zone. Delphi only tests the *target* here — a
+   * monster inside the zone may still be hit by a player who reaches it.
+   */
+  private static boolean isAttackTarget(Player player) {
+    return player.ability.alive() && !player.map.isSafeZone(player.position);
   }
 
   private void monsterAttack(Monster monster, Player target, long now) {
@@ -2604,16 +2618,6 @@ public final class WorldEngine implements AutoCloseable {
   }
 
   private static final class Player implements WorldObject {
-    /**
-     * {@code TAbility.MaxWearWeight}/{@code MaxHandWeight} come from the character's level
-     * and job in the Delphi server ({@code RecalcLevelAbilitys}). That table is not migrated
-     * yet, so the engine uses the classic level-1 baseline for every player.
-     */
-    // TODO(verify): replace with the real MaxWearWeight/MaxHandWeight curves when the
-    // level-ability table lands.
-    private static final int BASE_MAX_WEAR_WEIGHT = 30;
-    private static final int BASE_MAX_HAND_WEIGHT = 20;
-
     private final int id;
     private final UUID characterId;
     private final String name;
@@ -2700,12 +2704,33 @@ public final class WorldEngine implements AutoCloseable {
       return total;
     }
 
+    /**
+     * {@code RecalcLevelAbilitys} sets the base limit from job and level, then
+     * {@code RecalcAbilitys} adds the worn set's bonuses (ObjBase.pas:1889, 2818).
+     */
     private int maxWearWeight() {
-      return BASE_MAX_WEAR_WEIGHT + bonus.maxWearWeightBonus();
+      return LevelAbilities.maxWearWeight(job, ability.level()) + bonus.maxWearWeightBonus();
     }
 
     private int maxHandWeight() {
-      return BASE_MAX_HAND_WEIGHT + bonus.maxHandWeightBonus();
+      return LevelAbilities.maxHandWeight(job, ability.level()) + bonus.maxHandWeightBonus();
+    }
+
+    /** The full {@code TAbility} weight block: current totals plus the recalculated maxima. */
+    private WeightLimits weights() {
+      return weightsAtLevel(ability.level());
+    }
+
+    /**
+     * The same block for an explicit level. Awarding enough experience to cross several
+     * levels at once emits one {@code RM_ABILITY} per level, and each has to carry the
+     * limits of *that* level rather than the final one.
+     */
+    private WeightLimits weightsAtLevel(int level) {
+      return new WeightLimits(
+          bagWeight(), LevelAbilities.maxWeight(job, level) + bonus.maxWeightBonus(),
+          bonus.wearWeight(), LevelAbilities.maxWearWeight(job, level) + bonus.maxWearWeightBonus(),
+          bonus.handWeight(), LevelAbilities.maxHandWeight(job, level) + bonus.maxHandWeightBonus());
     }
 
     /**

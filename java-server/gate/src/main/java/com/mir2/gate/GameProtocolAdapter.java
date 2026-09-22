@@ -531,7 +531,7 @@ public final class GameProtocolAdapter implements WorldEventSink {
         (int) changed.gold(),
         (changed.job() & 0xff) | (99 << 8),
         0, 0,
-        AbilityCodec.encode(changed.ability()))));
+        AbilityCodec.encode(changed.ability(), changed.weights()))));
   }
 
   /** {@code SM_SENDUSEITEMS}; ObjBase.pas:16930 stays silent when nothing is worn. */

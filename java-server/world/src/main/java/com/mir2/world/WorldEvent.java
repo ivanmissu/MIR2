@@ -433,12 +433,23 @@ public sealed interface WorldEvent
    * (ObjBase.pas:5685), and the client refreshes its gold display from every SM_ABILITY, so
    * the event has to carry both alongside the 50-byte body.
    */
-  record AbilityChanged(int playerId, Ability ability, long gold, int job) implements WorldEvent {
+  record AbilityChanged(int playerId, Ability ability, long gold, int job, WeightLimits weights)
+      implements WorldEvent {
     public AbilityChanged {
       if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
       Objects.requireNonNull(ability, "ability");
+      Objects.requireNonNull(weights, "weights");
       if (gold < 0) throw new IllegalArgumentException("gold must not be negative");
       if (job < 0) throw new IllegalArgumentException("job must not be negative");
+    }
+
+    /**
+     * Compatibility overload for callers that predate the weight block. It derives the limits
+     * from the ability's level using the warrior curve, which is what a bare
+     * {@code RecalcLevelAbilitys} would produce for the default job.
+     */
+    public AbilityChanged(int playerId, Ability ability, long gold, int job) {
+      this(playerId, ability, gold, job, WeightLimits.forLevel(job, ability.level()));
     }
   }
 
