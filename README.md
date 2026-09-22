@@ -114,7 +114,10 @@ Java 服务端。
 - **怪物 AI 框架 + 首批 10 种怪、MonGen 自动刷新、在线周期存档（W09）**：`AGGRESSIVE` / `PASSIVE_FLEE`
   双行为模板（鸡/鹿/稻草人/多钩猫/钉耙猫/洞蛆/蝎子/半兽人/半兽勇士/半兽战士，鹿复刻 `TChickenDeer`
   逃跑 AI）；`addSpawner` 复刻 `RegenMonsters`——200ms 轮转、`CertList` 存活统计、按行内刷新间隔补足；
-  `MIR2_SAVE_INTERVAL_SECONDS`（默认 600s）逐玩家周期落库（`SaveHumanRcdTime` 语义）
+  `MIR2_SAVE_INTERVAL_SECONDS`（默认 600s）逐玩家周期落库（`SaveHumanRcdTime` 语义）；
+  怪物线上 Feature 的 **RaceImg/Appr 已按官方 1.76 Monster.DB（GEEM2 基线转储）校正**
+  （此前 Appr 占位值 0 会让真实 mir2.exe 把所有怪渲染成 `Mon1.wil` 第 0 块的卫士/大刀守卫），
+  回归测试 `MonsterAppearanceTest` 钉死该对照表；战斗数值仍为 TODO(verify) 占位
 - **门与传送点（W10）**：`.map` 门锚点解析（`btDoorIndex` `$80` 锚点 + 同 index `±10` 共享
   `TDoorStatus`）、`CM_OPENDOOR → SM_OPENDOOR_OK`（±12 广播）、500ms 扫拍 + 5 秒自动关门
   （`ProcessMapDoor` 语义，广播 `SM_CLOSEDOOR`）；`MapInfo.txt`（`loadmapinfo` 包含、`;` 注释、
