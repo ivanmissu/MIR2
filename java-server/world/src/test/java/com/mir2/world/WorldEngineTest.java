@@ -63,8 +63,9 @@ class WorldEngineTest {
       AttackResult swingResult = swing.join();
       assertTrue(swingResult.accepted(), "the swing itself must be accepted");
       assertTrue(swingResult.hitNothing(), "an NPC can never be a melee victim");
-      assertTrue(world.snapshot(npc.id()).join().alive());
-      assertEquals("老兵", world.snapshot(npc.id()).join().name());
+      WorldObjectSnapshot npcAfter = runTick(world, world.snapshot(npc.id()));
+      assertTrue(npcAfter.alive(), "an NPC can never be damaged");
+      assertEquals("老兵", npcAfter.name());
 
       // Names resolve through the CretInNearXY 3x3 window: on the quoted cell yes, two
       // cells off (the client's stale belief) the answer is a ghost.
