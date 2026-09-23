@@ -38,6 +38,13 @@ class WorldEquipmentTest {
         StdItem.packedRange(4, 9), 0, 0, 0, 0, /*need*/ 0, /*needLevel*/ 40, 5000);
   }
 
+  /** Reserved bit 2/4 item: mirrors 赤血魔剑-style cannot-take-off behaviour. */
+  private static StdItem lockedSword() {
+    return new StdItem("锁定剑", 5, 1, 1, 0, 0,
+        /*reserved*/ 4, /*needIdentify*/ 0, 31, 1000,
+        0, 0, StdItem.packedRange(1, 1), 0, 0, 0, 1, 10);
+  }
+
   @Test
   void takeOnMovesTheItemIntoItsSlotAppliesStatsAndChangesTheFeature() {
     List<WorldEvent> events = new ArrayList<>();
@@ -92,6 +99,29 @@ class WorldEquipmentTest {
       assertEquals(List.of("木剑"), state.backpack().stream().map(BackpackItem::name).toList());
       WorldEvent.ItemUnequipped off = single(events, WorldEvent.ItemUnequipped.class);
       assertSame(EquipmentSlot.WEAPON, off.slot());
+    }
+  }
+
+  @Test
+  void reservedLockBitsRefuseTakingOffAndSwappingTheWornItem() {
+    List<WorldEvent> events = new ArrayList<>();
+    try (WorldEngine world = engine(GameMap.empty("0", "PoC", 20, 20), lockedSword(), woodenSword())) {
+      WorldObjectSnapshot player = enterWith(world, events, lockedSword(), woodenSword());
+      assertTrue(run(world, world.equip(player.id(), EquipmentSlot.WEAPON.index(), 1, "锁定剑")));
+
+      events.clear();
+      assertFalse(run(world, world.unequip(player.id(), EquipmentSlot.WEAPON.index(), 1, "锁定剑")));
+      assertSame(WorldEvent.UnequipRejection.CANNOT_TAKE_OFF,
+          single(events, WorldEvent.UnequipRejected.class).detail());
+      assertEquals("锁定剑", run(world, world.equipment(player.id()))
+          .at(EquipmentSlot.WEAPON).orElseThrow().name());
+
+      events.clear();
+      assertFalse(run(world, world.equip(player.id(), EquipmentSlot.WEAPON.index(), 2, "木剑")));
+      assertSame(WorldEvent.EquipRejection.CANNOT_TAKE_OFF_EXISTING,
+          single(events, WorldEvent.EquipRejected.class).detail());
+      assertEquals(List.of("木剑"), run(world, world.playerState(player.id()))
+          .backpack().stream().map(BackpackItem::name).toList());
     }
   }
 

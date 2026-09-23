@@ -51,7 +51,7 @@ export class ClientItemCodec {
     buffer.writeUInt8(std.weight & 0xff, ClientItemCodec.WEIGHT_OFFSET);
     buffer.writeUInt8(std.aniCount & 0xff, ClientItemCodec.ANI_COUNT_OFFSET);
     buffer.writeInt8(std.source, ClientItemCodec.SOURCE_OFFSET);
-    buffer.writeUInt8(0, ClientItemCodec.RESERVED_OFFSET);
+    buffer.writeUInt8((std.reserved ?? 0) & 0xff, ClientItemCodec.RESERVED_OFFSET);
     buffer.writeUInt8(std.needIdentify & 0xff, ClientItemCodec.NEED_IDENTIFY_OFFSET);
     buffer.writeUInt16LE(std.looks & 0xffff, ClientItemCodec.LOOKS_OFFSET);
     buffer.writeUInt32LE(std.duraMax >>> 0, ClientItemCodec.DURA_MAX_OFFSET);
@@ -104,6 +104,7 @@ export class ClientItemCodec {
       weight: bytes.readUInt8(ClientItemCodec.WEIGHT_OFFSET),
       aniCount: bytes.readUInt8(ClientItemCodec.ANI_COUNT_OFFSET),
       source: bytes.readInt8(ClientItemCodec.SOURCE_OFFSET),
+      reserved: bytes.readUInt8(ClientItemCodec.RESERVED_OFFSET),
       needIdentify: bytes.readUInt8(ClientItemCodec.NEED_IDENTIFY_OFFSET),
       looks: bytes.readUInt16LE(ClientItemCodec.LOOKS_OFFSET),
       duraMax: bytes.readUInt32LE(ClientItemCodec.DURA_MAX_OFFSET),

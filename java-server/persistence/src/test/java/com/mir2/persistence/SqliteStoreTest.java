@@ -93,6 +93,71 @@ class SqliteStoreTest {
   }
 
   @Test
+  void upgradesW18CatalogRowsBySplittingReservedFromNeedIdentify() throws Exception {
+    Path file = Files.createTempFile("mir2-w18-catalog-", ".db");
+    String url = "jdbc:sqlite:" + file;
+    StdItem prayerBlade = StdItems.require("祈祷之刃");
+    try (var connection = DriverManager.getConnection(url);
+         Statement statement = connection.createStatement()) {
+      statement.executeUpdate("""
+          CREATE TABLE std_items (
+            name TEXT PRIMARY KEY,
+            std_mode INTEGER NOT NULL,
+            shape INTEGER NOT NULL,
+            weight INTEGER NOT NULL,
+            ani_count INTEGER NOT NULL,
+            source INTEGER NOT NULL,
+            need_identify INTEGER NOT NULL,
+            looks INTEGER NOT NULL,
+            dura_max INTEGER NOT NULL,
+            ac INTEGER NOT NULL,
+            mac INTEGER NOT NULL,
+            dc INTEGER NOT NULL,
+            mc INTEGER NOT NULL,
+            sc INTEGER NOT NULL,
+            need INTEGER NOT NULL,
+            need_level INTEGER NOT NULL,
+            price INTEGER NOT NULL)
+          """);
+      try (var insert = connection.prepareStatement("""
+          INSERT INTO std_items(
+            name, std_mode, shape, weight, ani_count, source, need_identify, looks,
+            dura_max, ac, mac, dc, mc, sc, need, need_level, price)
+          VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          """)) {
+        insert.setString(1, prayerBlade.name());
+        insert.setInt(2, prayerBlade.stdMode());
+        insert.setInt(3, prayerBlade.shape());
+        insert.setInt(4, prayerBlade.weight());
+        insert.setInt(5, prayerBlade.aniCount());
+        insert.setInt(6, prayerBlade.source());
+        // W18 stored the DB's Reserved byte in need_identify because the model had no
+        // separate Reserved field yet.
+        insert.setInt(7, prayerBlade.reserved());
+        insert.setInt(8, prayerBlade.looks());
+        insert.setLong(9, prayerBlade.duraMax());
+        insert.setLong(10, prayerBlade.ac());
+        insert.setLong(11, prayerBlade.mac());
+        insert.setLong(12, prayerBlade.dc());
+        insert.setLong(13, prayerBlade.mc());
+        insert.setLong(14, prayerBlade.sc());
+        insert.setLong(15, prayerBlade.need());
+        insert.setLong(16, prayerBlade.needLevel());
+        insert.setLong(17, prayerBlade.price());
+        insert.executeUpdate();
+      }
+    }
+
+    try (SqliteStore upgraded = new SqliteStore(url)) {
+      StdItem restored = upgraded.itemDatabase().find("祈祷之刃").orElseThrow();
+      assertEquals(8, restored.reserved());
+      assertEquals(0, restored.needIdentify(), "NeedIdentify must be restored to the Delphi loader default");
+    } finally {
+      Files.deleteIfExists(file);
+    }
+  }
+
+  @Test
   void accountAndCharacterAreSeparated() {
     try (SqliteStore store = new SqliteStore("jdbc:sqlite::memory:")) {
       store.saveAccount("a", new byte[] {3});

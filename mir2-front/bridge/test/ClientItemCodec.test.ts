@@ -77,12 +77,36 @@ describe('ClientItemCodec', () => {
 
     expect(decoded.item.name).toBe('木剑');
     expect(decoded.item.stdMode).toBe(5);
+    expect(decoded.item.reserved).toBe(0);
     expect(decoded.item.looks).toBe(1);
     expect(decoded.item.dc).toBe(0x00050002);
     expect(decoded.item.price).toBe(400);
     expect(decoded.makeIndex).toBe(0x1234);
     expect(decoded.dura).toBe(20);
     expect(decoded.duraMax).toBe(20);
+  });
+
+  it('keeps Reserved and NeedIdentify as separate TStdItem bytes', () => {
+    const prayerBlade: BackpackItem = {
+      item: {
+        ...woodenSword,
+        name: '祈祷之刃',
+        reserved: 8,
+        needIdentify: 0,
+        looks: 66
+      },
+      makeIndex: 710,
+      dura: 20,
+      duraMax: 20
+    };
+
+    const bytes = ClientItemCodec.bytes(prayerBlade);
+    expect(bytes[ClientItemCodec.RESERVED_OFFSET]).toBe(8);
+    expect(bytes[ClientItemCodec.NEED_IDENTIFY_OFFSET]).toBe(0);
+
+    const decoded = ClientItemCodec.decode(ClientItemCodec.encode(prayerBlade));
+    expect(decoded.item.reserved).toBe(8);
+    expect(decoded.item.needIdentify).toBe(0);
   });
 
   it('packs a full twenty-byte GBK name without splitting a character', () => {

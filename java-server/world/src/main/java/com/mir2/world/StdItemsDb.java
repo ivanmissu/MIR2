@@ -20,7 +20,9 @@ import java.util.Optional;
  * Delphi dword layout {@code MakeLong(min, max)} — e.g. {@code Dc, Dc2} become one
  * {@code dc} dword whose low word is the lower bound. The dump's extension columns
  * ({@code Stock}, {@code Color}, elements, insurance, …) have no {@code TStdItem} field
- * and are deliberately not imported. {@code Reserved} maps to {@code needIdentify}.
+ * and are deliberately not imported. The dump's {@code Reserved} column maps to the distinct
+ * {@code TStdItem.Reserved} byte; classic {@code NeedIdentify} is not present in the dump and
+ * stays zero, matching {@code TItem.Create} defaults in the Delphi loader.
  *
  * <p>Two names appear twice upstream ({@code 魔法头盔} idx 65/265, {@code 火龙气焰}
  * idx 412/671). Like the Delphi first-hit lookup, the earlier row wins; both rows are kept
@@ -68,7 +70,8 @@ public final class StdItemsDb {
               num(f[4]),  /* weight */
               num(f[5]),  /* aniCount */
               num(f[6]),  /* source (signed byte in Delphi) */
-              num(f[7]),  /* reserved → needIdentify */
+              num(f[7]),  /* reserved */
+              0,          /* needIdentify: not present in GEEM2 dump */
               num(f[8]),  /* looks */
               lng(f[9]),  /* duraMax */
               pack(num(f[10]), num(f[11])),  /* ac/ac2 */

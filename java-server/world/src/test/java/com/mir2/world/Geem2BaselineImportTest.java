@@ -153,6 +153,12 @@ class Geem2BaselineImportTest {
     assertEquals(16, ring.needLevel());
     assertEquals(20000, ring.price());
 
+    StdItem prayerBlade = StdItems.require("祈祷之刃");
+    assertEquals(8, prayerBlade.reserved(), "official Reserved byte drives death-drop quirks");
+    assertEquals(0, prayerBlade.needIdentify(), "Reserved must not be conflated with NeedIdentify");
+    StdItem redBloodSword = StdItems.require("赤血魔剑");
+    assertEquals(12, redBloodSword.reserved(), "赤血魔剑 has both Reserved bit 3 and bit 2");
+
     // Duplicate names collapse to the first row of the raw import (Delphi first-hit).
     List<StdItem> raw = StdItemsDb.parse(new BufferedReader(new java.io.InputStreamReader(
         Geem2BaselineImportTest.class.getResourceAsStream("/db/StdItemsDb.tsv"),
