@@ -170,6 +170,9 @@ public final class SqliteStore implements AutoCloseable,
     ensureColumn("character_inventory", "dura_max", "INTEGER NOT NULL DEFAULT 0");
     // Upgrade W14 states in place: rows predating the W15 repair slice carry no wallet.
     ensureColumn("character_state", "gold", "INTEGER NOT NULL DEFAULT 0");
+    // Upgrade W15 states in place: rows predating the W20 PK slice carry no murder counter.
+    // Delphi's HumData.nPKPOINT defaults to 0 for every character that never killed anyone.
+    ensureColumn("character_state", "pk_point", "INTEGER NOT NULL DEFAULT 0");
     // Upgrade W18 catalog caches in place: Reserved and NeedIdentify are distinct bytes in
     // TStdItem. W18 temporarily stored the official Reserved flags in need_identify.
     ensureColumn("std_items", "reserved", "INTEGER NOT NULL DEFAULT 0");
@@ -382,10 +385,11 @@ public final class SqliteStore implements AutoCloseable,
     Ability defaults = Ability.defaultPlayer();
     try (PreparedStatement statement = connection.prepareStatement("""
         INSERT INTO character_state(
-          character_id, hp, max_hp, mp, max_mp, min_dc, max_dc, min_ac, max_ac, level, experience, gold)
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          character_id, hp, max_hp, mp, max_mp, min_dc, max_dc, min_ac, max_ac, level, experience,
+          gold, pk_point)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """)) {
-      bindAbility(statement, characterId, defaults, level, 0);
+      bindAbility(statement, characterId, defaults, level, 0, 0);
       statement.executeUpdate();
     }
   }
@@ -434,7 +438,8 @@ public final class SqliteStore implements AutoCloseable,
   public synchronized Optional<PlayerState> load(UUID characterId) {
     Objects.requireNonNull(characterId, "characterId");
     try (PreparedStatement statement = connection.prepareStatement("""
-        SELECT hp, max_hp, mp, max_mp, min_dc, max_dc, min_ac, max_ac, level, experience, gold
+        SELECT hp, max_hp, mp, max_mp, min_dc, max_dc, min_ac, max_ac, level, experience, gold,
+               pk_point
         FROM character_state WHERE character_id = ?
         """)) {
       statement.setString(1, characterId.toString());
@@ -453,7 +458,7 @@ public final class SqliteStore implements AutoCloseable,
             result.getLong("experience"));
         return Optional.of(new PlayerState(
             characterId, ability, loadBackpack(characterId), loadEquipment(characterId),
-            result.getLong("gold")));
+            result.getLong("gold"), result.getInt("pk_point")));
       }
     } catch (SQLException error) {
       throw failure(error);
@@ -583,7 +588,7 @@ public final class SqliteStore implements AutoCloseable,
             throw new NoSuchElementException("character not found: " + state.characterId());
           }
         }
-        upsertAbility(state.characterId(), state.ability(), state.gold());
+        upsertAbility(state.characterId(), state.ability(), state.gold(), state.pkPoint());
         replaceBackpack(state.characterId(), state.backpack());
         replaceEquipment(state.characterId(), state.equipment());
         return null;
@@ -593,11 +598,13 @@ public final class SqliteStore implements AutoCloseable,
     }
   }
 
-  private void upsertAbility(UUID characterId, Ability ability, long gold) throws SQLException {
+  private void upsertAbility(UUID characterId, Ability ability, long gold, int pkPoint)
+      throws SQLException {
     try (PreparedStatement statement = connection.prepareStatement("""
         INSERT INTO character_state(
-          character_id, hp, max_hp, mp, max_mp, min_dc, max_dc, min_ac, max_ac, level, experience, gold)
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          character_id, hp, max_hp, mp, max_mp, min_dc, max_dc, min_ac, max_ac, level, experience,
+          gold, pk_point)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(character_id) DO UPDATE SET
           hp = excluded.hp,
           max_hp = excluded.max_hp,
@@ -609,16 +616,17 @@ public final class SqliteStore implements AutoCloseable,
           max_ac = excluded.max_ac,
           level = excluded.level,
           experience = excluded.experience,
-          gold = excluded.gold
+          gold = excluded.gold,
+          pk_point = excluded.pk_point
         """)) {
-      bindAbility(statement, characterId, ability, ability.level(), gold);
+      bindAbility(statement, characterId, ability, ability.level(), gold, pkPoint);
       statement.executeUpdate();
     }
   }
 
   private static void bindAbility(
-      PreparedStatement statement, UUID characterId, Ability ability, int level, long gold)
-      throws SQLException {
+      PreparedStatement statement, UUID characterId, Ability ability, int level, long gold,
+      int pkPoint) throws SQLException {
     statement.setString(1, characterId.toString());
     statement.setInt(2, ability.hp());
     statement.setInt(3, ability.maxHp());
@@ -631,6 +639,7 @@ public final class SqliteStore implements AutoCloseable,
     statement.setInt(10, level);
     statement.setLong(11, ability.experience());
     statement.setLong(12, gold);
+    statement.setInt(13, pkPoint);
   }
 
   /**

@@ -179,7 +179,8 @@ public final class MapInfoLoader {
     maps.add(new MapDefinition(id, fileAlias, description, flags));
   }
 
-  private static MapFlags parseFlags(List<String> tokens) {
+  /** Visible for tests: the flag-token half of a MapInfo.txt line. */
+  static MapFlags parseFlags(List<String> tokens) {
     boolean safeZone = false;
     boolean darkness = false;
     boolean dayLight = false;
@@ -195,6 +196,7 @@ public final class MapInfoLoader {
     int expRate = -1;
     boolean noDrug = false;
     boolean noThrowItem = false;
+    boolean noDropItem = false;
 
     for (String token : tokens) {
       String upper = token.toUpperCase();
@@ -216,6 +218,8 @@ public final class MapInfoLoader {
         noDrug = true;
       } else if (upper.equals("NOTHROWITEM")) {
         noThrowItem = true;
+      } else if (upper.equals("NODROPITEM")) {
+        noDropItem = true;
       } else if (upper.equals("RUNHUMAN")) {
         runHuman = true;
       } else if (upper.equals("RUNMON")) {
@@ -236,7 +240,7 @@ public final class MapInfoLoader {
     return new MapFlags(
         safeZone, darkness, dayLight, fightZone, fight3Zone, quiz,
         noReconnect, noReconnectMap, noChat, runHuman, runMon, musicId, expRate,
-        noDrug, noThrowItem);
+        noDrug, noThrowItem, noDropItem);
   }
 
   private static String extractParentheses(String token) {

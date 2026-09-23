@@ -47,10 +47,50 @@ public final class WorldEngine implements AutoCloseable {
 
   /**
    * {@code g_Config.nDieScatterBagRate} (M2Share.pas:2020): a non-red character drops one bag
-   * entry in three when it dies. Red names drop everything, but the PK-level model is not
-   * migrated yet, so only the ordinary rate applies.
+   * entry in three when it dies. A red name ({@code PKLevel >= 2}) under
+   * {@code boDieRedScatterBagAll} drops the whole bag instead — see {@link #scatterBagItems}.
    */
   private static final int DIE_SCATTER_BAG_RATE = 3;
+
+  /**
+   * {@code g_Config.boDieRedScatterBagAll} (M2Share.pas:2021) ships as {@code True}: a red
+   * name loses its entire bag rather than the ordinary one third.
+   */
+  private static final boolean DIE_RED_SCATTER_BAG_ALL = true;
+
+  /**
+   * {@code g_Config.nDieDropUseItemRate} (M2Share.pas:2022) = 30: each worn slot has a 1-in-30
+   * chance of falling to the ground when the wearer dies.
+   */
+  private static final int DIE_DROP_USE_ITEM_RATE = 30;
+
+  /**
+   * {@code g_Config.nDieRedDropUseItemRate} (M2Share.pas:2023) = 15: {@code PKLevel > 2}
+   * (i.e. 深红, 300+ points) doubles the equipment-drop odds.
+   */
+  private static final int DIE_RED_DROP_USE_ITEM_RATE = 15;
+
+  /** {@code DropUseItems} always scatters within {@code nScatterRange = 2} of the corpse. */
+  private static final int DIE_DROP_USE_ITEM_RANGE = 2;
+
+  /**
+   * {@code g_Config.boKillByMonstDropUseItem} (M2Share.pas:2026) ships as {@code True} and
+   * {@code boKillByHumanDropUseItem} (M2Share.pas:2025) as {@code False}: dying to a monster
+   * scatters equipment, dying to another player does not.
+   */
+  private static final boolean KILL_BY_MONSTER_DROP_USE_ITEM = true;
+
+  private static final boolean KILL_BY_HUMAN_DROP_USE_ITEM = false;
+
+  /** {@code StdItem.Reserved and 8}: the item is deleted outright on death, never dropped. */
+  private static final int RESERVED_DESTROY_ON_DEATH = 0x08;
+
+  /**
+   * {@code StdItem.Reserved and 10} ({@code = 8 or 2}): after a successful
+   * {@code DropItemDown} the slot is only cleared when neither bit is set — the "bound" item
+   * lands on the floor <em>and</em> stays worn, a duplication quirk kept verbatim.
+   */
+  private static final int RESERVED_KEEP_SLOT_ON_DROP = 0x0A;
 
   /** {@code g_Config.nMonOneDropGoldCount} (M2Share.pas:1959): one monster gold pile caps here. */
   private static final int MON_ONE_DROP_GOLD_COUNT = 2_000;
@@ -77,6 +117,15 @@ public final class WorldEngine implements AutoCloseable {
    * fires — 「复活戒指生效，体力恢复.」 in the shipped GBK source.
    */
   private static final String REVIVAL_RECOVER_MESSAGE = "复活戒指生效，体力恢复.";
+
+  /** {@code g_sYouMurderedMsg} (M2Share.pas:3236). */
+  private static final String YOU_MURDERED_MESSAGE = "你犯了谋杀罪...";
+
+  /** {@code g_sYouKilledByMsg} (M2Share.pas:3237), formatted with the killer's name. */
+  private static final String YOU_KILLED_BY_MESSAGE = "你被%s杀害了...";
+
+  /** {@code g_sYouProtectedByLawOfDefense} (M2Share.pas): a lawful kill, no PK points. */
+  private static final String PROTECTED_BY_LAW_MESSAGE = "[--你受到正当规则保护--]";
 
   /** {@code g_Config.nSuperRepairPriceRate} (M2Share.pas) = 3. */
   private static final int SUPER_REPAIR_PRICE_RATE = 3;
@@ -771,6 +820,27 @@ public final class WorldEngine implements AutoCloseable {
     });
   }
 
+  /**
+   * {@code TPlayObject.CmdIncPkPoint} (ObjBase.pas:13211), the GM {@code @IncPkPoint} command:
+   * {@code Inc(m_nPkPoint, nPoint); RefNameColor()}. Delphi always repaints, even when the
+   * derived level did not move, so that is reproduced here. The counter is clamped at zero —
+   * {@code DecPKPoint} does the same on its own path.
+   */
+  public CompletableFuture<Integer> addPkPoint(int playerId, int points) {
+    return submit(() -> {
+      Player player = requirePlayer(playerId);
+      player.pkPoint = Math.max(0, player.pkPoint + points);
+      broadcastNameColor(player);
+      persist(player);
+      return player.pkPoint;
+    });
+  }
+
+  /** {@code TPlayObject.CmdPKPoint} (ObjBase.pas:13966), the GM {@code @PKPoint} query. */
+  public CompletableFuture<Integer> pkPoint(int playerId) {
+    return submit(() -> requirePlayer(playerId).pkPoint);
+  }
+
   public CompletableFuture<Void> leavePlayer(int playerId) {
     return submit(() -> {
       leave(playerId);
@@ -891,6 +961,7 @@ public final class WorldEngine implements AutoCloseable {
     }
     regenSpawners();
     updateMonsters();
+    decayPkPoints();
     regenerateHealthAndSpell();
     makeGhostsOfExpiredCorpses();
     expireGroundItems();
@@ -956,6 +1027,11 @@ public final class WorldEngine implements AutoCloseable {
         restored.ability(), restored.backpack(), restored.equipment(), job, sink);
     // UsrEngn.pas:2310 restores m_nGold from the character record (HumData.nGold).
     player.gold = restored.gold();
+    // HumData.nPKPOINT (ObjBase.pas:24904) travels with the character record; m_boPKFlag does
+    // not — it is a transient combat marker and always starts clear.
+    player.pkPoint = restored.pkPoint();
+    // TBaseObject.Initialize (ObjBase.pas:1370) stamps the decay window at creation time.
+    player.decPkPointTick = clock.getAsLong();
     // UserLogon's test-server block (ObjBase.pas:16360): under g_Config.boTestServer the
     // wallet is topped up to nTestGold (default 0, i.e. a no-op). Delphi does not notify the
     // client here; the notification is deferred until after MapEntered below so the client
@@ -1488,6 +1564,8 @@ public final class WorldEngine implements AutoCloseable {
         base.maxExperience());
     player.bonus = bonus;
     player.revival = equipmentGrantsRevival(player.equipment);
+    // The same RecalcAbilitys pass rebuilds the three death-penalty flags.
+    player.dropProtection = DropProtection.of(player.equipment);
   }
 
   /**
@@ -1715,6 +1793,9 @@ public final class WorldEngine implements AutoCloseable {
       broadcastStruck(victim, attacker.id(), 0);
       return;
     }
+    // RM_STRUCK handling (ObjBase.pas:5477) sets the attacker's PK flag before the damage is
+    // applied, so even a non-lethal blow between players repaints the aggressor's name.
+    setPkFlag(victim, attacker);
     Ability before = victim.ability();
     int nextHp = Math.max(0, before.hp() - damage);
     Ability updated = before.withHp(nextHp);
@@ -1802,7 +1883,7 @@ public final class WorldEngine implements AutoCloseable {
         nDura = 0;
         // SendDelItems reads the slot before it is cleared, so the removal message still
         // names the item.
-        emit(player, new WorldEvent.ItemsRemoved(player.id, List.of(worn)));
+        emit(player, WorldEvent.ItemsRemoved.ofItems(player.id, List.of(worn)));
         player.equipment = player.equipment.without(slot);
         anyDestroyed = true;
       } else {
@@ -1890,6 +1971,12 @@ public final class WorldEngine implements AutoCloseable {
       // TBaseObject.Die marks the object dead and stamps m_dwDeathTick before anything else,
       // because ScatterBagItems and the RM_DEATH broadcast both observe that state.
       player.diedAt = clock.getAsLong();
+      // ObjBase.pas:20938 — the PK bookkeeping runs before the item penalties, because
+      // ScatterBagItems reads the (possibly just raised) PKLevel of the victim, not the killer.
+      applyMurderPenalty(player, killer);
+      // ObjBase.pas:20999-21012, the RC_PLAYOBJECT branch of Die: DropUseItems runs first
+      // (gated on who landed the kill), then the boDieScatterBag bag scatter.
+      dropUseItems(player, killer);
       scatterBagItems(player);
     }
     WorldEvent death = new WorldEvent.ObjectDied(victim.snapshot(), killer.id());
@@ -1910,22 +1997,27 @@ public final class WorldEngine implements AutoCloseable {
    * {@code 1 / nDieScatterBagRate} (default 3) chance to drop within {@code DropWide = 2}
    * cells, and the dropped set is reported back through {@code RM_SENDDELITEMLIST}.
    *
-   * <p>Worn gear is untouched here. The catalogue now carries {@code StdItem.Reserved}, so
-   * the remaining {@code DropUseItems} work is the actual equipment-scatter branch plus its
-   * PK/red-name and server-config gates.
+   * <p>W20 completes the two gates Delphi applies before the loop: the 护身 / 不掉物品 worn
+   * flags ({@code m_boAngryRing or m_boNoDropItem}, see {@link DropProtection}) skip the
+   * scatter entirely, and {@code g_Config.boDieRedScatterBagAll} makes a red name
+   * ({@code PKLevel >= 2}) drop <em>everything</em> instead of one third. Worn gear is handled
+   * separately by {@link #dropUseItems}.
    */
-  // TODO(verify): DropUseItems (equipment drop on death) still needs the PK level model,
-  // disable-take-off config and deletion-list quirks; only the bag scatters today.
   private void scatterBagItems(Player player) {
     if (player.backpack.isEmpty()) return;
     // Delphi refuses the whole scatter on a NODROPITEM map (m_PEnvir.Flag.boNODROPITEM).
-    if (player.map.flags().isNoThrowItem()) return;
+    if (player.map.flags().isNoDropItem()) return;
+    // ObjBase.pas:26660 — 护身戒指 (m_boAngryRing) or a 不掉包裹 item exits before any roll.
+    if (player.dropProtection.blocksBagScatter()) return;
+    // ObjBase.pas:26663 — boDieRedScatterBagAll and PKLevel >= 2: the whole bag goes.
+    boolean dropAll = DIE_RED_SCATTER_BAG_ALL && PkLevel.isRed(player.pkPoint);
     List<BackpackItem> previousBackpack = List.copyOf(player.backpack);
     List<BackpackItem> dropped = new ArrayList<>();
     List<GroundItem> landed = new ArrayList<>();
     // Delphi walks the bag backwards so removals do not disturb the remaining indexes.
     for (int index = player.backpack.size() - 1; index >= 0; index--) {
-      if (random.nextInt(WorldRandom.Stream.DEATH_SCATTER, DIE_SCATTER_BAG_RATE) != 0) continue;
+      if (!dropAll
+          && random.nextInt(WorldRandom.Stream.DEATH_SCATTER, DIE_SCATTER_BAG_RATE) != 0) continue;
       BackpackItem item = player.backpack.get(index);
       Position cell = findDropPosition(player.map, player.position);
       if (cell == null) continue; // DropItemDown failed: the entry stays in the bag.
@@ -1952,7 +2044,108 @@ public final class WorldEngine implements AutoCloseable {
         emit(players.get(viewerId), appeared);
       }
     }
-    emit(player, new WorldEvent.ItemsRemoved(player.id, dropped));
+    emit(player, WorldEvent.ItemsRemoved.ofItems(player.id, dropped));
+  }
+
+  /**
+   * {@code TPlayObject.DropUseItems} (ObjBase.pas:15487) — the equipment half of the death
+   * penalty, reached from {@code Die} (ObjBase.pas:21006/21009).
+   *
+   * <p>Delphi runs two independent passes over the thirteen worn slots:
+   *
+   * <ol>
+   *   <li><b>Destroy pass.</b> Any worn item whose {@code StdItem.Reserved and 8} is set is
+   *       deleted outright — added to the {@code DelList} with an <em>empty name</em> and its
+   *       slot cleared. It never reaches the floor. The empty name is not a bug on our side:
+   *       {@code DelList.AddObject('', MakeIndex)} really does send {@code /MakeIndex/} to
+   *       the client, which matches on MakeIndex alone.</li>
+   *   <li><b>Scatter pass.</b> Every remaining slot rolls {@code Random(nRate) = 0} with
+   *       {@code nRate = nDieDropUseItemRate} (30), or {@code nDieRedDropUseItemRate} (15)
+   *       once {@code PKLevel > 2}. A winning slot calls {@code DropItemDown(..., 2, True)};
+   *       the slot is cleared (and the loss reported) <em>only</em> when
+   *       {@code Reserved and 10 = 0} — otherwise the item both lands on the floor and stays
+   *       worn, which is the original's behaviour, quirk and all.</li>
+   * </ol>
+   *
+   * <p>Gates before either pass: {@code m_boAngryRing or m_boNoDropUseItem} exits outright
+   * (ObjBase.pas:15498) and, in {@code Die}, the kill has to qualify —
+   * {@code boKillByMonstDropUseItem} is on and {@code boKillByHumanDropUseItem} is off in the
+   * shipped defaults, so a monster kill scatters gear and a PK kill does not. A kill with no
+   * attributed attacker ({@code AttackBaseObject = nil}) always scatters.
+   *
+   * <p>{@code InDisableTakeOffList} stays deferred: it is a server-config item list
+   * ({@code DisableTakeOffList.txt}), not a catalogue column.
+   */
+  private void dropUseItems(Player player, WorldObject killer) {
+    // ObjBase.pas:15498 — 护身戒指 / 不掉装备 exits before anything is examined.
+    if (player.dropProtection.blocksEquipmentDrop()) return;
+    if (player.equipment.isEmpty()) return;
+    // NB: DropUseItems itself has no map gate — only ScatterBagItems checks boNODROPITEM.
+    // The outer Die guard is "(not m_boNoItem) or (not Flag.boNODROPITEM)" (ObjBase.pas:21001),
+    // an OR that only blocks when the corpse is both item-less and on a NODROPITEM map, so a
+    // plain NODROPITEM map does NOT save your gear in the original. Reproduced verbatim.
+    if (!killQualifiesForEquipmentDrop(killer)) return;
+
+    Equipment previousEquipment = player.equipment;
+    List<ItemRemoval> removalList = new ArrayList<>();
+    List<GroundItem> landed = new ArrayList<>();
+
+    // Pass 1: Reserved & 8 — destroyed, never dropped, reported with an empty name.
+    for (Map.Entry<EquipmentSlot, BackpackItem> entry : previousEquipment.inSlotOrder()) {
+      if ((entry.getValue().item().reserved() & RESERVED_DESTROY_ON_DEATH) == 0) continue;
+      removalList.add(ItemRemoval.unnamed(entry.getValue()));
+      player.equipment = player.equipment.without(entry.getKey());
+    }
+
+    // Pass 2: the 1-in-nRate scatter over whatever is still worn.
+    int rate = PkLevel.of(player.pkPoint) > 2
+        ? DIE_RED_DROP_USE_ITEM_RATE : DIE_DROP_USE_ITEM_RATE;
+    for (Map.Entry<EquipmentSlot, BackpackItem> entry : player.equipment.inSlotOrder()) {
+      if (random.nextInt(WorldRandom.Stream.DEATH_DROP_USE_ITEM, rate) != 0) continue;
+      BackpackItem worn = entry.getValue();
+      Position cell = findDropPosition(player.map, player.position, DIE_DROP_USE_ITEM_RANGE);
+      if (cell == null) continue; // DropItemDown returned False: the slot is untouched.
+      landed.add(new GroundItem(
+          allocateObjectId(), worn.name(), worn.looks(), player.map.id(), cell));
+      // Reserved & 10 <> 0: the item drops but the wearer keeps it — reproduced verbatim.
+      if ((worn.item().reserved() & RESERVED_KEEP_SLOT_ON_DROP) != 0) continue;
+      removalList.add(ItemRemoval.of(worn));
+      player.equipment = player.equipment.without(entry.getKey());
+    }
+
+    if (removalList.isEmpty() && landed.isEmpty()) return;
+    if (!removalList.isEmpty()) recalculateAbilities(player);
+    try {
+      persist(player);
+    } catch (RuntimeException failure) {
+      player.equipment = previousEquipment;
+      recalculateAbilities(player);
+      LOG.log(Level.WARNING, "equipment drop rolled back for " + player.name, failure);
+      return;
+    }
+    for (GroundItem ground : landed) {
+      groundItems.put(ground.id(), ground);
+      itemDropTimes.put(ground.id(), clock.getAsLong());
+      WorldEvent appeared = new WorldEvent.ItemAppeared(ground);
+      for (int viewerId : visibleIds(player.map, ground.position(), 0)) {
+        emit(players.get(viewerId), appeared);
+      }
+    }
+    if (!removalList.isEmpty()) {
+      emit(player, new WorldEvent.ItemsRemoved(player.id, removalList));
+      emitEquipmentChange(player, new WorldEvent.EquipmentSent(player.id, player.equipment));
+    }
+  }
+
+  /**
+   * The {@code Die} gate around {@code DropUseItems} (ObjBase.pas:21002-21010): with no
+   * attacker the gear always scatters, otherwise it depends on which of
+   * {@code boKillByHumanDropUseItem} / {@code boKillByMonstDropUseItem} covers the killer.
+   */
+  private static boolean killQualifiesForEquipmentDrop(WorldObject killer) {
+    if (killer == null) return true;
+    return killer instanceof Player
+        ? KILL_BY_HUMAN_DROP_USE_ITEM : KILL_BY_MONSTER_DROP_USE_ITEM;
   }
 
   /**
@@ -1977,6 +2170,107 @@ public final class WorldEngine implements AutoCloseable {
     emit(player, new WorldEvent.AbilityChanged(
         player.id, player.ability, player.gold, player.job, player.weights()));
     return true;
+  }
+
+  /**
+   * The two PK timers of {@code TBaseObject.Run}, folded into one pass:
+   *
+   * <ul>
+   *   <li>ObjBase.pas:4042 — every {@code dwDecPkPointTime} (2 minutes) a positive
+   *       {@code m_nPkPoint} loses {@code nDecPkPointCount} (1). {@code DecPKPoint}
+   *       re-broadcasts the name colour only when the derived {@code PKLevel} changed, and
+   *       only while the old level was 1 or 2 ({@code (nC > 0) and (nC <= 2)}) — a 深红
+   *       character dropping from 3 to 2 stays silently red until it reaches 黄名.</li>
+   *   <li>ObjBase.pas:18868 {@code CheckPKStatus} — {@code m_boPKFlag} clears
+   *       {@code dwPKFlagTime} (60s) after the last blow traded with another player, and the
+   *       colour goes back out.</li>
+   * </ul>
+   */
+  private void decayPkPoints() {
+    long now = clock.getAsLong();
+    for (Player player : players.values()) {
+      if (now - player.decPkPointTick > PkLevel.DEC_PK_POINT_MILLIS) {
+        player.decPkPointTick = now;
+        if (player.pkPoint > 0) {
+          int previousLevel = PkLevel.of(player.pkPoint);
+          player.pkPoint = Math.max(0, player.pkPoint - PkLevel.DEC_PK_POINT_COUNT);
+          if (PkLevel.of(player.pkPoint) != previousLevel
+              && previousLevel > 0 && previousLevel <= 2) {
+            broadcastNameColor(player);
+          }
+          try {
+            persist(player);
+          } catch (RuntimeException failure) {
+            LOG.log(Level.WARNING, "pk point decay save failed for " + player.name, failure);
+          }
+        }
+      }
+      if (player.pkFlag && now - player.pkFlagTick > PkLevel.PK_FLAG_MILLIS) {
+        player.pkFlag = false;
+        broadcastNameColor(player);
+      }
+    }
+  }
+
+  /**
+   * {@code TBaseObject.SetPKFlag} (ObjBase.pas:21220): trading blows with another player puts
+   * the <em>attacker</em> into the 60-second PK colour, provided neither side is already red
+   * and the fight is not inside a FIGHT zone. The flag is refreshed, not stacked.
+   */
+  private void setPkFlag(WorldObject victim, WorldObject attacker) {
+    if (!(victim instanceof Player target) || !(attacker instanceof Player killer)) return;
+    if (PkLevel.isRed(target.pkPoint) || PkLevel.isRed(killer.pkPoint)) return;
+    if (target.map.flags().isFightZone()) return;
+    if (target.pkFlag) return; // Delphi guards the whole block with "not m_boPKFlag" on Self.
+    killer.pkFlagTick = clock.getAsLong();
+    if (!killer.pkFlag) {
+      killer.pkFlag = true;
+      broadcastNameColor(killer);
+    }
+  }
+
+  /**
+   * The murder branch of {@code TBaseObject.Die} (ObjBase.pas:20938-20953) with the shipped
+   * defaults ({@code boKillHumanWinLevel/Exp} both False, no guild war, no castle): the
+   * killer gains {@code nKillHumanAddPKPoint} (100) — one whole PK level — unless the victim
+   * was flagged, in which case {@code IsGoodKilling} makes it a lawful kill.
+   *
+   * <p>The two chat lines are the shipped GBK strings {@code g_sYouMurderedMsg} and
+   * {@code g_sYouKilledByMsg} (M2Share.pas:3236-3237). The luck penalty
+   * ({@code AddBodyLuck(-500)}) and {@code MakeWeaponUnlock} need the luck / weapon-lock model
+   * and stay deferred.
+   */
+  private void applyMurderPenalty(Player victim, WorldObject killer) {
+    if (!(killer instanceof Player murderer)) return;
+    if (victim.map.flags().isFightZone()) return;
+    if (PkLevel.isRed(victim.pkPoint)) return; // Die only enters the branch while PKLevel < 2.
+    if (victim.pkFlag) {
+      // IsGoodKilling (ObjBase.pas:21251): killing a flagged player is lawful.
+      emit(murderer, new WorldEvent.SystemMessage(murderer.id, PROTECTED_BY_LAW_MESSAGE));
+      return;
+    }
+    int previousLevel = PkLevel.of(murderer.pkPoint);
+    murderer.pkPoint += PkLevel.KILL_HUMAN_ADD_PK_POINT;
+    emit(murderer, new WorldEvent.SystemMessage(murderer.id, YOU_MURDERED_MESSAGE));
+    emit(victim, new WorldEvent.SystemMessage(
+        victim.id, String.format(YOU_KILLED_BY_MESSAGE, murderer.name)));
+    // IncPkPoint (ObjBase.pas:2364) refreshes the colour whenever the level moved.
+    if (PkLevel.of(murderer.pkPoint) != previousLevel) broadcastNameColor(murderer);
+    try {
+      persist(murderer);
+    } catch (RuntimeException failure) {
+      LOG.log(Level.WARNING, "pk point save failed for " + murderer.name, failure);
+    }
+  }
+
+  /**
+   * {@code RefNameColor} (ObjBase.pas:2263) → {@code SendRefMsg(RM_CHANGENAMECOLOR)}: every
+   * observer, and the player itself, re-reads the name colour from {@code GetCharColor}.
+   */
+  private void broadcastNameColor(Player player) {
+    WorldEvent event = new WorldEvent.NameColorChanged(
+        player.id, PkLevel.nameColor(player.pkPoint, player.pkFlag), player.pkPoint);
+    emitToObserversAndSelf(player, event);
   }
 
   /**
@@ -2756,6 +3050,16 @@ public final class WorldEngine implements AutoCloseable {
     private boolean revival;
     /** {@code m_dwRevivalTick}: timestamp of the last ring revival (cooldown start). */
     private long revivalTick;
+    /** {@code m_nPkPoint}: the persisted murder counter {@code PKLevel} is derived from. */
+    private int pkPoint;
+    /** {@code m_boPKFlag}: transient "recently fought a player" marker (SetPKFlag). */
+    private boolean pkFlag;
+    /** {@code m_dwPKTick}: when the PK flag was last refreshed; it clears 60s later. */
+    private long pkFlagTick;
+    /** {@code m_dwDecPkPointTick}: the 2-minute PK-point decay window reference. */
+    private long decPkPointTick;
+    /** 护身 / 不掉物品 / 不掉装备, recalculated by RecalcAbilitys like {@code m_boRevival}. */
+    private DropProtection dropProtection = DropProtection.NONE;
     /**
      * {@code m_sScriptLable}: the merchant dialog label the player last selected
      * ({@code CM_MERCHANTDLGSELECT}); the repair path branches on it. Empty until a label is
@@ -2928,7 +3232,7 @@ public final class WorldEngine implements AutoCloseable {
 
     private PlayerState state() {
       // Persist the naked ability: worn bonuses are re-derived by RecalcAbilitys on load.
-      return new PlayerState(characterId, baseAbility, backpack, equipment, gold);
+      return new PlayerState(characterId, baseAbility, backpack, equipment, gold, pkPoint);
     }
 
     @Override

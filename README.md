@@ -67,6 +67,21 @@ Java 服务端。
   `Reserved` 字节拆回独立字段，SQLite `std_items` 原位迁移旧缓存；`TClientItem` 线上
   76 字节布局现在会正确携带 祈祷/赤血 系列的 `Reserved` 标志，同时穿脱逻辑复刻
   `Reserved & 2` / `Reserved & 4` 的「无法取下」锁定分支。
+- **死亡掉装备 + PK 等级模型（W20）**：`TPlayObject.DropUseItems` 两趟扫十三槽——
+  `Reserved and 8` 的物品原地销毁、永不落地，并以**空名**条目（`/MakeIndex/`）回报客户端；
+  其余每槽 `1/30` 掉落（`PKLevel > 2` 提高到 `1/15`），中签物品落在尸体 2 格内，但
+  **只有 `Reserved and 10 = 0` 才真正离身**——「掉在地上却仍然穿着」的原版复制 quirk 照搬。
+  谁杀的决定掉不掉：怪物杀掉装备、玩家杀不掉（`boKillByMonstDropUseItem` / 
+  `boKillByHumanDropUseItem` 出厂值）。`RecalcAbilitys` 的三面护身旗
+  （`m_boAngryRing` 全免 / `m_boNoDropItem` 只保包裹 / `m_boNoDropUseItem` 只保装备，
+  武器·右手·衣服读 `AniCount`、其余槽读 `Shape`）同步实现。
+  PK 侧：`PKLevel = m_nPkPoint div 100` 与白/黄($FB)/红($F9)/交手($2F) 名字颜色
+  （交手色只在红名以下压过等级色）、谋杀 +100 点并双方收到原版 GBK 文案、受害者已挂
+  PK 旗时判正当防卫不计点、每 2 分钟衰减 1 点（**旧等级为 1 或 2 时才重绘名字**的广播
+  quirk 保留）、交手 60 秒染色，颜色经 `SM_CHANGENAMECOLOR` 广播；红名（`PKLevel >= 2`）
+  死亡时 `boDieRedScatterBagAll` 让包裹**全掉**而非三分之一。`character_state.pk_point`
+  原位加列落库，交手旗按原版语义不落库。同时纠正了一处长期错误：包裹掉落豁免用的是
+  地图 `NODROPITEM` 旗，而非此前误用的 `NOTHROWITEM`（原版是两个不同的旗）。
 - **战斗/背包存档**：HP、MP、等级、经验与 46 格背包通过 SQLite 事务保存，在角色进图前恢复；支持从旧 W02 schema 原位升级
 - **物品目录与背包同步（W04）**：最小标准物品库（`StdItem` 完整 `TStdItem` 字段 + SQLite `std_items` 表）、
   复刻 `GetItemNumber` 的稳定 `MakeIndex`、耐久字段、76 字节 `TClientItem` 小端编解码，
@@ -352,11 +367,13 @@ docker compose -f java-server/compose.yml up --build
   虽已入库，但红线内 47 种怪不接线行为，仅数据待命**；修理目前是
   协议级最小闭环（`m_sScriptLable` 状态机 + 修理三消息），**NPC 对象、商家距离校验
   与 Market_Def 脚本引擎未实现**（受「NPC 脚本对拍前不得扩展」红线约束）；
-- 等级提升与死亡/复活闭环（W14）已实现，但死亡掉落**只覆盖背包**：W19 已补齐
-  `StdItem.Reserved` 独立字节并用于穿脱锁定，`DropUseItems`（死亡掉已穿装备）的实际散落、
-  删除列表 quirk 与红名全掉（`boDieRedScatterBagAll`）仍依赖尚未迁移的 PK / 配置模型，
-  继续记为 `TODO(verify)`；玩家自助复活现有两条路径——复活戒指（W15，装备触发）与
-  GM 语义的 `WorldEngine.revive`，死亡后回城在原版里走的是重新登录路径；
+- 等级提升与死亡/复活闭环（W14）已实现；死亡掉落自 W20 起**背包与已穿装备都覆盖**
+  （`DropUseItems` + 删除列表空名 quirk + 红名 `boDieRedScatterBagAll` 全掉 + PK 等级模型）。
+  仍未迁移的相关小项：`InDisableTakeOffList`（服务器配置文本清单，非目录列）、
+  谋杀时的 `AddBodyLuck(-500)` 幸运惩罚与 `MakeWeaponUnlock`（缺幸运 / 武器锁模型），
+  以及名字颜色的行会 / 沙城 / FIGHT3 分支（随行会系统切片）；玩家自助复活现有两条
+  路径——复活戒指（W15，装备触发）与 GM 语义的 `WorldEngine.revive`，死亡后回城在
+  原版里走的是重新登录路径；
 - 门与地图连接点（W10）已实现：`.map` 门锚点 + `CM_OPENDOOR` + 5 秒自动关门、`MapInfo.txt` 多图与
   连接点换图（含目标不可走整步回滚）；昼夜亮暗（`DayBright`）、地图旗标（SAFE/FIGHT/NORECONNECT 等）、
   城堡门差异分支与跨服切换（`nServerIndex` 不同）仍未实现；

@@ -37,6 +37,7 @@ public sealed interface WorldEvent
         WorldEvent.Whisper,
         WorldEvent.Shout,
         WorldEvent.SystemMessage,
+        WorldEvent.NameColorChanged,
         WorldEvent.DayChanging,
         WorldEvent.ItemEquipped,
         WorldEvent.EquipRejected,
@@ -214,11 +215,16 @@ public sealed interface WorldEvent
    * entries the server destroyed server-side, so the client can drop them from its window.
    * Emitted after a death scatter.
    */
-  record ItemsRemoved(int playerId, List<BackpackItem> items) implements WorldEvent {
+  record ItemsRemoved(int playerId, List<ItemRemoval> items) implements WorldEvent {
     public ItemsRemoved {
       if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
       items = List.copyOf(items);
       if (items.isEmpty()) throw new IllegalArgumentException("removal list must not be empty");
+    }
+
+    /** Convenience for the common case where whole bag entries were destroyed. */
+    public static ItemsRemoved ofItems(int playerId, List<BackpackItem> items) {
+      return new ItemsRemoved(playerId, ItemRemoval.ofAll(items));
     }
   }
 
@@ -343,6 +349,22 @@ public sealed interface WorldEvent
     public SystemMessage {
       if (recipientId < 0) throw new IllegalArgumentException("recipient id must not be negative");
       Objects.requireNonNull(message, "message");
+    }
+  }
+
+  /**
+   * {@code RefNameColor} → {@code RM_CHANGENAMECOLOR} → {@code SM_CHANGENAMECOLOR}
+   * (ObjBase.pas:5607): recog is the object whose name changed, param the colour byte from
+   * {@code GetCharColor}. {@code pkPoint} is carried for tests and tooling; it never goes
+   * on the wire.
+   */
+  record NameColorChanged(int objectId, int nameColor, int pkPoint) implements WorldEvent {
+    public NameColorChanged {
+      if (objectId <= 0) throw new IllegalArgumentException("object id must be positive");
+      if (nameColor < 0 || nameColor > 0xFF) {
+        throw new IllegalArgumentException("name colour must be a byte");
+      }
+      if (pkPoint < 0) throw new IllegalArgumentException("pk point must not be negative");
     }
   }
 

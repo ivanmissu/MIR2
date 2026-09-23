@@ -185,6 +185,10 @@ public final class GameProtocolAdapter implements WorldEventSink {
       case WorldEvent.SystemMessage sysMsg -> output.accept(new GameOutbound.Packet(
           packet(ProtocolConstants.SM_SYSMESSAGE, 0, 0xFF, 0, 1,
               WireMessageCodec.encodeBody(sysMsg.message()))));
+      // RM_CHANGENAMECOLOR (ObjBase.pas:5607): recog = the object, param = GetCharColor.
+      case WorldEvent.NameColorChanged recolored -> output.accept(new GameOutbound.Packet(
+          packet(ProtocolConstants.SM_CHANGENAMECOLOR, recolored.objectId(),
+              recolored.nameColor(), 0, 0, "")));
       case WorldEvent.ItemEquipped equipped -> sendTakeOnOk(equipped);
       case WorldEvent.EquipRejected rejected -> {
         if (rejected.playerId() == playerId) {
@@ -436,7 +440,7 @@ public final class GameProtocolAdapter implements WorldEventSink {
   private void sendDeletedItems(WorldEvent.ItemsRemoved removed) {
     if (removed.playerId() != playerId) return;
     StringBuilder body = new StringBuilder();
-    for (com.mir2.world.BackpackItem item : removed.items()) {
+    for (com.mir2.world.ItemRemoval item : removed.items()) {
       body.append(item.name()).append('/').append(item.makeIndex()).append('/');
     }
     output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_DELITEMS, 0, 0, 0,

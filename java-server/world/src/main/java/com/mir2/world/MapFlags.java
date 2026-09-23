@@ -21,11 +21,12 @@ public record MapFlags(
     int musicId,
     int expRate,
     boolean noDrug,
-    boolean noThrowItem) {
+    boolean noThrowItem,
+    boolean noDropItem) {
 
   public static final MapFlags DEFAULT = new MapFlags(
       false, false, false, false, false, false, false, "", false, true, false, -1, -1,
-      false, false);
+      false, false, false);
 
   /** Compatibility overload for callers predating the NODRUG/NOTHROWITEM flags. */
   public MapFlags(
@@ -33,7 +34,18 @@ public record MapFlags(
       boolean fight3Zone, boolean quiz, boolean noReconnect, String noReconnectMap,
       boolean noChat, boolean runHuman, boolean runMon, int musicId, int expRate) {
     this(safeZone, darkness, dayLight, fightZone, fight3Zone, quiz, noReconnect,
-        noReconnectMap, noChat, runHuman, runMon, musicId, expRate, false, false);
+        noReconnectMap, noChat, runHuman, runMon, musicId, expRate, false, false, false);
+  }
+
+  /** Compatibility overload for callers predating the NODROPITEM flag. */
+  public MapFlags(
+      boolean safeZone, boolean darkness, boolean dayLight, boolean fightZone,
+      boolean fight3Zone, boolean quiz, boolean noReconnect, String noReconnectMap,
+      boolean noChat, boolean runHuman, boolean runMon, int musicId, int expRate,
+      boolean noDrug, boolean noThrowItem) {
+    this(safeZone, darkness, dayLight, fightZone, fight3Zone, quiz, noReconnect,
+        noReconnectMap, noChat, runHuman, runMon, musicId, expRate, noDrug, noThrowItem,
+        false);
   }
 
   public MapFlags {
@@ -76,5 +88,14 @@ public record MapFlags(
   /** {@code Flag.boNOTHROWITEM}: items cannot be dropped on this map (ObjBase.pas:16233). */
   public boolean isNoThrowItem() {
     return noThrowItem;
+  }
+
+  /**
+   * {@code Flag.boNODROPITEM}: nothing a dying player carries scatters here
+   * ({@code TPlayObject.ScatterBagItems}, ObjBase.pas:26660). Distinct from
+   * {@code NOTHROWITEM}, which only blocks a live player from throwing items away.
+   */
+  public boolean isNoDropItem() {
+    return noDropItem;
   }
 }
