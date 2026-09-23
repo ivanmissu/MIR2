@@ -105,6 +105,40 @@ class ServerConfigTest {
   }
 
   @Test
+  void worldClockDefaultsToTheHostClockAndAcceptsVirtual() {
+    // Production must keep reading the host clock, exactly like Delphi's GetTickCount.
+    ServerConfig wall = ServerConfig.from(Map.of());
+    assertEquals(com.mir2.world.WorldClock.Mode.SYSTEM, wall.worldClockMode());
+    assertFalse(wall.worldClock().isVirtual());
+
+    ServerConfig virtual = ServerConfig.from(Map.of("MIR2_WORLD_CLOCK", "virtual"));
+    assertEquals(com.mir2.world.WorldClock.Mode.VIRTUAL, virtual.worldClockMode());
+    assertTrue(virtual.worldClock().advancesWithEngineTick());
+    // The clock's tick interval must track the configured world tick, otherwise "same
+    // number of ticks" would stop meaning "same world time" across two servers.
+    assertEquals(virtual.worldTickMillis(), virtual.worldClock().tickMillis());
+
+    // Case-insensitive, like the other enum-ish settings.
+    assertEquals(com.mir2.world.WorldClock.Mode.VIRTUAL,
+        ServerConfig.from(Map.of("MIR2_WORLD_CLOCK", "VIRTUAL")).worldClockMode());
+  }
+
+  @Test
+  void manualWorldClocksAreRefusedFromTheEnvironmentButReachableForHarnesses() {
+    // An operator who set this would get a world whose time never moves, so the env parser
+    // refuses it; the shadow harness reaches MANUAL through withWorldClockMode instead.
+    assertThrows(IllegalArgumentException.class,
+        () -> ServerConfig.from(Map.of("MIR2_WORLD_CLOCK", "manual")));
+    assertThrows(IllegalArgumentException.class,
+        () -> ServerConfig.from(Map.of("MIR2_WORLD_CLOCK", "wall-clock")));
+
+    ServerConfig manual = ServerConfig.from(Map.of())
+        .withWorldClockMode(com.mir2.world.WorldClock.Mode.MANUAL);
+    assertEquals(com.mir2.world.WorldClock.Mode.MANUAL, manual.worldClockMode());
+    assertFalse(manual.worldClock().advancesWithEngineTick());
+  }
+
+  @Test
   void worldSeedIsUnsetByDefaultAndSplitsTheStreamsWhenPinned() {
     // Production default: no seed => one shared generator, i.e. Delphi's global Random.
     ServerConfig unseeded = ServerConfig.from(Map.of());

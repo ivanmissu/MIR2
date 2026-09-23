@@ -135,7 +135,8 @@ public final class Mir2Server implements AutoCloseable {
           worldMaps,
           store,
           store.itemDatabase(),
-          config.worldRandom());
+          config.worldRandom(),
+          config.worldClock());
       world.start();
       int routeCount = 0;
       for (MapInfoLoader.RouteLine routeLine : pendingRoutes) {
@@ -176,7 +177,8 @@ public final class Mir2Server implements AutoCloseable {
           + ", worldTickMs=" + config.worldTickMillis()
           + ", monsters=" + config.monsterCount() + "x" + config.monsterTemplate().name()
           + ", npcs=" + npcCount
-          + ", worldSeed=" + (config.worldSeed() == null ? "unseeded" : config.worldSeed()));
+          + ", worldSeed=" + (config.worldSeed() == null ? "unseeded" : config.worldSeed())
+          + ", worldClock=" + config.worldClockMode().name().toLowerCase(java.util.Locale.ROOT));
     } catch (IOException | RuntimeException error) {
       close();
       throw error;

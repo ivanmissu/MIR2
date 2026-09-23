@@ -46,6 +46,13 @@ public record Op(Kind kind, Direction direction, String text, long millis) {
     TAKEOFF,
     /** Harness pause; keeps action intervals deterministic across both servers. */
     SLEEP,
+    /**
+     * Advances a MANUAL world clock by N ticks ({@code @tick N} over {@code CM_SAY}).
+     * Unlike {@link #SLEEP}, which lets both hosts' wall clocks run and therefore only
+     * approximately agrees, this makes world time itself the scripted quantity: both
+     * servers run exactly N tick bodies, so a monster's Nth AI decision is reproducible.
+     */
+    TICK,
     /** Close the GAME socket and run the full login → select → enter chain again. */
     RELOG
   }
@@ -70,12 +77,18 @@ public record Op(Kind kind, Direction direction, String text, long millis) {
     return new Op(Kind.SLEEP, null, null, millis);
   }
 
+  /** {@code tick N}: advance a manual world clock by N ticks. */
+  static Op tick(long ticks) {
+    if (ticks < 0) throw new IllegalArgumentException("tick count must not be negative");
+    return new Op(Kind.TICK, null, null, ticks);
+  }
+
   /** Renders the op back to its one-line script form. */
   public String describe() {
     StringBuilder line = new StringBuilder(kind.name().toLowerCase(Locale.ROOT));
     if (direction != null) line.append(' ').append(direction.code());
     if (text != null) line.append(' ').append(text);
-    if (kind == Kind.SLEEP) line.append(' ').append(millis);
+    if (kind == Kind.SLEEP || kind == Kind.TICK) line.append(' ').append(millis);
     return line.toString();
   }
 
@@ -123,6 +136,7 @@ public record Op(Kind kind, Direction direction, String text, long millis) {
       case "takeon" -> withText(Kind.TAKEON, requireText(argument, "takeon"));
       case "takeoff" -> withText(Kind.TAKEOFF, requireText(argument, "takeoff"));
       case "sleep" -> sleep(Long.parseLong(requireText(argument, "sleep")));
+      case "tick" -> tick(Long.parseLong(requireText(argument, "tick")));
       case "relog" -> of(Kind.RELOG);
       default -> throw new IllegalArgumentException("unknown op: " + keyword);
     };
@@ -223,6 +237,50 @@ public record Op(Kind kind, Direction direction, String text, long millis) {
         # --- state must survive the persistence round trip identically ---
         relog
         bag
+        """);
+  }
+
+  /**
+   * The moving-monster comparison script (W23). Unlike {@link #pveScript()}, whose trainer
+   * dummy is inert, this drives live AI: the monsters around the spawn acquire the player,
+   * chase and attack.
+   *
+   * <p>Everything hinges on the {@code tick} ops. Both servers must be booted with a
+   * {@link com.mir2.world.WorldClock.Mode#MANUAL} clock, so world time — and therefore every
+   * {@code TMonster.Run} interval check, every {@code RegenMonsters} pass, every HP/MP
+   * regeneration step — advances only when the script says so. Twenty ticks at the shipped
+   * 50 ms interval is one second of world time; a chicken's walk interval is DB-derived and
+   * several ticks long, so a chase unfolds over the pumped ticks at exactly the same rate on
+   * both sides.
+   *
+   * <p>The observation surface is the snapshot's {@code near=} census (the cell and facing of
+   * every actor in view) plus {@code worldTime=}: identical AI decisions produce identical
+   * censuses at identical world times. A single divergent step is a STATE failure.
+   */
+  public static List<Op> aiScript() {
+    return parseScript("""
+        # --- entry census: the monster ring must look the same on both servers ---
+        bag
+        tick 1
+        # --- let the AI run: acquisition, chase, first blows ---
+        tick 20
+        tick 20
+        tick 20
+        # --- the player acts between pumps; the ack and the AI reaction share the bucket ---
+        turn 2
+        tick 10
+        hit 2
+        tick 20
+        walk 4
+        tick 20
+        hit 6
+        tick 20
+        # --- a long pump exercises regeneration, corpse timers and respawn cadence ---
+        tick 60
+        # --- state (and the pumped world time) must survive the persistence round trip ---
+        relog
+        bag
+        tick 20
         """);
   }
 }

@@ -184,7 +184,7 @@ public final class LoadtestMain {
         // The swarm exists to hammer the combat path, so the debug monster ring has to sit
         // within reach of the spawn: no start-point safe zone in this harness, and no
         // decorative NPCs either — their cells would sit inside the ring.
-        0, true, java.util.List.of(), null);
+        0, true, java.util.List.of(), null, com.mir2.world.WorldClock.Mode.SYSTEM);
     Mir2Server server = new Mir2Server(config);
     server.start();
 
