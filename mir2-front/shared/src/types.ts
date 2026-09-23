@@ -53,6 +53,8 @@ export interface StdItemData {
   weight: number;
   aniCount: number;
   source: number;
+  /** TStdItem.Reserved byte; older mock/test objects may omit it and default to 0 on encode. */
+  reserved?: number;
   needIdentify: number;
   looks: number;
   duraMax: number;

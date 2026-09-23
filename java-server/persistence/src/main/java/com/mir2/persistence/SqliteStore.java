@@ -112,6 +112,7 @@ public final class SqliteStore implements AutoCloseable,
             weight INTEGER NOT NULL,
             ani_count INTEGER NOT NULL,
             source INTEGER NOT NULL,
+            reserved INTEGER NOT NULL DEFAULT 0,
             need_identify INTEGER NOT NULL,
             looks INTEGER NOT NULL,
             dura_max INTEGER NOT NULL,
@@ -169,19 +170,47 @@ public final class SqliteStore implements AutoCloseable,
     ensureColumn("character_inventory", "dura_max", "INTEGER NOT NULL DEFAULT 0");
     // Upgrade W14 states in place: rows predating the W15 repair slice carry no wallet.
     ensureColumn("character_state", "gold", "INTEGER NOT NULL DEFAULT 0");
+    // Upgrade W18 catalog caches in place: Reserved and NeedIdentify are distinct bytes in
+    // TStdItem. W18 temporarily stored the official Reserved flags in need_identify.
+    ensureColumn("std_items", "reserved", "INTEGER NOT NULL DEFAULT 0");
     seedStandardItems();
+    migrateStandardItemReservedFlags();
   }
 
-  /** Boot-time catalog seed; existing rows are never overwritten. */
+  /** Boot-time catalog seed; existing rows are never overwritten by the seed itself. */
   private void seedStandardItems() throws SQLException {
     try (PreparedStatement statement = connection.prepareStatement("""
         INSERT OR IGNORE INTO std_items(
-          name, std_mode, shape, weight, ani_count, source, need_identify, looks,
+          name, std_mode, shape, weight, ani_count, source, reserved, need_identify, looks,
           dura_max, ac, mac, dc, mc, sc, need, need_level, price)
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """)) {
       for (StdItem item : StdItems.defaults()) {
         bindStdItem(statement, item);
+        statement.addBatch();
+      }
+      statement.executeBatch();
+    }
+  }
+
+  /**
+   * W19 catalog-byte fix: databases opened on the W18 build may already have seeded rows where
+   * the official GEEM2 {@code Reserved} byte was stored in {@code need_identify}. Move that byte
+   * into the new column without otherwise clobbering user-added catalogue rows.
+   */
+  private void migrateStandardItemReservedFlags() throws SQLException {
+    try (PreparedStatement statement = connection.prepareStatement("""
+        UPDATE std_items
+        SET reserved = ?,
+            need_identify = CASE WHEN need_identify = ? THEN ? ELSE need_identify END
+        WHERE name = ? AND reserved = 0
+        """)) {
+      for (StdItem item : StdItems.defaults()) {
+        if (item.reserved() == 0) continue;
+        statement.setInt(1, item.reserved());
+        statement.setInt(2, item.reserved());
+        statement.setInt(3, item.needIdentify());
+        statement.setString(4, item.name());
         statement.addBatch();
       }
       statement.executeBatch();
@@ -195,17 +224,18 @@ public final class SqliteStore implements AutoCloseable,
     statement.setInt(4, item.weight());
     statement.setInt(5, item.aniCount());
     statement.setInt(6, item.source());
-    statement.setInt(7, item.needIdentify());
-    statement.setInt(8, item.looks());
-    statement.setLong(9, item.duraMax());
-    statement.setLong(10, item.ac());
-    statement.setLong(11, item.mac());
-    statement.setLong(12, item.dc());
-    statement.setLong(13, item.mc());
-    statement.setLong(14, item.sc());
-    statement.setLong(15, item.need());
-    statement.setLong(16, item.needLevel());
-    statement.setLong(17, item.price());
+    statement.setInt(7, item.reserved());
+    statement.setInt(8, item.needIdentify());
+    statement.setInt(9, item.looks());
+    statement.setLong(10, item.duraMax());
+    statement.setLong(11, item.ac());
+    statement.setLong(12, item.mac());
+    statement.setLong(13, item.dc());
+    statement.setLong(14, item.mc());
+    statement.setLong(15, item.sc());
+    statement.setLong(16, item.need());
+    statement.setLong(17, item.needLevel());
+    statement.setLong(18, item.price());
   }
 
   /**
@@ -215,7 +245,7 @@ public final class SqliteStore implements AutoCloseable,
   public synchronized ItemDatabase itemDatabase() {
     List<StdItem> items = new ArrayList<>();
     try (PreparedStatement statement = connection.prepareStatement("""
-        SELECT name, std_mode, shape, weight, ani_count, source, need_identify, looks,
+        SELECT name, std_mode, shape, weight, ani_count, source, reserved, need_identify, looks,
                dura_max, ac, mac, dc, mc, sc, need, need_level, price
         FROM std_items
         """)) {
@@ -238,6 +268,7 @@ public final class SqliteStore implements AutoCloseable,
         result.getInt("weight"),
         result.getInt("ani_count"),
         result.getInt("source"),
+        result.getInt("reserved"),
         result.getInt("need_identify"),
         result.getInt("looks"),
         result.getLong("dura_max"),
@@ -432,7 +463,7 @@ public final class SqliteStore implements AutoCloseable,
   /** Shared projection of an item row joined to its template; used by bag and worn set. */
   private static final String ITEM_COLUMNS = """
       i.name, i.looks, i.make_index, i.dura, i.dura_max,
-      s.std_mode, s.shape, s.weight, s.ani_count, s.source, s.need_identify,
+      s.std_mode, s.shape, s.weight, s.ani_count, s.source, s.reserved, s.need_identify,
       s.looks AS template_looks, s.dura_max AS template_dura_max,
       s.ac, s.mac, s.dc, s.mc, s.sc, s.need, s.need_level, s.price
       """;
@@ -521,6 +552,7 @@ public final class SqliteStore implements AutoCloseable,
             result.getInt("weight"),
             result.getInt("ani_count"),
             result.getInt("source"),
+            result.getInt("reserved"),
             result.getInt("need_identify"),
             result.getInt("template_looks"),
             result.getLong("template_dura_max"),
@@ -609,9 +641,9 @@ public final class SqliteStore implements AutoCloseable,
     if (items.isEmpty()) return;
     try (PreparedStatement template = connection.prepareStatement("""
         INSERT OR IGNORE INTO std_items(
-          name, std_mode, shape, weight, ani_count, source, need_identify, looks,
+          name, std_mode, shape, weight, ani_count, source, reserved, need_identify, looks,
           dura_max, ac, mac, dc, mc, sc, need, need_level, price)
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """)) {
       for (BackpackItem item : items) {
         bindStdItem(template, item.item());

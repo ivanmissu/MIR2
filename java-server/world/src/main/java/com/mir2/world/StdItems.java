@@ -8,8 +8,9 @@ import java.util.NoSuchElementException;
  * of the official 1.76 {@code StdItems.DB} (GEEM2 baseline dump) exposed through
  * {@link StdItemsDb} — 686 rows / 684 unique names — replacing the W04 hand-picked five-item
  * placeholder catalog. Values for food, potions, weapons, jewellery, quest items and the
- * special rings are the original ones now; economy interactions may rely on them
- * ({@code DropUseItems} still waits on the PK slice as documented in WorldEngine).
+ * special rings are the original ones now; economy interactions may rely on them. The separate
+ * {@code TStdItem.Reserved} byte is preserved too (W19), while full death-equipment scattering
+ * still waits on the PK/config slice as documented in WorldEngine.
  *
  * <p>Category evidence: Client/ClFunc.pas {@code GetTakeOnPosition} (5/6 weapon, 10/11
  * dress, 15/16 helmet, 19-21 necklace, 22/23 ring, 24/26 armring), ObjBase.pas:17359

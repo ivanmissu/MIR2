@@ -106,6 +106,7 @@ public final class ClientItemCodec {
         u8(bytes, WEIGHT_OFFSET),
         u8(bytes, ANI_COUNT_OFFSET),
         bytes[SOURCE_OFFSET],
+        u8(bytes, RESERVED_OFFSET),
         u8(bytes, NEED_IDENTIFY_OFFSET),
         u16(bytes, LOOKS_OFFSET),
         u32(bytes, DURA_MAX_OFFSET),
@@ -137,7 +138,7 @@ public final class ClientItemCodec {
     buffer.put((byte) std.weight());
     buffer.put((byte) std.aniCount());
     buffer.put((byte) std.source());
-    buffer.put((byte) 0); // reserved flag, only mutated by weapon upgrades
+    buffer.put((byte) std.reserved());
     buffer.put((byte) std.needIdentify());
     buffer.putShort((short) std.looks());
     buffer.putInt((int) std.duraMax());

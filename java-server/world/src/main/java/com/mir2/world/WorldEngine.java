@@ -1433,14 +1433,14 @@ public final class WorldEngine implements AutoCloseable {
 
   /**
    * The "cannot take off" family of checks shared by take-on and take-off
-   * (ObjBase.pas:17238-17262). Only the accessory lock is modelled: the two
-   * {@code StdItem.Reserved} bits and {@code InDisableTakeOffList} are server-config state
-   * that this migration has no source for yet.
+   * (ObjBase.pas:17238-17262). With {@code m_boUserUnLockDurg = False} (the login default),
+   * {@code Reserved & 2} locks an item until the unlock-potion slice lands; {@code Reserved & 4}
+   * is an unconditional lock. {@code InDisableTakeOffList} remains deferred because it is a
+   * server-config list rather than a StdItems.DB column.
    */
   private static boolean isLockedInPlace(BackpackItem item) {
-    // TODO(verify): Reserved bits 2/4 and the DisableTakeOffList come from server config that
-    // the Java server does not load; no shipped item sets them, so nothing is locked today.
-    return false;
+    int reserved = item.item().reserved();
+    return (reserved & 0x02) != 0 || (reserved & 0x04) != 0;
   }
 
   /**
@@ -1910,12 +1910,12 @@ public final class WorldEngine implements AutoCloseable {
    * {@code 1 / nDieScatterBagRate} (default 3) chance to drop within {@code DropWide = 2}
    * cells, and the dropped set is reported back through {@code RM_SENDDELITEMLIST}.
    *
-   * <p>Worn gear is untouched here. {@code DropUseItems} does handle equipment, but its
-   * default config ({@code boKillByHumanDropUseItem = False}) only fires for monster kills and
-   * it depends on {@code StdItem.Reserved} bits that this migration has no source for yet.
+   * <p>Worn gear is untouched here. The catalogue now carries {@code StdItem.Reserved}, so
+   * the remaining {@code DropUseItems} work is the actual equipment-scatter branch plus its
+   * PK/red-name and server-config gates.
    */
-  // TODO(verify): DropUseItems (equipment drop on death) needs the StdItem.Reserved bits and
-  // the PK level model; both are missing, so only the bag scatters today.
+  // TODO(verify): DropUseItems (equipment drop on death) still needs the PK level model,
+  // disable-take-off config and deletion-list quirks; only the bag scatters today.
   private void scatterBagItems(Player player) {
     if (player.backpack.isEmpty()) return;
     // Delphi refuses the whole scatter on a NODROPITEM map (m_PEnvir.Flag.boNODROPITEM).

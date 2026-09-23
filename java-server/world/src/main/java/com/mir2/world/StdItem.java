@@ -20,6 +20,8 @@ import java.nio.charset.Charset;
  *
  * @param stdMode item category: 0-3 eatable, 4 book, 5/6 weapon, 10/11 dress, ... see
  *     Client/ClFunc.pas {@code GetTakeOnPosition} and ObjBase.pas {@code ClientUseItems}
+ * @param reserved server-side bit flags copied into {@code TStdItem.Reserved}; the official
+ *     database uses bit 3 for the 祈祷/赤血 family and bit 2 on 赤血魔剑
  */
 public record StdItem(
     String name,
@@ -28,6 +30,7 @@ public record StdItem(
     int weight,
     int aniCount,
     int source,
+    int reserved,
     int needIdentify,
     int looks,
     long duraMax,
@@ -65,6 +68,7 @@ public record StdItem(
     requireU8("weight", weight);
     requireU8("aniCount", aniCount);
     if (source < -128 || source > 127) throw new IllegalArgumentException("source must be a signed byte");
+    requireU8("reserved", reserved);
     requireU8("needIdentify", needIdentify);
     requireU16("looks", looks);
     requireU32("duraMax", duraMax);
@@ -76,6 +80,19 @@ public record StdItem(
     requireU32("need", need);
     requireU32("needLevel", needLevel);
     requireU32("price", price);
+  }
+
+  /**
+   * Compatibility constructor for call sites that predate the explicit {@code Reserved} byte.
+   * The old model only carried {@code NeedIdentify}; real GEEM2 catalogue rows use
+   * {@code NeedIdentify = 0}, while {@link StdItemsDb} calls the canonical constructor to keep
+   * the separate {@code Reserved} flags (祈祷套 / 赤血魔剑) intact.
+   */
+  public StdItem(String name, int stdMode, int shape, int weight, int aniCount, int source,
+      int needIdentify, int looks, long duraMax, long ac, long mac, long dc, long mc, long sc,
+      long need, long needLevel, long price) {
+    this(name, stdMode, shape, weight, aniCount, source, 0, needIdentify, looks, duraMax,
+        ac, mac, dc, mc, sc, need, needLevel, price);
   }
 
   /**

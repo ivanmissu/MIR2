@@ -69,6 +69,22 @@ class ClientItemCodecTest {
   }
 
   @Test
+  void keepsReservedAndNeedIdentifyAsSeparateTStdItemBytes() {
+    StdItem prayerBlade = com.mir2.world.StdItems.require("祈祷之刃");
+    assertEquals(8, prayerBlade.reserved(), "GEEM2 Reserved bit 3 must stay server-visible");
+    assertEquals(0, prayerBlade.needIdentify(), "NeedIdentify is a distinct byte, not the DB Reserved column");
+
+    BackpackItem item = BackpackItem.of(prayerBlade, 710);
+    byte[] bytes = ClientItemCodec.bytes(item);
+    assertEquals(8, u8(bytes, ClientItemCodec.RESERVED_OFFSET));
+    assertEquals(0, u8(bytes, ClientItemCodec.NEED_IDENTIFY_OFFSET));
+
+    BackpackItem decoded = ClientItemCodec.decode(ClientItemCodec.encode(item));
+    assertEquals(8, decoded.item().reserved());
+    assertEquals(0, decoded.item().needIdentify());
+  }
+
+  @Test
   void packsAFullTwentyByteGbkNameWithoutSplittingACharacter() {
     // Ten CJK characters fill the String[20] slot completely; the model never allows more,
     // and the codec's fixedGbk guard would cut at the character boundary if it ever did.

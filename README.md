@@ -63,6 +63,10 @@ Java 服务端。
   HP/防御/攻击/等级/经验/走攻节拍与掉落全部替换为真实数值（W04/W09/W12/W15/W17 的
   TODO(verify) 占位就此消除，`鹿肉` 占位掉落退役为真库 `肉`），SQLite `std_items` 启动
   种子自动跟随；`金币` 掉落行已接入地面金币堆，拾取后直接进入钱包并触发 `SM_GOLDCHANGED`。
+- **`TStdItem.Reserved` 字节修正（W19）**：把 W18 曾临时并入 `NeedIdentify` 的官方
+  `Reserved` 字节拆回独立字段，SQLite `std_items` 原位迁移旧缓存；`TClientItem` 线上
+  76 字节布局现在会正确携带 祈祷/赤血 系列的 `Reserved` 标志，同时穿脱逻辑复刻
+  `Reserved & 2` / `Reserved & 4` 的「无法取下」锁定分支。
 - **战斗/背包存档**：HP、MP、等级、经验与 46 格背包通过 SQLite 事务保存，在角色进图前恢复；支持从旧 W02 schema 原位升级
 - **物品目录与背包同步（W04）**：最小标准物品库（`StdItem` 完整 `TStdItem` 字段 + SQLite `std_items` 表）、
   复刻 `GetItemNumber` 的稳定 `MakeIndex`、耐久字段、76 字节 `TClientItem` 小端编解码，
@@ -348,11 +352,11 @@ docker compose -f java-server/compose.yml up --build
   虽已入库，但红线内 47 种怪不接线行为，仅数据待命**；修理目前是
   协议级最小闭环（`m_sScriptLable` 状态机 + 修理三消息），**NPC 对象、商家距离校验
   与 Market_Def 脚本引擎未实现**（受「NPC 脚本对拍前不得扩展」红线约束）；
-- 等级提升与死亡/复活闭环（W14）已实现，但死亡掉落**只覆盖背包**：`DropUseItems`（死亡掉
-  已穿装备）依赖尚未迁移的 `StdItem.Reserved` 位，红名全掉（`boDieRedScatterBagAll`）依赖
-  尚未迁移的 PK 等级模型，两者都记为 `TODO(verify)`；玩家自助复活现有两条路径——
-  复活戒指（W15，装备触发）与 GM 语义的 `WorldEngine.revive`，死亡后回城在原版里
-  走的是重新登录路径；
+- 等级提升与死亡/复活闭环（W14）已实现，但死亡掉落**只覆盖背包**：W19 已补齐
+  `StdItem.Reserved` 独立字节并用于穿脱锁定，`DropUseItems`（死亡掉已穿装备）的实际散落、
+  删除列表 quirk 与红名全掉（`boDieRedScatterBagAll`）仍依赖尚未迁移的 PK / 配置模型，
+  继续记为 `TODO(verify)`；玩家自助复活现有两条路径——复活戒指（W15，装备触发）与
+  GM 语义的 `WorldEngine.revive`，死亡后回城在原版里走的是重新登录路径；
 - 门与地图连接点（W10）已实现：`.map` 门锚点 + `CM_OPENDOOR` + 5 秒自动关门、`MapInfo.txt` 多图与
   连接点换图（含目标不可走整步回滚）；昼夜亮暗（`DayBright`）、地图旗标（SAFE/FIGHT/NORECONNECT 等）、
   城堡门差异分支与跨服切换（`nServerIndex` 不同）仍未实现；
