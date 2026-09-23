@@ -12,13 +12,23 @@ import java.util.Objects;
  * to the instance words. The instance DuraMax is therefore only the low word of the
  * template value.
  */
-public record BackpackItem(StdItem item, int makeIndex, int dura, int duraMax) {
+public record BackpackItem(
+    StdItem item, int makeIndex, int dura, int duraMax, WeaponPoints weaponPoints) {
 
   public BackpackItem {
     Objects.requireNonNull(item, "item");
     if (makeIndex < 0) throw new IllegalArgumentException("makeIndex must not be negative");
     requireU16("dura", dura);
     requireU16("duraMax", duraMax);
+    if (weaponPoints == null) weaponPoints = WeaponPoints.NONE;
+  }
+
+  /**
+   * Compatibility constructor for the callers (bag pickups, persistence, codec) that create an
+   * item without per-instance weapon luck/curse points; they default to {@link WeaponPoints#NONE}.
+   */
+  public BackpackItem(StdItem item, int makeIndex, int dura, int duraMax) {
+    this(item, makeIndex, dura, duraMax, WeaponPoints.NONE);
   }
 
   /** Instance at full durability, mirroring {@code CopyToUserItemFromName}. */
@@ -40,12 +50,17 @@ public record BackpackItem(StdItem item, int makeIndex, int dura, int duraMax) {
    * replaces such indexes while restoring the player so the client never sees duplicates.
    */
   public BackpackItem withMakeIndex(int newMakeIndex) {
-    return new BackpackItem(item, newMakeIndex, dura, duraMax);
+    return new BackpackItem(item, newMakeIndex, dura, duraMax, weaponPoints);
   }
 
   /** Returns the same item instance with updated current durability. */
   public BackpackItem withDura(int newDura) {
-    return new BackpackItem(item, makeIndex, newDura, duraMax);
+    return new BackpackItem(item, makeIndex, newDura, duraMax, weaponPoints);
+  }
+
+  /** Returns the same item instance with updated per-instance weapon luck/curse points. */
+  public BackpackItem withWeaponPoints(WeaponPoints newPoints) {
+    return new BackpackItem(item, makeIndex, dura, duraMax, newPoints);
   }
 
   private static void requireU16(String field, int value) {
