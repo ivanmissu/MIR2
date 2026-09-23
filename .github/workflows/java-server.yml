@@ -152,11 +152,17 @@ jobs:
             --report-dir "$RUNNER_TEMP/shadowdiff-ai-negative-report"
           status=$?
           set -e
+          # Exit codes: 0 = PASS, 1 = differences found, 2 = crash/usage error. Demand
+          # exactly 1 — accepting "non-zero" would let a crash satisfy the control.
           if [ "$status" -eq 0 ]; then
             echo "::error::mis-seeded worlds compared equal — the AI diff is not observing anything"
             exit 1
           fi
-          echo "negative control failed as required (exit $status)"
+          if [ "$status" -ne 1 ]; then
+            echo "::error::negative control exited $status (crash/usage), not 1 (divergence detected)"
+            exit 1
+          fi
+          echo "negative control reported divergence as required (exit 1)"
       - name: Upload shadowdiff report
         if: always()
         uses: actions/upload-artifact@v4
