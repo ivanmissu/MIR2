@@ -286,22 +286,15 @@ final class Mir2Bot implements Runnable {
       client.setReadTimeout(READ_TIMEOUT);
       client.sendRunLogin(account, characterName, certification, CLIENT_VERSION, LOGIN_CODE);
 
-      WirePacket newMap = readGamePacket(client);
-      if (newMap == null || newMap.message().ident() != ProtocolConstants.SM_NEWMAP)
-        throw new EnterRetry("no SM_NEWMAP");
-      handlePacket(newMap);
-
-      WirePacket logon = readGamePacket(client);
-      if (logon == null || logon.message().ident() != ProtocolConstants.SM_LOGON)
-        throw new EnterRetry("no SM_LOGON");
-      handlePacket(logon);
-
-      WirePacket description = readGamePacket(client);
-      if (description == null || description.message().ident()
-          != ProtocolConstants.SM_MAPDESCRIPTION) {
-        throw new EnterRetry("no SM_MAPDESCRIPTION");
-      }
-      handlePacket(description);
+      // RM_LOGON bootstrap (ObjBase.pas:5618): the entry stream interleaves
+      // SM_CHANGELIGHT / SM_FEATURECHANGED / SM_USERNAME / SM_TURN appearance packets
+      // around the milestones below. The real client's socket reader processes every
+      // packet as it arrives, so the milestones are awaited with a tolerant scan
+      // instead of strict adjacency.
+      handlePacket(expectDuringEnter(client, ProtocolConstants.SM_NEWMAP, "SM_NEWMAP"));
+      handlePacket(expectDuringEnter(client, ProtocolConstants.SM_LOGON, "SM_LOGON"));
+      handlePacket(expectDuringEnter(client, ProtocolConstants.SM_MAPDESCRIPTION,
+          "SM_MAPDESCRIPTION"));
     } catch (EnterRetry | IOException error) {
       client.close();
       throw error;
@@ -335,6 +328,22 @@ final class Mir2Bot implements Runnable {
     if (frame == null) return null;
     if (BotWireClient.isStatusFrame(frame)) throw new IOException("unexpected ack during enter");
     return BotWireClient.parsePacket(frame);
+  }
+
+  /**
+   * Reads packets until {@code ident} arrives, feeding everything else to
+   * {@link #handlePacket} like the real client's reader. The guard bounds a malformed
+   * stream so the caller's retry loop stays in charge.
+   */
+  private WirePacket expectDuringEnter(BotWireClient client, int ident, String label)
+      throws IOException, EnterRetry {
+    for (int guard = 0; guard < 128; guard++) {
+      WirePacket packet = readGamePacket(client);
+      if (packet == null) throw new EnterRetry("no " + label);
+      if (packet.message().ident() == ident) return packet;
+      handlePacket(packet);
+    }
+    throw new EnterRetry("no " + label);
   }
 
   private void startReader(BotWireClient client) {
