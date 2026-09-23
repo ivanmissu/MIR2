@@ -79,8 +79,9 @@ class GateSessionRegistryTest {
 
     assertNotEquals(first, second);
     assertThrows(SecurityException.class, () -> sessions.require("hero", first));
-    assertEquals("战士", sessions.require("hero", second).selectedCharacter() == null
-        ? null : sessions.require("hero", second).selectedCharacter().name());
+    // The fresh session starts unselected, exactly like the original login: the character
+    // choice only attaches after the client's next CM_SELCHR.
+    assertNull(sessions.require("hero", second).selectedCharacter());
 
     // Other accounts are untouched by the eviction.
     int other = sessions.register("other", "token");
