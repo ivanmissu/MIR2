@@ -33,7 +33,8 @@ public record ServerConfig(
     Long worldSeed,
     int safeZoneSize,
     boolean spawnConfigured,
-    List<NpcPlacement> npcPlacements) {
+    List<NpcPlacement> npcPlacements,
+    Path disableTakeOffFile) {
 
   /**
    * One decorative NPC to stand near the spawn point: a {@code MIR2_NPC_LIST} entry
@@ -64,7 +65,7 @@ public record ServerConfig(
     this(database, ports, advertisedHost, serverName, mapFile, null, mapId, spawnX, spawnY,
         worldTickMillis, monsterCount, monsterKind, null, bootstrapUser, bootstrapPassword,
         128, 300, 60, 900, 600, 0, null, com.mir2.world.StartPoint.DEFAULT_SAFE_ZONE_SIZE,
-        true, List.of());
+        true, List.of(), null);
   }
 
   /** Compatibility constructor that also pins the world seed (shadow comparison harness). */
@@ -74,7 +75,7 @@ public record ServerConfig(
     this(database, ports, advertisedHost, serverName, mapFile, null, mapId, spawnX, spawnY,
         worldTickMillis, monsterCount, monsterKind, null, bootstrapUser, bootstrapPassword,
         128, 300, 60, 900, 600, 0, worldSeed, com.mir2.world.StartPoint.DEFAULT_SAFE_ZONE_SIZE,
-        true, List.of());
+        true, List.of(), null);
   }
 
   public ServerConfig {
@@ -132,7 +133,7 @@ public record ServerConfig(
         mapId, spawnX, spawnY, worldTickMillis, monsterCount, monsterKind, monGenFile,
         bootstrapUser, bootstrapPassword, maxConnectionsPerIp, connectionAttemptsPerWindow,
         connectionAttemptWindowSeconds, idleTimeoutSeconds, saveIntervalSeconds, testGold,
-        worldSeed, newSafeZoneSize, spawnConfigured, npcPlacements);
+        worldSeed, newSafeZoneSize, spawnConfigured, npcPlacements, disableTakeOffFile);
   }
 
   static ServerConfig from(Map<String, String> environment) {
@@ -174,7 +175,8 @@ public record ServerConfig(
         nonNegativeInt(environment, "MIR2_SAFE_ZONE_SIZE",
             com.mir2.world.StartPoint.DEFAULT_SAFE_ZONE_SIZE),
         environment.containsKey("MIR2_SPAWN_X") || environment.containsKey("MIR2_SPAWN_Y"),
-        parseNpcList(environment.get("MIR2_NPC_LIST")));
+        parseNpcList(environment.get("MIR2_NPC_LIST")),
+        nullablePath(environment.get("MIR2_DISABLE_TAKEOFF_FILE")));
   }
 
   /**

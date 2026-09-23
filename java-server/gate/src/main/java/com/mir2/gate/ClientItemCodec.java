@@ -142,8 +142,12 @@ public final class ClientItemCodec {
     buffer.put((byte) std.needIdentify());
     buffer.putShort((short) std.looks());
     buffer.putInt((int) std.duraMax());
-    buffer.putInt((int) std.ac());
-    buffer.putInt((int) std.mac());
+    // TItem.GetItemAddValue (ItmUnit.pas:124-125) folds a weapon's per-instance luck/curse
+    // points into the client item: AC-low += btValue[3] (luck), MAC-low += btValue[4] (curse).
+    // Only weapons carry these; every other slot keeps its raw AC/MAC.
+    boolean weapon = std.itemType() == StdItem.ITEM_WEAPON;
+    buffer.putInt((int) (weapon ? foldLowWord(std.ac(), item.weaponPoints().luck()) : std.ac()));
+    buffer.putInt((int) (weapon ? foldLowWord(std.mac(), item.weaponPoints().curse()) : std.mac()));
     buffer.putInt((int) std.dc());
     buffer.putInt((int) std.mc());
     buffer.putInt((int) std.sc());
@@ -156,6 +160,19 @@ public final class ClientItemCodec {
     buffer.putShort((short) item.dura());
     buffer.putShort((short) item.duraMax());
     return buffer.array();
+  }
+
+  /**
+   * Adds {@code addLow} into the low word of a {@code MakeLong(low, high)} packed dword, leaving
+   * the high word untouched — the {@code MakeLong(AC + btValue[3], AC2 + btValue[5])} pattern of
+   * {@code GetItemAddValue}, restricted to the byte fields this slice manipulates (btValue[5/6]
+   * are the smithing-only upper-word points, always zero here).
+   */
+  private static long foldLowWord(long packed, int addLow) {
+    if (addLow == 0) return packed;
+    int low = ((int) packed & 0xffff) + addLow;
+    int high = (int) (packed >>> 16) & 0xffff;
+    return (Integer.toUnsignedLong(low & 0xffff)) | (Integer.toUnsignedLong(high) << 16);
   }
 
   private static int u8(byte[] bytes, int offset) {

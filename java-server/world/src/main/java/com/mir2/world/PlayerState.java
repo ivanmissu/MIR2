@@ -13,7 +13,7 @@ import java.util.UUID;
  */
 public record PlayerState(
     UUID characterId, Ability ability, List<BackpackItem> backpack, Equipment equipment, long gold,
-    int pkPoint) {
+    int pkPoint, double bodyLuck) {
   /** Delphi {@code MAXBAGITEM}; equipped items are stored separately. */
   public static final int MAX_BACKPACK_ITEMS = 46;
 
@@ -44,37 +44,49 @@ public record PlayerState(
 
   /** Compatibility overload for callers predating the equipment slice. */
   public PlayerState(UUID characterId, Ability ability, List<BackpackItem> backpack) {
-    this(characterId, ability, backpack, Equipment.empty(), 0, 0);
+    this(characterId, ability, backpack, Equipment.empty(), 0, 0, 0);
   }
 
   /** Compatibility overload for callers predating the gold slice. */
   public PlayerState(
       UUID characterId, Ability ability, List<BackpackItem> backpack, Equipment equipment) {
-    this(characterId, ability, backpack, equipment, 0, 0);
+    this(characterId, ability, backpack, equipment, 0, 0, 0);
   }
 
   /** Compatibility overload for callers predating the PK slice. */
   public PlayerState(
       UUID characterId, Ability ability, List<BackpackItem> backpack, Equipment equipment,
       long gold) {
-    this(characterId, ability, backpack, equipment, gold, 0);
+    this(characterId, ability, backpack, equipment, gold, 0, 0);
+  }
+
+  /** Compatibility overload for callers predating the body-luck slice. */
+  public PlayerState(
+      UUID characterId, Ability ability, List<BackpackItem> backpack, Equipment equipment,
+      long gold, int pkPoint) {
+    this(characterId, ability, backpack, equipment, gold, pkPoint, 0);
   }
 
   public static PlayerState initial(UUID characterId) {
-    return new PlayerState(characterId, Ability.defaultPlayer(), List.of(), Equipment.empty(), 0, 0);
+    return new PlayerState(characterId, Ability.defaultPlayer(), List.of(), Equipment.empty(), 0, 0, 0);
   }
 
   public PlayerState withEquipment(Equipment newEquipment) {
-    return new PlayerState(characterId, ability, backpack, newEquipment, gold, pkPoint);
+    return new PlayerState(characterId, ability, backpack, newEquipment, gold, pkPoint, bodyLuck);
   }
 
   public PlayerState withGold(long newGold) {
-    return new PlayerState(characterId, ability, backpack, equipment, newGold, pkPoint);
+    return new PlayerState(characterId, ability, backpack, equipment, newGold, pkPoint, bodyLuck);
   }
 
   /** {@code m_nPkPoint}: the murder counter {@code PKLevel} is derived from. */
   public PlayerState withPkPoint(int newPkPoint) {
-    return new PlayerState(characterId, ability, backpack, equipment, gold, newPkPoint);
+    return new PlayerState(characterId, ability, backpack, equipment, gold, newPkPoint, bodyLuck);
+  }
+
+  /** {@code m_dBodyLuck}: the persisted 幸运值 accumulator ({@code HumData.dBodyLuck}). */
+  public PlayerState withBodyLuck(double newBodyLuck) {
+    return new PlayerState(characterId, ability, backpack, equipment, gold, pkPoint, newBodyLuck);
   }
 
   /** {@code TBaseObject.PKLevel} = {@code m_nPkPoint div 100}. */

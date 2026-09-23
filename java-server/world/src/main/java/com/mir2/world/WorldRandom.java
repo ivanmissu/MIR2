@@ -49,7 +49,9 @@ public final class WorldRandom {
     /** {@code DropUseItems}: the 1/30 (1/15 while red) worn-gear drop decision on death. */
     DEATH_DROP_USE_ITEM,
     /** {@code RegenMonsters}: respawn cell and facing selection. */
-    SPAWN
+    SPAWN,
+    /** {@code MakeWeaponUnlock}: the 1-in-5 murder weapon-curse roll (ObjBase.pas:20950). */
+    WEAPON_UNLOCK
   }
 
   private static final Stream[] STREAMS = Stream.values();

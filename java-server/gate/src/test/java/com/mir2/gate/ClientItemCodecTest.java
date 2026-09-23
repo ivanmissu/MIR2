@@ -85,6 +85,38 @@ class ClientItemCodecTest {
   }
 
   @Test
+  void foldsWeaponLuckAndCurseIntoTheLowWordsOfAcAndMac() {
+    // GetItemAddValue (ItmUnit.pas:124-125) folds a weapon's btValue[3]/btValue[4] into the
+    // client item: AC-low += luck, MAC-low += curse. The high words (AC2/MAC2) stay untouched.
+    // Build a weapon (StdMode 5) whose AC/MAC already carry a high word so the fold can't clobber it.
+    StdItem blade = new StdItem("屠龙", 5, 0, 10, 0, 0, 0, 0, 4000,
+        0x0007_0002L, 0x0003_0001L, 0x0005_0002L, 0, 0, 0, 0, 0);
+    BackpackItem plain = BackpackItem.of(blade, 900);
+    // No points → raw AC/MAC preserved.
+    byte[] plainBytes = ClientItemCodec.bytes(plain);
+    assertEquals(0x0007_0002L, u32(plainBytes, ClientItemCodec.AC_OFFSET));
+    assertEquals(0x0003_0001L, u32(plainBytes, ClientItemCodec.MAC_OFFSET));
+
+    // luck=4, curse=3 → AC-low 2+4=6, MAC-low 1+3=4; high words unchanged.
+    BackpackItem cursed = plain.withWeaponPoints(new com.mir2.world.WeaponPoints(4, 3));
+    byte[] bytes = ClientItemCodec.bytes(cursed);
+    assertEquals(0x0007_0006L, u32(bytes, ClientItemCodec.AC_OFFSET));
+    assertEquals(0x0003_0004L, u32(bytes, ClientItemCodec.MAC_OFFSET));
+  }
+
+  @Test
+  void doesNotFoldWeaponPointsForNonWeaponSlots() {
+    // A dress (StdMode 10) carrying stray points must never fold — only weapons do.
+    StdItem armour = new StdItem("天尊", 10, 0, 10, 0, 0, 0, 0, 4000,
+        0x0000_0005L, 0x0000_0003L, 0, 0, 0, 0, 0, 0);
+    BackpackItem item = BackpackItem.of(armour, 901)
+        .withWeaponPoints(new com.mir2.world.WeaponPoints(4, 3));
+    byte[] bytes = ClientItemCodec.bytes(item);
+    assertEquals(0x0000_0005L, u32(bytes, ClientItemCodec.AC_OFFSET));
+    assertEquals(0x0000_0003L, u32(bytes, ClientItemCodec.MAC_OFFSET));
+  }
+
+  @Test
   void packsAFullTwentyByteGbkNameWithoutSplittingACharacter() {
     // Ten CJK characters fill the String[20] slot completely; the model never allows more,
     // and the codec's fixedGbk guard would cut at the character boundary if it ever did.

@@ -366,6 +366,42 @@ class SqliteStoreTest {
   }
 
   @Test
+  void bodyLuckAndWeaponPointsRoundTripThroughTheNewColumns() throws Exception {
+    Path file = Files.createTempFile("mir2-w22-", ".db");
+    String url = "jdbc:sqlite:" + file;
+    UUID id = UUID.randomUUID();
+
+    try (SqliteStore store = new SqliteStore(url)) {
+      store.saveAccount("w22", new byte[] {7});
+      store.save(new Character(id, "w22", "幸运儿", 0, 5, 0, 1, 0, 0));
+
+      // A cursed weapon (luck 4, curse 3) plus a non-weapon bag item that must stay NONE.
+      BackpackItem cursedWeapon = new BackpackItem(
+          StdItems.woodenSword(), 301, 20, 20,
+          new com.mir2.world.WeaponPoints(4, 3));
+      Equipment equipment = Equipment.empty().with(EquipmentSlot.WEAPON, cursedWeapon);
+      PlayerState state = new PlayerState(
+          id, Ability.defaultPlayer(), List.of(BackpackItem.of(StdItems.chickenMeat(), 302)),
+          equipment, 0, 0, /*bodyLuck*/ 12_345.5);
+      store.save(state);
+    }
+
+    try (SqliteStore reopened = new SqliteStore(url)) {
+      PlayerState restored = reopened.load(id).orElseThrow();
+      assertEquals(12_345.5, restored.bodyLuck(), "body luck accumulator must survive the round trip");
+
+      BackpackItem worn = restored.equipment().at(EquipmentSlot.WEAPON).orElseThrow();
+      assertEquals(4, worn.weaponPoints().luck());
+      assertEquals(3, worn.weaponPoints().curse());
+
+      // The bag item never carries points.
+      assertTrue(restored.backpack().getFirst().weaponPoints().isNone());
+    } finally {
+      Files.deleteIfExists(file);
+    }
+  }
+
+  @Test
   void goldRoundTripsAndPreW15DatabasesDefaultToAnEmptyWallet() throws Exception {
     Path file = Files.createTempFile("mir2-w15-", ".db");
     String url = "jdbc:sqlite:" + file;

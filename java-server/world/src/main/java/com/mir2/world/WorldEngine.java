@@ -127,6 +127,18 @@ public final class WorldEngine implements AutoCloseable {
   /** {@code g_sYouProtectedByLawOfDefense} (M2Share.pas): a lawful kill, no PK points. */
   private static final String PROTECTED_BY_LAW_MESSAGE = "[--你受到正当规则保护--]";
 
+  /** {@code g_sTheWeaponIsCursed} (M2Share.pas:3156): shown when MakeWeaponUnlock fires. */
+  private static final String WEAPON_CURSED_MESSAGE = "你的武器被诅咒了";
+
+  /** {@code g_Config.nKillHumanDecLuckPoint} (M2Share.pas) = 500: body luck lost per murder. */
+  private static final int KILL_HUMAN_DEC_LUCK_POINT = 500;
+
+  /**
+   * {@code Random(5)} in the murder branch (ObjBase.pas:20950): a 1-in-5 chance to curse the
+   * killer's weapon when the victim was wholly innocent ({@code PKLevel < 1}).
+   */
+  private static final int WEAPON_MAKE_UNLUCK_ON_MURDER = 5;
+
   /** {@code g_Config.nSuperRepairPriceRate} (M2Share.pas) = 3. */
   private static final int SUPER_REPAIR_PRICE_RATE = 3;
 
@@ -221,6 +233,12 @@ public final class WorldEngine implements AutoCloseable {
   private final AtomicBoolean started = new AtomicBoolean();
   private final AtomicBoolean closed = new AtomicBoolean();
   private final AtomicLong tickCount = new AtomicLong();
+  /**
+   * {@code g_DisableTakeOffList} (M2Share.pas): items that can be neither taken off nor dropped
+   * on death. Mutated only from the world thread through {@link #setDisableTakeOffList}; empty by
+   * default, matching a server booted without a {@code DisableTakeOffList.txt}.
+   */
+  private DisableTakeOffList disableTakeOffList = DisableTakeOffList.empty();
   private final LongSupplier clock;
   private final WorldRandom random;
   private final PlayerStateStore playerStateStore;
@@ -822,6 +840,19 @@ public final class WorldEngine implements AutoCloseable {
   }
 
   /**
+   * Installs the 禁止取下物品列表 loaded from {@code DisableTakeOffList.txt}
+   * ({@code LoadDisableTakeOffList}, M2Share.pas:4578). Listed items can be neither taken off nor
+   * dropped on death. Runs on the world thread so the list is never swapped mid-tick.
+   */
+  public CompletableFuture<Void> setDisableTakeOffList(DisableTakeOffList list) {
+    Objects.requireNonNull(list, "list");
+    return submit(() -> {
+      disableTakeOffList = list;
+      return null;
+    });
+  }
+
+  /**
    * Brings a dead player back on the spot with full HP, mirroring the GM command
    * {@code CmdReAlive} (ObjBase.pas:13998). Returns false when the player was already alive.
    */
@@ -1124,6 +1155,9 @@ public final class WorldEngine implements AutoCloseable {
     // HumData.nPKPOINT (ObjBase.pas:24904) travels with the character record; m_boPKFlag does
     // not — it is a transient combat marker and always starts clear.
     player.pkPoint = restored.pkPoint();
+    // UsrEngn.pas:2368 restores m_dBodyLuck from the record; the enter-map path then calls
+    // AddBodyLuck(0) (ObjBase.pas:20110) purely to re-derive m_nBodyLuckLevel from it.
+    player.bodyLuck = BodyLuck.ofAccumulator(restored.bodyLuck());
     // TBaseObject.Initialize (ObjBase.pas:1370) stamps the decay window at creation time.
     player.decPkPointTick = clock.getAsLong();
     // UserLogon's test-server block (ObjBase.pas:16360): under g_Config.boTestServer the
@@ -1285,7 +1319,9 @@ public final class WorldEngine implements AutoCloseable {
       return AttackResult.missed(attacker);
     }
 
-    int damage = rollDamage(player.ability, target.ability());
+    // m_nLuck = sum of worn Luck minus UnLuck (RecalcAbilitys, ObjBase.pas:3401); with no gear
+    // it is zero and rollDamage draws exactly as before.
+    int damage = rollDamage(player.ability, target.ability(), playerLuck(player));
     applyDamage(target, player, damage);
     // AttackTarget.GetHitStruckDamage only assigns weapon wear when the blow penetrates AC.
     if (damage > 0) damageEquipment(player, EquipmentSlot.WEAPON,
@@ -1609,12 +1645,13 @@ public final class WorldEngine implements AutoCloseable {
    * The "cannot take off" family of checks shared by take-on and take-off
    * (ObjBase.pas:17238-17262). With {@code m_boUserUnLockDurg = False} (the login default),
    * {@code Reserved & 2} locks an item until the unlock-potion slice lands; {@code Reserved & 4}
-   * is an unconditional lock. {@code InDisableTakeOffList} remains deferred because it is a
-   * server-config list rather than a StdItems.DB column.
+   * is an unconditional lock; {@code InDisableTakeOffList} (ObjBase.pas:17144/:17259) locks any
+   * item named in the server's 禁止取下物品列表.
    */
-  private static boolean isLockedInPlace(BackpackItem item) {
+  private boolean isLockedInPlace(BackpackItem item) {
     int reserved = item.item().reserved();
-    return (reserved & 0x02) != 0 || (reserved & 0x04) != 0;
+    return (reserved & 0x02) != 0 || (reserved & 0x04) != 0
+        || disableTakeOffList.contains(item.item());
   }
 
   /**
@@ -1905,9 +1942,59 @@ public final class WorldEngine implements AutoCloseable {
   }
 
   private int rollDamage(Ability attacker, Ability defender) {
-    int attack = randomBetween(attacker.minDc(), attacker.maxDc());
+    return rollDamage(attacker, defender, 0);
+  }
+
+  /**
+   * {@code m_nLuck} (ObjBase.pas:3401): {@code Inc(m_nLuck, btLuck); Dec(m_nLuck, btUnLuck)} over
+   * the worn set, which {@link EquipmentBonus} already accumulates. Only the sign and magnitude
+   * matter to {@code GetAttackPower}.
+   */
+  private static int playerLuck(Player player) {
+    EquipmentBonus bonus = player.bonus;
+    return bonus.luck() - bonus.unLuck();
+  }
+
+  /**
+   * {@code nPower := GetAttackPower(LoWord(DC), HiWord(DC) - LoWord(DC))} followed by the
+   * defender's AC roll (ObjBase.pas:22121 → 2416). {@code luck} is the attacker's
+   * {@code m_nLuck} — positive luck can force the maximum roll, negative luck ({@code UnLuck})
+   * can force the minimum, exactly as {@code GetAttackPower} branches.
+   *
+   * <p>When {@code luck == 0} the method draws a single power roll, which is bit-for-bit the
+   * previous {@code between(minDc, maxDc)} behaviour, so every existing deterministic vector is
+   * unchanged. Non-zero luck only occurs once gear grants it.
+   */
+  private int rollDamage(Ability attacker, Ability defender, int luck) {
+    int attack = attackPower(attacker.minDc(), attacker.maxDc(), luck);
     int defence = randomBetween(defender.minAc(), defender.maxAc());
     return Math.max(0, attack - defence);
+  }
+
+  /**
+   * {@code TBaseObject.GetAttackPower} (ObjBase.pas:2416), the melee/base-power branch.
+   *
+   * <p>With {@code luck == 0} this collapses to {@link #randomBetween(int, int)}, i.e. the exact
+   * draw the engine took before the luck model existed — including its no-draw short-circuit when
+   * {@code min == max} — so every deterministic vector is unchanged. Only non-zero luck (granted
+   * by gear) takes the extra branches.
+   */
+  private int attackPower(int minDc, int maxDc, int luck) {
+    if (luck == 0) return randomBetween(minDc, maxDc);
+    int power = Math.max(0, maxDc - minDc);
+    if (luck > 0) {
+      // A 1-in-(10 - min(9, luck)) chance to land the maximum, else a normal roll.
+      if (random.nextInt(WorldRandom.Stream.DAMAGE, 10 - Math.min(9, luck)) == 0) {
+        return minDc + power;
+      }
+      return minDc + random.nextInt(WorldRandom.Stream.DAMAGE, power + 1);
+    }
+    int result = minDc + random.nextInt(WorldRandom.Stream.DAMAGE, power + 1);
+    // A 1-in-(10 - max(0, -luck)) chance the blow is reduced to the minimum.
+    if (random.nextInt(WorldRandom.Stream.DAMAGE, 10 - Math.max(0, -luck)) == 0) {
+      return minDc;
+    }
+    return result;
   }
 
   private int randomBetween(int min, int max) {
@@ -2105,6 +2192,9 @@ public final class WorldEngine implements AutoCloseable {
       // (gated on who landed the kill), then the boDieScatterBag bag scatter.
       dropUseItems(player, killer);
       scatterBagItems(player);
+      // ObjBase.pas:21014 — the dying player loses AddBodyLuck(-(50 - (50 - Level*5))), which
+      // simplifies to -(Level*5). Applied after the item penalties, inside the same Die branch.
+      player.bodyLuck = player.bodyLuck.add(-(player.ability.level() * 5.0));
     }
     WorldEvent death = new WorldEvent.ObjectDied(victim.snapshot(), killer.id());
     emitToObserversAndSelf(victim, death);
@@ -2229,6 +2319,8 @@ public final class WorldEngine implements AutoCloseable {
         ? DIE_RED_DROP_USE_ITEM_RATE : DIE_DROP_USE_ITEM_RATE;
     for (Map.Entry<EquipmentSlot, BackpackItem> entry : player.equipment.inSlotOrder()) {
       if (random.nextInt(WorldRandom.Stream.DEATH_DROP_USE_ITEM, rate) != 0) continue;
+      // ObjBase.pas:15532 — a listed item is never dropped on death, even when it rolled a hit.
+      if (disableTakeOffList.contains(entry.getValue().item())) continue;
       BackpackItem worn = entry.getValue();
       Position cell = findDropPosition(player.map, player.position, DIE_DROP_USE_ITEM_RANGE);
       if (cell == null) continue; // DropItemDown returned False: the slot is untouched.
@@ -2381,6 +2473,14 @@ public final class WorldEngine implements AutoCloseable {
     emit(murderer, new WorldEvent.SystemMessage(murderer.id, YOU_MURDERED_MESSAGE));
     emit(victim, new WorldEvent.SystemMessage(
         victim.id, String.format(YOU_KILLED_BY_MESSAGE, murderer.name)));
+    // ObjBase.pas:20948 — a murder costs the killer nKillHumanDecLuckPoint (500) body luck.
+    murderer.bodyLuck = murderer.bodyLuck.add(-KILL_HUMAN_DEC_LUCK_POINT);
+    // ObjBase.pas:20949-20951 — killing a wholly innocent victim (PKLevel < 1) has a 1-in-5
+    // chance to curse the killer's weapon. The unqualified PKLevel is the victim's.
+    if (PkLevel.of(victim.pkPoint) < 1
+        && random.nextInt(WorldRandom.Stream.WEAPON_UNLOCK, WEAPON_MAKE_UNLUCK_ON_MURDER) == 0) {
+      makeWeaponUnlock(murderer);
+    }
     // IncPkPoint (ObjBase.pas:2364) refreshes the colour whenever the level moved.
     if (PkLevel.of(murderer.pkPoint) != previousLevel) broadcastNameColor(murderer);
     try {
@@ -2388,6 +2488,43 @@ public final class WorldEngine implements AutoCloseable {
     } catch (RuntimeException failure) {
       LOG.log(Level.WARNING, "pk point save failed for " + murderer.name, failure);
     }
+  }
+
+  /**
+   * {@code TBaseObject.MakeWeaponUnlock} (ObjBase.pas:2393): the "weapon is cursed" penalty.
+   * If the worn weapon still has luck points ({@code btValue[3] > 0}) one is burned off,
+   * otherwise a curse point is added ({@code btValue[4]}, capped at 10). Either way the player
+   * is told 「你的武器被诅咒了」 and the ability block is refreshed. A player with no weapon is
+   * untouched ({@code wIndex <= 0 -> Exit}).
+   *
+   * <p>Because {@code RecalcAbilitys} reads the base catalog item — not the per-instance
+   * {@code btValue} — these points never change the server-side combat luck; they only fold into
+   * the client-facing {@code TClientItem} (via {@code GetItemAddValue}) and the NPC upgrade
+   * formula. The recalc/ability refresh is nonetheless reproduced so the observable message and
+   * client item stay faithful.
+   */
+  private void makeWeaponUnlock(Player player) {
+    BackpackItem weapon = player.equipment.at(EquipmentSlot.WEAPON).orElse(null);
+    if (weapon == null) return; // m_UseItems[U_WEAPON].wIndex <= 0 -> Exit.
+    WeaponPoints points = weapon.weaponPoints();
+    WeaponPoints cursed;
+    if (points.luck() > 0) {
+      cursed = points.withLuck(points.luck() - 1);
+    } else if (points.curse() < WeaponPoints.MAX_CURSE) {
+      cursed = points.withCurse(points.curse() + 1);
+    } else {
+      cursed = points; // Already fully cursed: still emits the message, changes nothing.
+    }
+    if (!cursed.equals(points)) {
+      player.equipment = player.equipment.with(
+          EquipmentSlot.WEAPON, weapon.withWeaponPoints(cursed));
+    }
+    emit(player, new WorldEvent.SystemMessage(player.id, WEAPON_CURSED_MESSAGE));
+    // MakeWeaponUnlock ends with RecalcAbilitys + RM_ABILITY/RM_SUBABILITY for a player object.
+    recalculateAbilities(player);
+    emit(player, new WorldEvent.AbilityChanged(
+        player.id, player.ability, player.gold, player.job,
+        player.weightsAtLevel(player.ability.level())));
   }
 
   /**
@@ -2480,6 +2617,9 @@ public final class WorldEngine implements AutoCloseable {
     EquipmentBonus bonusBefore = player.bonus;
     long nextTotal = before.experience() + experience;
     player.setAbility(before.addExperience(experience));
+    BodyLuck luckBefore = player.bodyLuck;
+    // GetExp (ObjBase.pas:1848) grows body luck by 0.2% of the experience gained.
+    player.bodyLuck = player.bodyLuck.add(experience * 0.002);
     List<Ability> reached = new ArrayList<>();
     // Delphi levels up inside GetExp, before the save; the same order is kept here so a
     // storage failure rolls back the level as well as the experience.
@@ -2487,6 +2627,8 @@ public final class WorldEngine implements AutoCloseable {
       int levelBefore = player.baseAbility.level();
       applyLevelUp(player, player.baseAbility.consumeLevelExperience());
       reached.add(player.ability);
+      // GetExp (ObjBase.pas:1859) adds a flat 100 body luck each time it crosses a level.
+      player.bodyLuck = player.bodyLuck.add(100);
       // A capped character keeps burning overflow experience without gaining levels; stop
       // once the level can no longer move so the loop always terminates.
       if (player.baseAbility.level() == levelBefore) break;
@@ -2496,6 +2638,7 @@ public final class WorldEngine implements AutoCloseable {
     } catch (RuntimeException failure) {
       player.setAbility(before);
       player.bonus = bonusBefore;
+      player.bodyLuck = luckBefore;
       throw failure;
     }
     emit(player, new WorldEvent.ExperienceGained(player.id, experience, nextTotal));
@@ -3191,6 +3334,12 @@ public final class WorldEngine implements AutoCloseable {
     private long revivalTick;
     /** {@code m_nPkPoint}: the persisted murder counter {@code PKLevel} is derived from. */
     private int pkPoint;
+    /**
+     * {@code m_dBodyLuck} / {@code m_nBodyLuckLevel}: the 幸运值 accumulator and its derived
+     * level (ObjBase.pas:2374). Grown by experience, shrunk on death and murder; persisted as
+     * {@code HumData.dBodyLuck} and rebuilt through {@code AddBodyLuck(0)} at login.
+     */
+    private BodyLuck bodyLuck = BodyLuck.NONE;
     /** {@code m_boPKFlag}: transient "recently fought a player" marker (SetPKFlag). */
     private boolean pkFlag;
     /** {@code m_dwPKTick}: when the PK flag was last refreshed; it clears 60s later. */
@@ -3371,7 +3520,8 @@ public final class WorldEngine implements AutoCloseable {
 
     private PlayerState state() {
       // Persist the naked ability: worn bonuses are re-derived by RecalcAbilitys on load.
-      return new PlayerState(characterId, baseAbility, backpack, equipment, gold, pkPoint);
+      return new PlayerState(characterId, baseAbility, backpack, equipment, gold, pkPoint,
+          bodyLuck.value());
     }
 
     @Override

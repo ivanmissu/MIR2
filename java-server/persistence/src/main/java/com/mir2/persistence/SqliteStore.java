@@ -10,6 +10,7 @@ import com.mir2.world.PlayerState;
 import com.mir2.world.PlayerStateStore;
 import com.mir2.world.StdItem;
 import com.mir2.world.StdItems;
+import com.mir2.world.WeaponPoints;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -173,6 +174,13 @@ public final class SqliteStore implements AutoCloseable,
     // Upgrade W15 states in place: rows predating the W20 PK slice carry no murder counter.
     // Delphi's HumData.nPKPOINT defaults to 0 for every character that never killed anyone.
     ensureColumn("character_state", "pk_point", "INTEGER NOT NULL DEFAULT 0");
+    // Upgrade W20 states in place: rows predating the W22 body-luck slice carry no accumulator.
+    // Delphi's HumData.dBodyLuck defaults to 0 for every character (ObjBase.pas:1226).
+    ensureColumn("character_state", "body_luck", "REAL NOT NULL DEFAULT 0");
+    // Upgrade equipment rows in place: the W22 MakeWeaponUnlock slice adds the per-instance
+    // weapon luck/curse points (TUserItem.btValue[3]/[4]); they default to 0 for every item.
+    ensureColumn("character_equipment", "weapon_luck", "INTEGER NOT NULL DEFAULT 0");
+    ensureColumn("character_equipment", "weapon_curse", "INTEGER NOT NULL DEFAULT 0");
     // Upgrade W18 catalog caches in place: Reserved and NeedIdentify are distinct bytes in
     // TStdItem. W18 temporarily stored the official Reserved flags in need_identify.
     ensureColumn("std_items", "reserved", "INTEGER NOT NULL DEFAULT 0");
@@ -448,10 +456,10 @@ public final class SqliteStore implements AutoCloseable,
     try (PreparedStatement statement = connection.prepareStatement("""
         INSERT INTO character_state(
           character_id, hp, max_hp, mp, max_mp, min_dc, max_dc, min_ac, max_ac, level, experience,
-          gold, pk_point)
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          gold, pk_point, body_luck)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """)) {
-      bindAbility(statement, characterId, defaults, level, 0, 0);
+      bindAbility(statement, characterId, defaults, level, 0, 0, 0);
       statement.executeUpdate();
     }
   }
@@ -501,7 +509,7 @@ public final class SqliteStore implements AutoCloseable,
     Objects.requireNonNull(characterId, "characterId");
     try (PreparedStatement statement = connection.prepareStatement("""
         SELECT hp, max_hp, mp, max_mp, min_dc, max_dc, min_ac, max_ac, level, experience, gold,
-               pk_point
+               pk_point, body_luck
         FROM character_state WHERE character_id = ?
         """)) {
       statement.setString(1, characterId.toString());
@@ -520,7 +528,7 @@ public final class SqliteStore implements AutoCloseable,
             result.getLong("experience"));
         return Optional.of(new PlayerState(
             characterId, ability, loadBackpack(characterId), loadEquipment(characterId),
-            result.getLong("gold"), result.getInt("pk_point")));
+            result.getLong("gold"), result.getInt("pk_point"), result.getDouble("body_luck")));
       }
     } catch (SQLException error) {
       throw failure(error);
@@ -542,7 +550,7 @@ public final class SqliteStore implements AutoCloseable,
   private Equipment loadEquipment(UUID characterId) throws SQLException {
     Map<EquipmentSlot, BackpackItem> worn = new EnumMap<>(EquipmentSlot.class);
     try (PreparedStatement statement = connection.prepareStatement(
-        "SELECT i.slot, " + ITEM_COLUMNS + """
+        "SELECT i.slot, i.weapon_luck, i.weapon_curse, " + ITEM_COLUMNS + """
         FROM character_equipment i
         LEFT JOIN std_items s ON s.name = i.name
         WHERE i.character_id = ?
@@ -553,7 +561,11 @@ public final class SqliteStore implements AutoCloseable,
         while (result.next()) {
           int slotIndex = result.getInt("slot");
           if (!EquipmentSlot.isValidIndex(slotIndex)) continue;
-          worn.put(EquipmentSlot.fromIndex(slotIndex), readItem(result));
+          BackpackItem item = readItem(result);
+          WeaponPoints points =
+              new WeaponPoints(result.getInt("weapon_luck"), result.getInt("weapon_curse"));
+          if (!points.isNone()) item = item.withWeaponPoints(points);
+          worn.put(EquipmentSlot.fromIndex(slotIndex), item);
         }
       }
     }
@@ -569,8 +581,9 @@ public final class SqliteStore implements AutoCloseable,
     }
     if (equipment.isEmpty()) return;
     try (PreparedStatement statement = connection.prepareStatement("""
-        INSERT INTO character_equipment(character_id, slot, name, looks, make_index, dura, dura_max)
-        VALUES(?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO character_equipment(
+          character_id, slot, name, looks, make_index, dura, dura_max, weapon_luck, weapon_curse)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
         """)) {
       for (Map.Entry<Integer, BackpackItem> entry : equipment.byIndex().entrySet()) {
         BackpackItem item = entry.getValue();
@@ -581,6 +594,8 @@ public final class SqliteStore implements AutoCloseable,
         statement.setInt(5, item.makeIndex());
         statement.setInt(6, item.dura());
         statement.setInt(7, item.duraMax());
+        statement.setInt(8, item.weaponPoints().luck());
+        statement.setInt(9, item.weaponPoints().curse());
         statement.addBatch();
       }
       statement.executeBatch();
@@ -650,7 +665,8 @@ public final class SqliteStore implements AutoCloseable,
             throw new NoSuchElementException("character not found: " + state.characterId());
           }
         }
-        upsertAbility(state.characterId(), state.ability(), state.gold(), state.pkPoint());
+        upsertAbility(state.characterId(), state.ability(), state.gold(), state.pkPoint(),
+            state.bodyLuck());
         replaceBackpack(state.characterId(), state.backpack());
         replaceEquipment(state.characterId(), state.equipment());
         return null;
@@ -660,13 +676,14 @@ public final class SqliteStore implements AutoCloseable,
     }
   }
 
-  private void upsertAbility(UUID characterId, Ability ability, long gold, int pkPoint)
+  private void upsertAbility(
+      UUID characterId, Ability ability, long gold, int pkPoint, double bodyLuck)
       throws SQLException {
     try (PreparedStatement statement = connection.prepareStatement("""
         INSERT INTO character_state(
           character_id, hp, max_hp, mp, max_mp, min_dc, max_dc, min_ac, max_ac, level, experience,
-          gold, pk_point)
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          gold, pk_point, body_luck)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(character_id) DO UPDATE SET
           hp = excluded.hp,
           max_hp = excluded.max_hp,
@@ -679,16 +696,17 @@ public final class SqliteStore implements AutoCloseable,
           level = excluded.level,
           experience = excluded.experience,
           gold = excluded.gold,
-          pk_point = excluded.pk_point
+          pk_point = excluded.pk_point,
+          body_luck = excluded.body_luck
         """)) {
-      bindAbility(statement, characterId, ability, ability.level(), gold, pkPoint);
+      bindAbility(statement, characterId, ability, ability.level(), gold, pkPoint, bodyLuck);
       statement.executeUpdate();
     }
   }
 
   private static void bindAbility(
       PreparedStatement statement, UUID characterId, Ability ability, int level, long gold,
-      int pkPoint) throws SQLException {
+      int pkPoint, double bodyLuck) throws SQLException {
     statement.setString(1, characterId.toString());
     statement.setInt(2, ability.hp());
     statement.setInt(3, ability.maxHp());
@@ -702,6 +720,7 @@ public final class SqliteStore implements AutoCloseable,
     statement.setLong(11, ability.experience());
     statement.setLong(12, gold);
     statement.setInt(13, pkPoint);
+    statement.setDouble(14, bodyLuck);
   }
 
   /**

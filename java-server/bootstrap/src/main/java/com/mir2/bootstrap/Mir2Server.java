@@ -8,6 +8,7 @@ import com.mir2.gate.LegacyGateHandler;
 import com.mir2.gate.SessionRouter;
 import com.mir2.persistence.SqliteStore;
 import com.mir2.world.Direction;
+import com.mir2.world.DisableTakeOffList;
 import com.mir2.world.GameMap;
 import com.mir2.world.MapInfoLoader;
 import com.mir2.world.Mir2MapLoader;
@@ -148,6 +149,7 @@ public final class Mir2Server implements AutoCloseable {
           LOG.log(Level.WARNING, "route registration failed for " + routeLine, error);
         }
       }
+      loadDisableTakeOffList(world);
       if (config.monGenFile() == null) {
         spawnMonsters(initialMap, spawn);
       } else {
@@ -178,6 +180,35 @@ public final class Mir2Server implements AutoCloseable {
     } catch (IOException | RuntimeException error) {
       close();
       throw error;
+    }
+  }
+
+  /**
+   * Loads {@code DisableTakeOffList.txt} (M2Share.pas:4578, {@code LoadDisableTakeOffList}) if the
+   * {@code MIR2_DISABLE_TAKEOFF_FILE} path is configured and present, then pushes the parsed list
+   * onto the world thread ({@code setDisableTakeOffList}). Delphi reads the file from
+   * {@code g_Config.sEnvirDir}; the classic file is GBK-encoded, so it is read with the same GBK
+   * charset every other config loader uses. A missing path or file leaves the empty default in
+   * place (no item locked), exactly like a Delphi server without the file.
+   */
+  private void loadDisableTakeOffList(WorldEngine world) {
+    Path file = config.disableTakeOffFile();
+    if (file == null) {
+      return;
+    }
+    Path resolved = file.toAbsolutePath().normalize();
+    if (!Files.isRegularFile(resolved)) {
+      LOG.warning("DisableTakeOffList file not found, ignoring: " + resolved);
+      return;
+    }
+    try (var reader = Files.newBufferedReader(resolved, java.nio.charset.Charset.forName("GBK"))) {
+      DisableTakeOffList list = DisableTakeOffList.parse(reader);
+      world.setDisableTakeOffList(list).get(5, TimeUnit.SECONDS);
+      LOG.info(() -> "Loaded DisableTakeOffList (" + list.size() + " item(s)) from " + resolved);
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+    } catch (IOException | ExecutionException | TimeoutException error) {
+      LOG.log(Level.WARNING, "failed to load DisableTakeOffList from " + resolved, error);
     }
   }
 
