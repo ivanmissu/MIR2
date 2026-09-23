@@ -279,12 +279,32 @@ java -jar java-server/shadowdiff/target/mir2-shadowdiff.jar \
 ```
 
 - 操作脚本一行一个 op（`#` 注释）：`turn/walk/run/hit/heavyhit/bighit <0..7>`、`pickup`、
-  `bag`、`say <文本>`、`drop/eat/takeon/takeoff <物品名>`、`sleep <ms>`、`relog`；缺省用内置
-  冒烟脚本（含 relog 存档往返）。
+  `bag`、`say <文本>`、`drop/eat/takeon/takeoff <物品名>`、`sleep <ms>`、`tick <N>`、`relog`；
+  缺省用内置冒烟脚本（含 relog 存档往返）。
 - 判定分三级：**状态差异 / 应答（+GOOD/+FAIL）差异 = FAIL**，消息集合差异默认仅提示
   （`--strict-messages` 升级为 FAIL）；退出码即结论，报告落 `reports/shadow-report.md|.csv`。
 - MakeIndex、对象 id 等服务端本地量已在快照中归一化，两台服务端只需世界配置一致。
 - CI 在每个 PR 上跑一轮 embedded 自拍作为确定性回归。
+
+#### `--ai`：对拍**会动的怪**（W23）
+
+怪物 AI 的节拍是对时钟的区间判定（`ObjMon.pas:437` 走位、`ObjMon.pas:392` 攻击都读
+`GetTickCount`），而两个进程永远不共享 OS 运行时间。因此在 W23 之前，对拍只能打不会动的
+木桩：种子相同只能保证「第 N 次抽签相同」，保证不了「到底抽了几次」。
+
+`--ai` 把两台服务端切到**手动世界时钟**，世界时间只在脚本的 `tick <N>` 上前进：
+
+```bash
+java -jar java-server/shadowdiff/target/mir2-shadowdiff.jar --embedded --ai --strict-messages
+# 负向对照：只给右侧换种子，必须 FAIL
+java -jar .../mir2-shadowdiff.jar --embedded --ai --right-seed 99999
+```
+
+- `tick <N>` 经 GM 命令 `@tick N` 下发，**仅手动时钟世界接受**，生产服直接回绝。
+- 状态快照相应新增 `near=[(x,y) dir=N, ...]`（视野内其它角色的格子与朝向）与 `worldTime=`。
+- 报告新增「观测轨迹」表，逐 op 打印左侧状态——PASS 因此可审计，能区分「0 差异」与「空转」。
+- 实测对照（详见 `java-server/docs/g0-evidence/2026-09-23-w23-virtual-clock.md`）：把 AI 决策
+  构造到恰好落在 op 观测边界上时，墙钟版 5/5 FAIL 且差异数逐次漂移，等价的 tick 版 5/5 PASS。
 
 ## 配置说明
 
@@ -298,6 +318,7 @@ java -jar java-server/shadowdiff/target/mir2-shadowdiff.jar \
 | `MIR2_GAME_PORT` | `7200` | 游戏网关监听端口 |
 | `MIR2_ADVERTISED_HOST` | `127.0.0.1` | 下发给客户端的下一段连接地址 |
 | `MIR2_SERVER_NAME` | `MIR2` | 显示给客户端的服务器名称 |
+| `MIR2_WORLD_CLOCK` | `system` | 世界时间源：`system` 读宿主墙钟（生产默认，等同 Delphi `GetTickCount`）；`virtual` 把所有节拍（怪物走位/攻击间隔、刷怪、回复、PK 衰减、昼夜）改为 tick 计数的纯函数，供对拍使用 |
 | `MIR2_TEST_GOLD` | `0` | 测试服登录金币下限（`boTestServer`/`nTestGold` 语义；0 = 不生效） |
 | `MIR2_MAP_FILE` | 未设置 | 可选：首张 Delphi `.map` 文件；未设置时建立 256×256 空白 PoC 地图（与 `MIR2_MAPINFO_FILE` 互斥） |
 | `MIR2_MAPINFO_FILE` | 未设置 | 可选：经典 `MapInfo.txt`（`loadmapinfo` 包含、`[id|alias desc idx]` 地图条目、路线行）；按条目从同目录加载 `<id>.map` 多图并注册地图连接点（与 `MIR2_MAP_FILE` 互斥） |
@@ -368,8 +389,9 @@ docker compose -f java-server/compose.yml up --build
 - 编译与启动冒烟测试**尚不能**证明与真实 `mir2.exe` 完全兼容，真实客户端联调验证仍在
   进行中；bot 压测军团（50 机器人 × 5 分钟全链路，embedded 与 remote 双模式，
   报告见 `java-server/docs/g0-evidence/`）、wiretool 录制/回放对拍骨架与 shadowdiff
-  影子对拍 harness（embedded 双 Java 自拍严格判定 PASS，remote 模式待 Delphi 环境即插即用）
-  均已先行就位，但**不能替代**真实客户端对拍与 Delphi 实捕 golden；
+  影子对拍 harness（embedded 双 Java 自拍严格判定 PASS，含 W23 起的 `--ai` 会动的怪确定性对拍；
+  remote 模式待 Delphi 环境即插即用）均已先行就位，但**不能替代**真实客户端对拍与 Delphi 实捕
+  golden；`--ai` 的 remote 用法还要求两侧都以手动时钟启动，Delphi 侧目前无 `@tick` 对应物；
 - 7200 游戏网关已把 RunLogin、移动与战斗消息接入世界命令队列，并通过双会话 Socket 集成测试；
   但**尚未与真实 `mir2.exe` 对拍**，字段与消息顺序仍属待验证假设；
 - 认证码一次性消费与断线清理仅覆盖 GAME 连接的会话生命周期；LOGIN/SELECT 网关的连接数/频率限制、

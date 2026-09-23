@@ -240,6 +240,12 @@ public final class WorldEngine implements AutoCloseable {
    */
   private DisableTakeOffList disableTakeOffList = DisableTakeOffList.empty();
   private final LongSupplier clock;
+  /**
+   * The {@link WorldClock} behind {@link #clock} when one was supplied, otherwise null (a
+   * caller handed in a bare {@code LongSupplier}). Only the tick loop touches it, and only
+   * to advance a {@link WorldClock.Mode#VIRTUAL} clock.
+   */
+  private final WorldClock worldClock;
   private final WorldRandom random;
   private final PlayerStateStore playerStateStore;
   private final ItemDatabase itemDatabase;
@@ -279,6 +285,36 @@ public final class WorldEngine implements AutoCloseable {
       ItemDatabase itemDatabase,
       WorldRandom random) {
     this(config, maps, System::currentTimeMillis, random, playerStateStore, itemDatabase);
+  }
+
+  /**
+   * Production constructor with both determinism knobs: the randomness policy and the time
+   * source. {@code WorldClock.system()} reproduces the historic behaviour exactly;
+   * {@code WorldClock.virtual(tickMs)} makes every cadence tick-derived so two processes
+   * can be 对拍'd with monsters that actually move.
+   */
+  public WorldEngine(
+      Config config,
+      Collection<GameMap> maps,
+      PlayerStateStore playerStateStore,
+      ItemDatabase itemDatabase,
+      WorldRandom random,
+      WorldClock worldClock) {
+    this(config, maps, worldClock, random, playerStateStore, itemDatabase,
+        defaultHourSupplier(worldClock));
+  }
+
+  /**
+   * The day/night hour is the world's second wall-clock dependency ({@code GetGameTime} reads
+   * the host time of day). A virtual world derives it from its own clock instead, so two
+   * processes agree on the game time — and on the {@code SM_DAYCHANGING} broadcasts — no
+   * matter when they were started. A system clock keeps reading the host's hour.
+   */
+  private static IntSupplier defaultHourSupplier(WorldClock worldClock) {
+    Objects.requireNonNull(worldClock, "worldClock");
+    return worldClock.isVirtual()
+        ? () -> (int) Math.floorMod(worldClock.millis() / 3_600_000L, 24L)
+        : () -> LocalTime.now().getHour();
   }
 
   public WorldEngine(Collection<GameMap> maps) {
@@ -333,6 +369,25 @@ public final class WorldEngine implements AutoCloseable {
     this(config, maps, clock, WorldRandom.of(random), playerStateStore, itemDatabase, hourSupplier);
   }
 
+  /**
+   * Full constructor taking an explicit {@link WorldClock}. Pass
+   * {@link WorldClock#virtual(long)} to make every cadence in the world (monster walk/attack
+   * intervals, respawns, regeneration, PK decay, door sweeps) a pure function of the tick
+   * counter instead of the host clock — the precondition for 对拍'ing <em>moving</em>
+   * monsters across two processes. Production uses {@link WorldClock#system()}.
+   */
+  public WorldEngine(
+      Config config,
+      Collection<GameMap> maps,
+      WorldClock worldClock,
+      WorldRandom random,
+      PlayerStateStore playerStateStore,
+      ItemDatabase itemDatabase,
+      IntSupplier hourSupplier) {
+    this(config, maps, Objects.requireNonNull(worldClock, "worldClock").asSupplier(), random,
+        playerStateStore, itemDatabase, hourSupplier, worldClock);
+  }
+
   public WorldEngine(
       Config config,
       Collection<GameMap> maps,
@@ -341,8 +396,21 @@ public final class WorldEngine implements AutoCloseable {
       PlayerStateStore playerStateStore,
       ItemDatabase itemDatabase,
       IntSupplier hourSupplier) {
+    this(config, maps, clock, random, playerStateStore, itemDatabase, hourSupplier, null);
+  }
+
+  private WorldEngine(
+      Config config,
+      Collection<GameMap> maps,
+      LongSupplier clock,
+      WorldRandom random,
+      PlayerStateStore playerStateStore,
+      ItemDatabase itemDatabase,
+      IntSupplier hourSupplier,
+      WorldClock worldClock) {
     this.config = Objects.requireNonNull(config);
     this.clock = Objects.requireNonNull(clock, "clock");
+    this.worldClock = worldClock;
     this.random = Objects.requireNonNull(random, "random");
     this.playerStateStore = Objects.requireNonNull(playerStateStore, "playerStateStore");
     this.itemDatabase = Objects.requireNonNull(itemDatabase, "itemDatabase");
@@ -371,6 +439,47 @@ public final class WorldEngine implements AutoCloseable {
 
   public long tickCount() {
     return tickCount.get();
+  }
+
+  /**
+   * The engine's time source when one was supplied as a {@link WorldClock}, otherwise empty
+   * (legacy callers pass a bare {@code LongSupplier}). Harnesses use this to tell whether a
+   * world's cadences are tick-derived — i.e. whether a moving monster is comparable at all
+   * across two processes.
+   */
+  public java.util.Optional<WorldClock> worldClock() {
+    return java.util.Optional.ofNullable(worldClock);
+  }
+
+  /** Current world time in milliseconds, as every cadence check inside the engine reads it. */
+  public long now() {
+    return clock.getAsLong();
+  }
+
+  /**
+   * Advances a {@link WorldClock.Mode#MANUAL} world by {@code ticks} ticks, on the world
+   * thread, and returns the new world time.
+   *
+   * <p>This is the determinism pump behind 会动的怪对拍: with a manual clock the engine's
+   * scheduler still runs, but every pass sees the same timestamp, so monsters, respawns and
+   * regeneration stay frozen until a harness asks for time to pass. Pumping N ticks then
+   * replays exactly N tick bodies at N successive timestamps, which two processes reproduce
+   * identically regardless of their host load. Each pumped tick runs a full
+   * {@link #tickOnce()} body so the ordering inside a tick is unchanged.
+   *
+   * <p>A no-op (returns the current time) on SYSTEM or VIRTUAL worlds, whose time is not the
+   * caller's to move.
+   */
+  public CompletableFuture<Long> advanceTicks(int ticks) {
+    if (ticks < 0) throw new IllegalArgumentException("tick count must not be negative");
+    return submit(() -> {
+      if (worldClock == null || worldClock.mode() != WorldClock.Mode.MANUAL) return now();
+      for (int index = 0; index < ticks; index++) {
+        worldClock.advanceOneTick();
+        runTickBody();
+      }
+      return now();
+    });
   }
 
   /**
@@ -1075,15 +1184,38 @@ public final class WorldEngine implements AutoCloseable {
   /**
    * Executes one world tick on the current thread. The first caller becomes the permanent owner;
    * concurrent or cross-thread mutation is rejected.
+   *
+   * <p>A {@link WorldClock.Mode#VIRTUAL} clock is advanced <em>before</em> the tick body, so
+   * everything inside this pass observes the same, already-incremented timestamp — the tick
+   * index is the world's notion of "now". Delphi reads {@code GetTickCount} live inside the
+   * pass; quantising to the tick boundary is the deliberate deviation virtual mode buys the
+   * shadow harness (see {@link WorldClock}).
    */
   public void tickOnce() {
     if (closed.get()) throw new IllegalStateException("world engine is closed");
     claimOwnership();
+    if (worldClock != null && worldClock.advancesWithEngineTick()) worldClock.advanceOneTick();
     for (int processed = 0; processed < config.maxCommandsPerTick(); processed++) {
       Pending<?> pending = commands.poll();
       if (pending == null) break;
       pending.execute();
     }
+    // A MANUAL world's periodic half belongs to the pump alone. Running it here too would
+    // still be time-frozen (and therefore mostly idempotent), but *when* it ran relative to
+    // an inbound command would depend on the host's scheduler — so whether a monster's blow
+    // landed in this op's observation bucket or the next one would become a race. Draining
+    // commands stays unconditional: the client must keep being served between pumps.
+    if (worldClock != null && worldClock.mode() == WorldClock.Mode.MANUAL) return;
+    runTickBody();
+  }
+
+  /**
+   * The periodic half of a tick: everything {@code TUserEngine.Run} does after the inbound
+   * command queue is drained. Split out so {@link #advanceTicks(int)} can replay it once per
+   * pumped tick without re-entering the command queue (it is already running inside a
+   * command).
+   */
+  private void runTickBody() {
     regenSpawners();
     updateMonsters();
     decayPkPoints();
@@ -1860,6 +1992,51 @@ public final class WorldEngine implements AutoCloseable {
     return MoveResult.accepted(snapshot);
   }
 
+  /**
+   * Handles {@code @tick [N]} from {@link #processSay}. Runs the periodic tick body N times
+   * (default 1) at N successive virtual timestamps and answers with the resulting world time
+   * so the harness can assert both sides advanced identically.
+   *
+   * <p>Already executing on the world thread inside a queued command, so it calls
+   * {@link #runTickBody()} directly rather than re-queuing through
+   * {@link #advanceTicks(int)}.
+   */
+  private boolean pumpTicks(Player speaker, String text) {
+    if (worldClock == null || worldClock.mode() != WorldClock.Mode.MANUAL) {
+      emit(speaker, new WorldEvent.SystemMessage(speaker.id, "@tick 仅在手动世界时钟下可用"));
+      return true;
+    }
+    String argument = text.length() > 5 ? text.substring(5).strip() : "";
+    int ticks;
+    try {
+      ticks = argument.isEmpty() ? 1 : Integer.parseInt(argument);
+    } catch (NumberFormatException malformed) {
+      emit(speaker, new WorldEvent.SystemMessage(speaker.id, "@tick 参数必须是整数"));
+      return true;
+    }
+    if (ticks < 0 || ticks > MAX_PUMPED_TICKS) {
+      emit(speaker, new WorldEvent.SystemMessage(speaker.id,
+          "@tick 步数必须在 0.." + MAX_PUMPED_TICKS + " 之间"));
+      return true;
+    }
+    for (int index = 0; index < ticks; index++) {
+      worldClock.advanceOneTick();
+      runTickBody();
+    }
+    // The acknowledgement carries the new world time, so a divergence in how many ticks
+    // actually ran shows up as a state difference rather than silently drifting.
+    emit(speaker, new WorldEvent.SystemMessage(speaker.id,
+        "@tick " + ticks + " -> " + worldClock.ticks() + " ticks, now=" + now()));
+    return true;
+  }
+
+  /**
+   * Upper bound for one {@code @tick} pump. A pumped tick is a full tick body, so an
+   * unbounded value would let one chat line block the world thread indefinitely; 100k ticks
+   * is ~83 minutes of virtual time at the shipped 50 ms interval.
+   */
+  private static final int MAX_PUMPED_TICKS = 100_000;
+
   private boolean processSay(int playerId, String rawText) {
     Player speaker = requirePlayer(playerId);
     if (speaker.map.flags().noChat()) {
@@ -1874,6 +2051,12 @@ public final class WorldEngine implements AutoCloseable {
         emit(speaker, new WorldEvent.SystemMessage(speaker.id, "当前在线玩家: " + players.size() + " 人"));
         return true;
       }
+      // @tick N — the determinism pump. No Delphi counterpart: it exists so a shadow harness
+      // can advance a MANUAL world by an exact number of ticks over the ordinary wire, which
+      // is what makes a *moving* monster's Nth decision reproducible across two processes.
+      // Refused outright on SYSTEM/VIRTUAL worlds (including every production server), so
+      // the command is inert unless the operator explicitly booted a manual clock.
+      if (text.regionMatches(true, 0, "@tick", 0, 5)) return pumpTicks(speaker, text);
       return true;
     }
 

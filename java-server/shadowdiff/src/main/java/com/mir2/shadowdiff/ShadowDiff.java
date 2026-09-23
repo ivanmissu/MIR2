@@ -112,6 +112,12 @@ public final class ShadowDiff {
       out.add("exp: " + a.experience() + " vs " + b.experience());
     }
     if (a.gold() != b.gold()) out.add("gold: " + a.gold() + " vs " + b.gold());
+    if (!a.neighbours().equals(b.neighbours())) {
+      out.add("near: " + a.neighbours() + " vs " + b.neighbours());
+    }
+    if (a.worldTime() != b.worldTime()) {
+      out.add("worldTime: " + a.worldTime() + " vs " + b.worldTime());
+    }
     if (!a.combat().equals(b.combat())) {
       out.add("combat: " + a.combat() + " vs " + b.combat());
     }

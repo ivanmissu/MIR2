@@ -73,6 +73,20 @@ public final class ShadowReport {
       }
     }
 
+    // The observation trace exists so a PASS is auditable. Without it a report that says
+    // "18 steps, 0 differences" cannot be distinguished from a run in which nothing
+    // happened at all — which matters most for the AI comparison, whose whole claim is that
+    // monsters moved identically rather than that they stood still identically.
+    text.append("## 观测轨迹（左侧逐步状态）\n\n");
+    text.append("| # | 操作 | 状态 |\n|---|---|---|\n");
+    for (ShadowDiff.Entry entry : result.entries()) {
+      text.append("| ").append(entry.index())
+          .append(" | `").append(entry.op())
+          .append("` | ").append(entry.left().state().describe().replace("|", "\\|"))
+          .append(" |\n");
+    }
+    text.append('\n');
+
     text.append("## 操作脚本\n\n```\n");
     for (Op op : script) text.append(op.describe()).append('\n');
     text.append("```\n");

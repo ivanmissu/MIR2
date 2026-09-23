@@ -130,6 +130,33 @@ jobs:
             -jar shadowdiff/target/mir2-shadowdiff.jar \
             --embedded --pve --seed 20260922 \
             --report-dir "$RUNNER_TEMP/shadowdiff-pve-report"
+      # Moving-monster comparison (W23): both worlds run a MANUAL world clock, so their AI
+      # cadence advances only on the script's `tick` ops. This is the gate that keeps the
+      # virtual-clock injection honest — if world time ever starts leaking from the host
+      # again, the two runs diverge and this step fails. Strict messages: with time pumped
+      # rather than slept, even the SM_* stream must match op for op.
+      - name: Run embedded moving-monster shadow comparison (virtual clock)
+        run: |
+          java --enable-native-access=ALL-UNNAMED \
+            -jar shadowdiff/target/mir2-shadowdiff.jar \
+            --embedded --ai --strict-messages --seed 20260922 \
+            --report-dir "$RUNNER_TEMP/shadowdiff-ai-report"
+      # Negative control: the same pumped script with a mis-seeded right-hand world MUST
+      # fail. A green comparison here would mean the AI observations stopped being observed.
+      - name: Verify the moving-monster comparison detects divergence
+        run: |
+          set +e
+          java --enable-native-access=ALL-UNNAMED \
+            -jar shadowdiff/target/mir2-shadowdiff.jar \
+            --embedded --ai --seed 20260922 --right-seed 99999 \
+            --report-dir "$RUNNER_TEMP/shadowdiff-ai-negative-report"
+          status=$?
+          set -e
+          if [ "$status" -eq 0 ]; then
+            echo "::error::mis-seeded worlds compared equal — the AI diff is not observing anything"
+            exit 1
+          fi
+          echo "negative control failed as required (exit $status)"
       - name: Upload shadowdiff report
         if: always()
         uses: actions/upload-artifact@v4
@@ -138,6 +165,8 @@ jobs:
           path: |
             ${{ runner.temp }}/shadowdiff-report/
             ${{ runner.temp }}/shadowdiff-pve-report/
+            ${{ runner.temp }}/shadowdiff-ai-report/
+            ${{ runner.temp }}/shadowdiff-ai-negative-report/
           if-no-files-found: warn
           retention-days: 7
   wiretool-smoke:

@@ -67,6 +67,20 @@ final class ShadowSession implements AutoCloseable {
    * allocates its own. Cleared at the start of every op so each bucket stands alone.
    */
   private final List<String> combat = new ArrayList<>();
+  /**
+   * Every other actor the client currently believes is in view, keyed by its server-local
+   * object id and carrying the last cell/facing broadcast for it. This is the observation
+   * surface for 会动的怪对拍: a monster that took a different step on one server lands on a
+   * different cell here. Ids never leave this map — {@link #neighbourLines()} renders the
+   * census by cell so it is comparable across processes that number objects differently.
+   */
+  private final Map<Integer, String> neighbours = new LinkedHashMap<>();
+  /**
+   * The last world time echoed by the {@code @tick} pump, or -1 on servers running an
+   * ordinary clock. Compared across servers so an unequal number of pumped ticks is caught
+   * directly instead of only through its downstream effects.
+   */
+  private long worldTime = -1;
   private final Map<Integer, BackpackItem> bag = new LinkedHashMap<>();
   private final Map<Integer, BackpackItem> worn = new LinkedHashMap<>();
 
@@ -122,6 +136,14 @@ final class ShadowSession implements AutoCloseable {
     switch (op.kind()) {
       case SLEEP -> {
         sleep(Duration.ofMillis(op.millis()));
+        Drained drained = drain();
+        return new OpObservation(op.describe(), drained.acks(), drained.messages(), snapshot());
+      }
+      case TICK -> {
+        // The determinism pump: `@tick N` over CM_SAY runs exactly N tick bodies on a
+        // MANUAL world. Everything the monsters then do lands in this op's bucket, so a
+        // divergent AI step is attributed to the tick that produced it.
+        game.sendPacket(message(ProtocolConstants.CM_SAY, 0, 0, 0, 0), "@tick " + op.millis());
         Drained drained = drain();
         return new OpObservation(op.describe(), drained.acks(), drained.messages(), snapshot());
       }
@@ -186,7 +208,15 @@ final class ShadowSession implements AutoCloseable {
   StateSnapshot snapshot() {
     return new StateSnapshot(mapId, position.x(), position.y(), direction.code(),
         hp, maxHp, mp, maxMp, level, experience, gold, itemLines(bag), itemLines(worn),
-        List.copyOf(combat));
+        List.copyOf(combat), neighbourLines(), worldTime);
+  }
+
+  /**
+   * The in-view actor census, rendered id-free and sorted so two servers can be compared.
+   * An entry is {@code cell dir=N}; identical monster AI decisions produce identical lines.
+   */
+  private List<String> neighbourLines() {
+    return neighbours.values().stream().sorted(Comparator.naturalOrder()).toList();
   }
 
   @Override
@@ -391,7 +421,37 @@ final class ShadowSession implements AutoCloseable {
         mapId = WireMessageCodec.decodeBody(packet.encodedBody());
         bag.clear();
         worn.clear();
+        // A fresh map wipes the client's actor list (ClMain.pas clears the scene), so the
+        // census starts empty and is rebuilt from the SM_TURN storm that follows.
+        neighbours.clear();
       }
+      // The appearance/movement family (ObjBase.pas:5296/5316/5446): recog=actor,
+      // param/tag=cell, series=MakeWord(direction, light). Everything except the player's
+      // own actor is a neighbour whose cell and facing the AI comparison watches.
+      case ProtocolConstants.SM_TURN, ProtocolConstants.SM_WALK,
+          ProtocolConstants.SM_RUN, ProtocolConstants.SM_BACKSTEP -> {
+        if (message.recog() != selfId) {
+          neighbours.put(message.recog(), String.format(Locale.ROOT, "(%d,%d) dir=%d",
+              message.param(), message.tag(), message.series() & 0x7));
+        }
+      }
+      case ProtocolConstants.SM_DISAPPEAR -> neighbours.remove(message.recog());
+      // The @tick pump answers through SM_SYSMESSAGE with "@tick N -> T ticks, now=M".
+      // Capturing M makes "both worlds ran the same number of ticks" a compared fact.
+      case ProtocolConstants.SM_SYSMESSAGE -> {
+        String body = WireMessageCodec.decodeBody(packet.encodedBody());
+        int marker = body.indexOf("now=");
+        if (body.startsWith("@tick ") && marker >= 0) {
+          try {
+            worldTime = Long.parseLong(body.substring(marker + 4).strip());
+          } catch (NumberFormatException ignored) {
+            // Leave the previous value; the differ will surface the drift either way.
+          }
+        }
+      }
+      // A corpse stays on the map but stops acting; MakeGhost later removes it via
+      // SM_DISAPPEAR. Recording the death cell keeps the census honest in between.
+      case ProtocolConstants.SM_CLEAROBJECTS -> neighbours.clear();
       case ProtocolConstants.SM_LOGON -> {
         if (message.recog() == selfId) {
           position = new Position(message.param(), message.tag());

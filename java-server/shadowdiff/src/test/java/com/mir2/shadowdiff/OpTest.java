@@ -76,6 +76,52 @@ class OpTest {
   }
 
   @Test
+  void tickIsParsedAsACountAndSurvivesTheRoundTrip() {
+    // `tick N` is the W23 addition: the harness-level control that makes world time a
+    // scripted quantity instead of a race between two hosts' wall clocks.
+    List<Op> ops = Op.parseScript("tick 1\ntick 20\ntick 0\n");
+    assertEquals(3, ops.size());
+    assertEquals(Op.Kind.TICK, ops.get(0).kind());
+    assertEquals(1, ops.get(0).millis());
+    assertEquals(20, ops.get(1).millis());
+    assertEquals(0, ops.get(2).millis(), "a zero pump is legal: it is just an observation");
+
+    // describe() must render the count back, otherwise a --script round trip would drop it.
+    assertEquals("tick 20", ops.get(1).describe());
+    assertEquals(ops, Op.parseScript(String.join("\n", ops.stream().map(Op::describe).toList())));
+
+    assertThrows(IllegalArgumentException.class, () -> Op.parseScript("tick"));
+    assertThrows(IllegalArgumentException.class, () -> Op.parseScript("tick -1"));
+    assertThrows(IllegalArgumentException.class, () -> Op.parseScript("tick soon"));
+  }
+
+  @Test
+  void aiScriptPumpsTheClockAroundEveryPlayerActionAndRoundTrips() {
+    List<Op> script = Op.aiScript();
+
+    // The comparison is only meaningful if world time actually moves: a pumpless AI script
+    // would compare two frozen worlds and pass vacuously.
+    long pumped = script.stream().filter(op -> op.kind() == Op.Kind.TICK)
+        .mapToLong(Op::millis).sum();
+    assertTrue(pumped >= 100,
+        "the AI script must pump enough world time for a chase to happen, saw " + pumped);
+
+    // No wall-clock sleeps: the whole point is that pacing comes from ticks, not from the
+    // host scheduler. One stray `sleep` would reintroduce the race W23 removes.
+    assertTrue(script.stream().noneMatch(op -> op.kind() == Op.Kind.SLEEP),
+        "the AI script must not fall back to wall-clock sleeps");
+
+    // Player actions must sit between pumps, so acks and AI reactions share a bucket.
+    assertTrue(script.stream().anyMatch(op -> op.kind() == Op.Kind.HIT));
+    assertTrue(script.stream().anyMatch(op -> op.kind() == Op.Kind.WALK));
+    assertTrue(script.stream().anyMatch(op -> op.kind() == Op.Kind.RELOG),
+        "the pumped world time must survive the persistence round trip");
+
+    assertEquals(script,
+        Op.parseScript(String.join("\n", script.stream().map(Op::describe).toList())));
+  }
+
+  @Test
   void defaultScriptStaysDeterministicAndEndsWithARelogCheck() {
     List<Op> script = Op.defaultScript();
     assertTrue(script.size() >= 20, "the smoke script covers the core loop");

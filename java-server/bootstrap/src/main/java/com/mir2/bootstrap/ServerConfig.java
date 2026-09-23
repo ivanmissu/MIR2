@@ -34,7 +34,8 @@ public record ServerConfig(
     int safeZoneSize,
     boolean spawnConfigured,
     List<NpcPlacement> npcPlacements,
-    Path disableTakeOffFile) {
+    Path disableTakeOffFile,
+    com.mir2.world.WorldClock.Mode worldClockMode) {
 
   /**
    * One decorative NPC to stand near the spawn point: a {@code MIR2_NPC_LIST} entry
@@ -65,7 +66,7 @@ public record ServerConfig(
     this(database, ports, advertisedHost, serverName, mapFile, null, mapId, spawnX, spawnY,
         worldTickMillis, monsterCount, monsterKind, null, bootstrapUser, bootstrapPassword,
         128, 300, 60, 900, 600, 0, null, com.mir2.world.StartPoint.DEFAULT_SAFE_ZONE_SIZE,
-        true, List.of(), null);
+        true, List.of(), null, com.mir2.world.WorldClock.Mode.SYSTEM);
   }
 
   /** Compatibility constructor that also pins the world seed (shadow comparison harness). */
@@ -75,7 +76,7 @@ public record ServerConfig(
     this(database, ports, advertisedHost, serverName, mapFile, null, mapId, spawnX, spawnY,
         worldTickMillis, monsterCount, monsterKind, null, bootstrapUser, bootstrapPassword,
         128, 300, 60, 900, 600, 0, worldSeed, com.mir2.world.StartPoint.DEFAULT_SAFE_ZONE_SIZE,
-        true, List.of(), null);
+        true, List.of(), null, com.mir2.world.WorldClock.Mode.SYSTEM);
   }
 
   public ServerConfig {
@@ -115,6 +116,10 @@ public record ServerConfig(
     if (bootstrapUser != null && (bootstrapUser.isBlank() || bootstrapPassword.isEmpty()))
       throw new IllegalArgumentException("bootstrap credentials must not be blank");
     Objects.requireNonNull(npcPlacements, "npcPlacements");
+    // MANUAL is reachable only through withWorldClockMode (the shadow harness); the
+    // environment parser refuses it, because an operator who set it would get a world whose
+    // time never moves.
+    Objects.requireNonNull(worldClockMode, "worldClockMode");
   }
 
   public static ServerConfig fromEnvironment() {
@@ -133,7 +138,38 @@ public record ServerConfig(
         mapId, spawnX, spawnY, worldTickMillis, monsterCount, monsterKind, monGenFile,
         bootstrapUser, bootstrapPassword, maxConnectionsPerIp, connectionAttemptsPerWindow,
         connectionAttemptWindowSeconds, idleTimeoutSeconds, saveIntervalSeconds, testGold,
-        worldSeed, newSafeZoneSize, spawnConfigured, npcPlacements, disableTakeOffFile);
+        worldSeed, newSafeZoneSize, spawnConfigured, npcPlacements, disableTakeOffFile,
+        worldClockMode);
+  }
+
+  /**
+   * Returns a copy whose world clock runs in the given mode. Shadow-comparison harnesses
+   * switch the embedded servers to {@link com.mir2.world.WorldClock.Mode#VIRTUAL} so the
+   * monster AI cadences become tick-derived and therefore comparable across two processes;
+   * a live server keeps {@link com.mir2.world.WorldClock.Mode#SYSTEM}.
+   */
+  public ServerConfig withWorldClockMode(com.mir2.world.WorldClock.Mode mode) {
+    return new ServerConfig(database, ports, advertisedHost, serverName, mapFile, mapInfoFile,
+        mapId, spawnX, spawnY, worldTickMillis, monsterCount, monsterKind, monGenFile,
+        bootstrapUser, bootstrapPassword, maxConnectionsPerIp, connectionAttemptsPerWindow,
+        connectionAttemptWindowSeconds, idleTimeoutSeconds, saveIntervalSeconds, testGold,
+        worldSeed, safeZoneSize, spawnConfigured, npcPlacements, disableTakeOffFile, mode);
+  }
+
+  /**
+   * The time source for the world engine. {@code MIR2_WORLD_CLOCK=virtual} derives every
+   * cadence (monster walk/attack intervals, respawns, regeneration, PK decay, door sweeps,
+   * day/night) from the tick counter instead of the host clock, which is what lets two
+   * processes be 对拍'd with monsters that move. Production default is the wall clock.
+   */
+  public com.mir2.world.WorldClock worldClock() {
+    return switch (worldClockMode) {
+      case VIRTUAL -> com.mir2.world.WorldClock.virtual(worldTickMillis);
+      // MANUAL: world time only moves when the harness asks for it (`@tick N`), so a
+      // monster's Nth AI decision happens after exactly N pumped ticks on both servers.
+      case MANUAL -> com.mir2.world.WorldClock.manual(worldTickMillis);
+      case SYSTEM -> com.mir2.world.WorldClock.system();
+    };
   }
 
   static ServerConfig from(Map<String, String> environment) {
@@ -176,7 +212,33 @@ public record ServerConfig(
             com.mir2.world.StartPoint.DEFAULT_SAFE_ZONE_SIZE),
         environment.containsKey("MIR2_SPAWN_X") || environment.containsKey("MIR2_SPAWN_Y"),
         parseNpcList(environment.get("MIR2_NPC_LIST")),
-        nullablePath(environment.get("MIR2_DISABLE_TAKEOFF_FILE")));
+        nullablePath(environment.get("MIR2_DISABLE_TAKEOFF_FILE")),
+        // Production reads the host clock exactly as Delphi reads GetTickCount. 'virtual'
+        // derives world time from the tick counter so two processes agree on every cadence;
+        // it is a determinism tool for 影子对拍, not a production mode (see WorldClock).
+        worldClockMode(environment.get("MIR2_WORLD_CLOCK")));
+  }
+
+  /**
+   * Parses {@code MIR2_WORLD_CLOCK}: {@code system} (default, the host clock) or
+   * {@code virtual} (tick-derived world time). {@code manual} is rejected — a live server
+   * has nobody to advance it.
+   */
+  static com.mir2.world.WorldClock.Mode worldClockMode(String raw) {
+    if (raw == null || raw.isBlank()) return com.mir2.world.WorldClock.Mode.SYSTEM;
+    String normalised = raw.trim().toUpperCase(java.util.Locale.ROOT);
+    com.mir2.world.WorldClock.Mode mode;
+    try {
+      mode = com.mir2.world.WorldClock.Mode.valueOf(normalised);
+    } catch (IllegalArgumentException unknown) {
+      throw new IllegalArgumentException(
+          "MIR2_WORLD_CLOCK must be 'system' or 'virtual' but was '" + raw.trim() + "'", unknown);
+    }
+    if (mode == com.mir2.world.WorldClock.Mode.MANUAL) {
+      throw new IllegalArgumentException(
+          "MIR2_WORLD_CLOCK=manual is not a server mode; manual clocks are advanced by a test harness");
+    }
+    return mode;
   }
 
   /**
