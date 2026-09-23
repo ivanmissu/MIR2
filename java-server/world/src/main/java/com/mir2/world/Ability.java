@@ -65,6 +65,16 @@ public record Ability(
     return new Ability(maxHp, maxHp, 0, 0, minDc, maxDc, minAc, maxAc, 1, 0);
   }
 
+  /**
+   * Static placeholder for objects that never participate in combat — Delphi's
+   * {@code TNormNpc}/{@code TMerchant} are plain {@code TBaseObject}s whose
+   * {@code IsAttackTarget} returns False, so their health is never even consulted. The
+   * value only needs to read as "alive" for sight/occupancy code paths.
+   */
+  public static Ability immortal() {
+    return new Ability(Integer.MAX_VALUE, Integer.MAX_VALUE, 0, 0, 0, 0, 0, 0, 1, 0);
+  }
+
   public boolean alive() {
     return hp > 0;
   }

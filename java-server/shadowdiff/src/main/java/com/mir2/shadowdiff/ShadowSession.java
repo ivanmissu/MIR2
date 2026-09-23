@@ -87,8 +87,10 @@ final class ShadowSession implements AutoCloseable {
 
   /**
    * Runs the full login → select → RunLogin chain and returns the entry observation
-   * (SM_NEWMAP/SM_LOGON/SM_MAPDESCRIPTION plus everything inside the settle window). Like
-   * the real client, a {@code CM_QUERYBAGITEMS} follows immediately after entry.
+   * (the six-packet RM_LOGON bootstrap SM_NEWMAP/SM_CHANGELIGHT/SM_LOGON/
+   * SM_FEATURECHANGED/SM_USERNAME/SM_MAPDESCRIPTION plus everything inside the settle
+   * window). Like the real client, a {@code CM_QUERYBAGITEMS} follows immediately after
+   * entry.
    */
   OpObservation enter() throws IOException {
     combat.clear();
@@ -276,9 +278,17 @@ final class ShadowSession implements AutoCloseable {
       client.setReadTimeout(LOGIN_READ_TIMEOUT);
       client.sendRunLogin(account, characterName, certification, CLIENT_VERSION, LOGIN_CODE);
 
+      // The recorded entry signature pins the exact RM_LOGON order
+      // (ObjBase.pas:5618): SM_NEWMAP → SM_CHANGELIGHT → SendLogon's SM_LOGON +
+      // SM_FEATURECHANGED → the proactive SM_USERNAME → SM_MAPDESCRIPTION. Any drift
+      // in the bootstrap sequence shows up as a shadow diff, which is the point of
+      // the harness.
       List<String> messages = new ArrayList<>();
       messages.add(expectGame(client, ProtocolConstants.SM_NEWMAP));
+      messages.add(expectGame(client, ProtocolConstants.SM_CHANGELIGHT));
       messages.add(expectGame(client, ProtocolConstants.SM_LOGON));
+      messages.add(expectGame(client, ProtocolConstants.SM_FEATURECHANGED));
+      messages.add(expectGame(client, ProtocolConstants.SM_USERNAME));
       messages.add(expectGame(client, ProtocolConstants.SM_MAPDESCRIPTION));
       this.game = client;
       return messages;

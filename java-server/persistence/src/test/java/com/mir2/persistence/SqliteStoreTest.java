@@ -93,6 +93,59 @@ class SqliteStoreTest {
   }
 
   @Test
+  void reopensW04EraDatabasesWithAReconciledCatalog() throws Exception {
+    Path file = Files.createTempFile("mir2-w04-catalog-", ".db");
+    String url = "jdbc:sqlite:" + file;
+    StdItem chickenMeat = StdItems.require("鸡肉");
+    StdItem woodenSword = StdItems.require("木剑");
+    try (var connection = DriverManager.getConnection(url);
+         Statement statement = connection.createStatement()) {
+      statement.executeUpdate("""
+          CREATE TABLE std_items (
+            name TEXT PRIMARY KEY,
+            std_mode INTEGER NOT NULL,
+            shape INTEGER NOT NULL,
+            weight INTEGER NOT NULL,
+            ani_count INTEGER NOT NULL,
+            source INTEGER NOT NULL,
+            need_identify INTEGER NOT NULL,
+            looks INTEGER NOT NULL,
+            dura_max INTEGER NOT NULL,
+            ac INTEGER NOT NULL,
+            mac INTEGER NOT NULL,
+            dc INTEGER NOT NULL,
+            mc INTEGER NOT NULL,
+            sc INTEGER NOT NULL,
+            need INTEGER NOT NULL,
+            need_level INTEGER NOT NULL,
+            price INTEGER NOT NULL)
+          """);
+      // The W04 placeholder catalog: 鸡肉 carried 炼狱's Looks 41 (drawn on the ground as
+      // the sword), 木剑 Looks 1, and the operator's own quest item must survive.
+      statement.executeUpdate("INSERT INTO std_items VALUES("
+          + "'鸡肉', 40, 0, 3, 0, 0, 0, 41, 4000, 0, 0, 0, 0, 0, 0, 1, 40)");
+      statement.executeUpdate("INSERT INTO std_items VALUES("
+          + "'木剑', 5, 1, 7, 0, 0, 0, 1, 4000, 0, 0, 1, 0, 0, 0, 1, 200)");
+      statement.executeUpdate("INSERT INTO std_items VALUES("
+          + "'屠龙宝刀(自定义)', 5, 10, 40, 0, 0, 0, 120, 40000, 0, 0, 30, 30, 30, 40, 1, 999999)");
+    }
+
+    try (SqliteStore reconciled = new SqliteStore(url)) {
+      StdItem meat = reconciled.itemDatabase().find("鸡肉").orElseThrow();
+      assertEquals(chickenMeat.looks(), meat.looks(), "the stale W04 Looks must self-heal");
+      assertEquals(chickenMeat, meat, "the whole catalog row must match the authoritative import");
+      StdItem sword = reconciled.itemDatabase().find("木剑").orElseThrow();
+      assertEquals(woodenSword, sword);
+      // Rows outside the authoritative import are the operator's own and stay untouched.
+      StdItem custom = reconciled.itemDatabase().find("屠龙宝刀(自定义)").orElseThrow();
+      assertEquals(120, custom.looks());
+      assertEquals(999999, custom.price());
+    } finally {
+      Files.deleteIfExists(file);
+    }
+  }
+
+  @Test
   void upgradesW18CatalogRowsBySplittingReservedFromNeedIdentify() throws Exception {
     Path file = Files.createTempFile("mir2-w18-catalog-", ".db");
     String url = "jdbc:sqlite:" + file;

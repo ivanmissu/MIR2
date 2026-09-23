@@ -3,6 +3,7 @@ package com.mir2.bootstrap;
 import com.mir2.gate.GatePorts;
 import com.mir2.gate.LegacyGateHandler;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
@@ -30,7 +31,31 @@ public record ServerConfig(
     int saveIntervalSeconds,
     long testGold,
     Long worldSeed,
-    int safeZoneSize) {
+    int safeZoneSize,
+    boolean spawnConfigured,
+    List<NpcPlacement> npcPlacements) {
+
+  /**
+   * One decorative NPC to stand near the spawn point: a {@code MIR2_NPC_LIST} entry
+   * {@code name:appearance:dx:dy}, where {@code appearance} is the Npc.wil sprite index and
+   * {@code dx}/{@code dy} the offset from the spawn cell (negative allowed).
+   */
+  public record NpcPlacement(String name, int appearance, int dx, int dy) {
+    public NpcPlacement {
+      if (name == null || name.isBlank()) {
+        throw new IllegalArgumentException("npc name must not be blank");
+      }
+      if (appearance < 0 || appearance > 0xffff) {
+        throw new IllegalArgumentException("npc appearance must be a 16-bit value");
+      }
+    }
+  }
+
+  /** The builtin default NPCs when {@code MIR2_NPC_LIST} is unset (see deployment.md). */
+  public static final List<NpcPlacement> DEFAULT_NPCS = List.of(
+      new NpcPlacement("老兵", 0, 5, 0),
+      new NpcPlacement("老板", 1, -5, 0),
+      new NpcPlacement("商人", 2, 0, -5));
 
   /** Compatibility constructor for embedded tests and load-test callers. */
   public ServerConfig(Path database, GatePorts ports, String advertisedHost, String serverName,
@@ -38,7 +63,8 @@ public record ServerConfig(
       String monsterKind, String bootstrapUser, String bootstrapPassword) {
     this(database, ports, advertisedHost, serverName, mapFile, null, mapId, spawnX, spawnY,
         worldTickMillis, monsterCount, monsterKind, null, bootstrapUser, bootstrapPassword,
-        128, 300, 60, 900, 600, 0, null, com.mir2.world.StartPoint.DEFAULT_SAFE_ZONE_SIZE);
+        128, 300, 60, 900, 600, 0, null, com.mir2.world.StartPoint.DEFAULT_SAFE_ZONE_SIZE,
+        true, List.of());
   }
 
   /** Compatibility constructor that also pins the world seed (shadow comparison harness). */
@@ -47,7 +73,8 @@ public record ServerConfig(
       String monsterKind, String bootstrapUser, String bootstrapPassword, Long worldSeed) {
     this(database, ports, advertisedHost, serverName, mapFile, null, mapId, spawnX, spawnY,
         worldTickMillis, monsterCount, monsterKind, null, bootstrapUser, bootstrapPassword,
-        128, 300, 60, 900, 600, 0, worldSeed, com.mir2.world.StartPoint.DEFAULT_SAFE_ZONE_SIZE);
+        128, 300, 60, 900, 600, 0, worldSeed, com.mir2.world.StartPoint.DEFAULT_SAFE_ZONE_SIZE,
+        true, List.of());
   }
 
   public ServerConfig {
@@ -86,6 +113,7 @@ public record ServerConfig(
       throw new IllegalArgumentException("bootstrap user and password must be configured together");
     if (bootstrapUser != null && (bootstrapUser.isBlank() || bootstrapPassword.isEmpty()))
       throw new IllegalArgumentException("bootstrap credentials must not be blank");
+    Objects.requireNonNull(npcPlacements, "npcPlacements");
   }
 
   public static ServerConfig fromEnvironment() {
@@ -104,7 +132,7 @@ public record ServerConfig(
         mapId, spawnX, spawnY, worldTickMillis, monsterCount, monsterKind, monGenFile,
         bootstrapUser, bootstrapPassword, maxConnectionsPerIp, connectionAttemptsPerWindow,
         connectionAttemptWindowSeconds, idleTimeoutSeconds, saveIntervalSeconds, testGold,
-        worldSeed, newSafeZoneSize);
+        worldSeed, newSafeZoneSize, spawnConfigured, npcPlacements);
   }
 
   static ServerConfig from(Map<String, String> environment) {
@@ -144,7 +172,37 @@ public record ServerConfig(
         // g_Config.nSafeZoneSize (!Setup.txt SafeZoneSize=10): the radius around every
         // StartPoint.txt entry in which monsters may not choose a player as their target.
         nonNegativeInt(environment, "MIR2_SAFE_ZONE_SIZE",
-            com.mir2.world.StartPoint.DEFAULT_SAFE_ZONE_SIZE));
+            com.mir2.world.StartPoint.DEFAULT_SAFE_ZONE_SIZE),
+        environment.containsKey("MIR2_SPAWN_X") || environment.containsKey("MIR2_SPAWN_Y"),
+        parseNpcList(environment.get("MIR2_NPC_LIST")));
+  }
+
+  /**
+   * Parses {@code MIR2_NPC_LIST} ("name:appearance:dx:dy," repeated). An unset or blank
+   * value yields {@link #DEFAULT_NPCS}; the explicit value "none" disables the decorative
+   * NPCs entirely.
+   */
+  static List<NpcPlacement> parseNpcList(String raw) {
+    if (raw == null || raw.isBlank()) return DEFAULT_NPCS;
+    String trimmed = raw.trim();
+    if ("none".equalsIgnoreCase(trimmed)) return List.of();
+    java.util.ArrayList<NpcPlacement> placements = new java.util.ArrayList<>();
+    for (String entry : trimmed.split(",")) {
+      if (entry.isBlank()) continue;
+      String[] fields = entry.trim().split(":", -1);
+      if (fields.length != 4) {
+        throw new IllegalArgumentException(
+            "MIR2_NPC_LIST entries must be name:appearance:dx:dy but got '" + entry.trim() + "'");
+      }
+      try {
+        placements.add(new NpcPlacement(fields[0].trim(), Integer.parseInt(fields[1].trim()),
+            Integer.parseInt(fields[2].trim()), Integer.parseInt(fields[3].trim())));
+      } catch (NumberFormatException error) {
+        throw new IllegalArgumentException(
+            "MIR2_NPC_LIST entry '" + entry.trim() + "' has a non-numeric field", error);
+      }
+    }
+    return List.copyOf(placements);
   }
 
   /**

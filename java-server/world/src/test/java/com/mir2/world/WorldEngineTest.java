@@ -33,6 +33,55 @@ class WorldEngineTest {
   }
 
   @Test
+  void spawnedNpcAppearsToViewersBlocksItsCellAndCannotBeAttacked() {
+    List<WorldEvent> viewerEvents = new CopyOnWriteArrayList<>();
+    try (WorldEngine world = new WorldEngine(List.of(GameMap.empty("0", "比奇省", 20, 20)))) {
+      var entered = world.enterPlayer("战士", "0", new Position(6, 5), Direction.DOWN,
+          event -> viewerEvents.add(event));
+      world.tickOnce();
+      int playerId = entered.join().id();
+      viewerEvents.clear();
+
+      var spawned = world.spawnNpc("老兵", "0", new Position(7, 5), 3, Direction.DOWN);
+      world.tickOnce();
+      WorldObjectSnapshot npc = spawned.join();
+      // MakeMonsterFeature(RC_NPC=50, 0, wAppr): low byte 50, high word the Npc.wil index.
+      assertEquals((3 << 16) | 50, npc.feature());
+      assertEquals("老兵", npc.name());
+      assertEquals(new Position(7, 5), npc.position());
+      assertEquals(WorldEvent.ObjectAppeared.class, viewerEvents.getLast().getClass(),
+          "a viewer in range must see the NPC appear");
+
+      // The NPC's cell is solid: a walk onto it is rejected, exactly like a monster's.
+      var blocked = world.move(playerId, new Position(7, 5), Direction.RIGHT, MovementKind.WALK);
+      world.tickOnce();
+      assertFalse(blocked.join().moved(), "the NPC must block its cell");
+
+      // A swing at the NPC connects with nothing (IsAttackTarget is False for TNormNpc).
+      var swing = world.attack(playerId, new Position(6, 5), Direction.RIGHT, AttackKind.HIT);
+      world.tickOnce();
+      AttackResult swingResult = swing.join();
+      assertTrue(swingResult.accepted(), "the swing itself must be accepted");
+      assertTrue(swingResult.hitNothing(), "an NPC can never be a melee victim");
+      WorldObjectSnapshot npcAfter = runTick(world, world.snapshot(npc.id()));
+      assertTrue(npcAfter.alive(), "an NPC can never be damaged");
+      assertEquals("老兵", npcAfter.name());
+
+      // Names resolve through the CretInNearXY 3x3 window: on the quoted cell yes, two
+      // cells off (the client's stale belief) the answer is a ghost.
+      var named = world.queryUserName(playerId, npc.id(), 7, 5);
+      world.tickOnce();
+      WorldEngine.UserNameQuery answer = named.join();
+      assertTrue(answer.present());
+      assertEquals("老兵", answer.name());
+      assertEquals(255, answer.nameColor());
+      var ghosted = world.queryUserName(playerId, npc.id(), 9, 5);
+      world.tickOnce();
+      assertFalse(ghosted.join().present());
+    }
+  }
+
+  @Test
   void tickSerializesLifecycleCollisionMovementAndVisibilityEvents() {
     GameMap map = GameMap.withBlockedCells(
         "0", "比奇", 30, 30, List.of(new Position(10, 11)));

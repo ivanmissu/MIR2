@@ -97,6 +97,22 @@ public final class Mir2Server implements AutoCloseable {
               "spawn map '" + config.mapId() + "' is not among the loaded maps" + worldMaps.stream()
                   .map(GameMap::id).collect(java.util.stream.Collectors.joining(", ", " [", "]"))));
       Position spawn = new Position(config.spawnX(), config.spawnY());
+      // The classic 比奇省 start point (StartPoint.txt's 0 289 618, the fountain square).
+      // When the operator did not pin a spawn and the loaded map is the real 比奇省, the
+      // naked (10,10) default lands the character in the top-left mountain corner — deep
+      // inside tall terrain that draws over the actor ("被地图盖住", only visible after
+      // running out) — so boot picks the town square instead. A generated PoC map does not
+      // contain the cell and keeps the corner default.
+      if (!config.spawnConfigured() && "0".equals(initialMap.id())) {
+        Position classicStart = new Position(289, 618);
+        if (initialMap.contains(classicStart) && !classicStart.equals(spawn)) {
+          LOG.info("Spawn not configured and map '0' looks like the real 比奇省 ("
+              + initialMap.width() + "x" + initialMap.height() + ") - using the classic start "
+              + "point " + classicStart + " instead of " + spawn
+              + "; set MIR2_SPAWN_X/MIR2_SPAWN_Y to override.");
+          spawn = classicStart;
+        }
+      }
       if (!initialMap.contains(spawn))
         throw new IllegalArgumentException("configured spawn lies outside map '" + initialMap.id()
             + "' (" + initialMap.width() + "x" + initialMap.height() + "): " + spawn);
@@ -137,6 +153,7 @@ public final class Mir2Server implements AutoCloseable {
       } else {
         spawnMonGen(worldMaps, config.monGenFile());
       }
+      int npcCount = spawnNpcs(initialMap, spawn);
       final int registeredRoutes = routeCount;
 
       CharacterService characters = new CharacterService(store);
@@ -156,11 +173,42 @@ public final class Mir2Server implements AutoCloseable {
           + ", maps=" + worldMaps.size() + ", routes=" + registeredRoutes
           + ", worldTickMs=" + config.worldTickMillis()
           + ", monsters=" + config.monsterCount() + "x" + config.monsterTemplate().name()
+          + ", npcs=" + npcCount
           + ", worldSeed=" + (config.worldSeed() == null ? "unseeded" : config.worldSeed()));
     } catch (IOException | RuntimeException error) {
       close();
       throw error;
     }
+  }
+
+  /**
+   * Places the configured decorative NPCs around the spawn point — the visible half of the
+   * NPC slice (TNormNpc stand-ins; dialogues/trading stay on the Market_Def red line). A
+   * placement whose cell is blocked or occupied is skipped with a warning rather than
+   * failing the boot, exactly like Delphi's AddNpc list handling of an unwalkable cell.
+   */
+  private int spawnNpcs(GameMap initialMap, Position spawn) {
+    int placed = 0;
+    for (ServerConfig.NpcPlacement placement : config.npcPlacements()) {
+      Position where = new Position(spawn.x() + placement.dx(), spawn.y() + placement.dy());
+      if (!initialMap.contains(where)) {
+        LOG.warning("NPC '" + placement.name() + "' skipped: " + where
+            + " lies outside map '" + initialMap.id() + "'.");
+        continue;
+      }
+      try {
+        world.spawnNpc(placement.name(), initialMap.id(), where, placement.appearance(),
+            Direction.DOWN).get(5, TimeUnit.SECONDS);
+        placed++;
+      } catch (InterruptedException interrupted) {
+        Thread.currentThread().interrupt();
+        return placed;
+      } catch (ExecutionException | TimeoutException error) {
+        LOG.warning("NPC '" + placement.name() + "' skipped at " + where + ": "
+            + error.getCause());
+      }
+    }
+    return placed;
   }
 
   /** Loads every {@code <id>.map} referenced by the document, mirroring AddMapInfo's

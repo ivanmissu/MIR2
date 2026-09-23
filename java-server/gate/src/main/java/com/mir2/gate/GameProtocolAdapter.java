@@ -115,6 +115,23 @@ public final class GameProtocolAdapter implements WorldEventSink {
             reportExceptionalFailure(world.say(boundPlayer, text));
           }
         }
+        // CM_SOFTCLOSE (ObjBase.pas:4751): the client's 退出到选人 button. Delphi only
+        // raises m_boSoftClose/m_boReconnection — no ack is ever sent; the ghosting happens
+        // on the object's next Operate tick and the client closes the socket itself ~2s
+        // later. Answering here (even with a status frame) would desynchronise the client's
+        // soft-close timer, so the world call is fire-and-forget like the Delphi flag set.
+        case ProtocolConstants.CM_SOFTCLOSE -> reportExceptionalFailure(
+            world.softClose(boundPlayer));
+        // CM_QUERYUSERNAME (ClMain.pas:3601): recog=target, param/tag=the cell the client
+        // believes the target stands on. ObjBase.pas:4663 answers SM_USERNAME when the
+        // target is in the 3x3 block around that cell, SM_GHOST otherwise; no status frame.
+        case ProtocolConstants.CM_QUERYUSERNAME -> {
+          int queriedId = message.recog();
+          int queriedX = message.param();
+          int queriedY = message.tag();
+          reportExceptionalFailure(world.queryUserName(boundPlayer, queriedId, queriedX, queriedY)
+              .thenAccept(answer -> sendUserName(answer, queriedX, queriedY)));
+        }
         default -> throw new AssertionError("supported ident set changed after validation");
       }
       return true;
@@ -280,6 +297,10 @@ public final class GameProtocolAdapter implements WorldEventSink {
       }
       case WorldEvent.DayChanging dayChanging -> output.accept(new GameOutbound.Packet(
           packet(ProtocolConstants.SM_DAYCHANGING, 0, dayChanging.gameTime(), dayChanging.dayBright(), 0, "")));
+      // RM_CHANGELIGHT (ObjBase.pas:5948): recog=object, param=the new m_nLight. Tag stays
+      // 0 — Delphi ships g_Config.nClientKey there but the 1.76 client never reads it.
+      case WorldEvent.LightChanged relit -> output.accept(new GameOutbound.Packet(
+          packet(ProtocolConstants.SM_CHANGELIGHT, relit.objectId(), relit.light(), 0, 0, "")));
       default -> {
         // MapLeft has no client packet; socket closure already ends the local session.
       }
@@ -300,6 +321,7 @@ public final class GameProtocolAdapter implements WorldEventSink {
         || ident == ProtocolConstants.CM_PICKUP
         || ident == ProtocolConstants.CM_OPENDOOR
         || ident == ProtocolConstants.CM_QUERYBAGITEMS
+        || ident == ProtocolConstants.CM_QUERYUSERNAME
         || ident == ProtocolConstants.CM_SAY
         || ident == ProtocolConstants.CM_TAKEONITEM
         || ident == ProtocolConstants.CM_TAKEOFFITEM
@@ -307,7 +329,8 @@ public final class GameProtocolAdapter implements WorldEventSink {
         || ident == ProtocolConstants.CM_DROPITEM
         || ident == ProtocolConstants.CM_MERCHANTDLGSELECT
         || ident == ProtocolConstants.CM_MERCHANTQUERYREPAIRCOST
-        || ident == ProtocolConstants.CM_USERREPAIRITEM;
+        || ident == ProtocolConstants.CM_USERREPAIRITEM
+        || ident == ProtocolConstants.CM_SOFTCLOSE;
   }
 
   /**
@@ -334,6 +357,19 @@ public final class GameProtocolAdapter implements WorldEventSink {
     };
   }
 
+  /**
+   * The RM_LOGON bootstrap (ObjBase.pas:5618) in wire order:
+   * SM_NEWMAP → RM_CHANGELIGHT → SendLogon (SM_LOGON + SM_FEATURECHANGED) →
+   * SendServerConfig (skipped: m_nSoftVersionDateEx = 0 for the legacy client, the
+   * Delphi handler exits before sending anything) → ClientQueryUserName → RefUserState →
+   * SendMapDescription → SendGoldInfo (the world emits it as the trailing AbilityChanged).
+   *
+   * <p>The light packets matter: with fog on (a dark hour, or a DARK map) the client
+   * punches a fog hole sized by the actor's light around every actor — including the
+   * local one (PlayScn.pas:1345 always AddLights g_MySelf) — using the high byte of the
+   * Series word ({@code MakeWord(btDir, m_nLight)}) and SM_CHANGELIGHT. Omitting them
+   * leaves the freshly entered character under the fog overlay.
+   */
   private void sendMapEntered(WorldEvent.MapEntered entered) {
     WorldObjectSnapshot player = entered.player();
     if (playerId == 0) playerId = player.id();
@@ -342,8 +378,25 @@ public final class GameProtocolAdapter implements WorldEventSink {
 
     output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_NEWMAP, player.id(),
         position.x(), position.y(), entered.dayBright(), WireMessageCodec.encodeBody(entered.map().id()))));
+    // RM_CHANGELIGHT (ObjBase.pas:5620 → 5948): recog=object, param=m_nLight. Delphi also
+    // ships g_Config.nClientKey in tag; the 1.76 client only reads recog/param
+    // (ClMain.pas:4624), so it stays 0 here.
+    output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_CHANGELIGHT, player.id(),
+        player.light(), 0, 0, "")));
+    // SendLogon (ObjBase.pas:16780): Series=MakeWord(direction, light), body=TMessageBodyWL
+    // (feature, char status, group flag/featureEx, reserved).
     output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_LOGON, player.id(),
-        position.x(), position.y(), player.direction().code(), logonBody(player))));
+        position.x(), position.y(), makeWord(player.direction().code(), player.light()),
+        logonBody(player))));
+    // SendLogon's tail (ObjBase.pas:16794): SM_FEATURECHANGED with the feature long split
+    // across param/tag and GetFeatureEx in series. The client applies it through
+    // actor.FeatureChanged (PlayScn.pas:2454) to finalise its own avatar.
+    output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_FEATURECHANGED, player.id(),
+        player.feature() & 0xffff, (player.feature() >>> 16) & 0xffff, 0, "")));
+    // ClientQueryUserName(Self, x, y) (ObjBase.pas:5623): the server proactively names the
+    // player for itself; palette byte 255 is TBaseObject's white default (ObjBase.pas:1223).
+    output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_USERNAME, player.id(),
+        255, 0, 0, WireMessageCodec.encodeBody(player.name()))));
     output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_MAPDESCRIPTION, -1,
         0, 0, 0, WireMessageCodec.encodeBody(entered.map().title()))));
     for (WorldObjectSnapshot visible : entered.visibleObjects()) {
@@ -352,6 +405,26 @@ public final class GameProtocolAdapter implements WorldEventSink {
     for (GroundItem item : entered.visibleItems()) {
       sendItemShow(item);
     }
+  }
+
+  /**
+   * {@code MakeWord} (Common/Grobal2.pas): the low byte is the direction, the high byte
+   * the actor's light radius — the packing every RM_TURN/RM_WALK/RM_RUN/SM_LOGON series
+   * word uses (ObjBase.pas:5296/5316/5446/16785).
+   */
+  private static int makeWord(int low, int high) {
+    return (low & 0xff) | ((high & 0xff) << 8);
+  }
+
+  /** SM_USERNAME / SM_GHOST answer for CM_QUERYUSERNAME (ObjBase.pas:2638). */
+  private void sendUserName(WorldEngine.UserNameQuery answer, int quotedX, int quotedY) {
+    if (!answer.present()) {
+      output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_GHOST, answer.objectId(),
+          quotedX, quotedY, 0, "")));
+      return;
+    }
+    output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_USERNAME, answer.objectId(),
+        answer.nameColor(), 0, 0, WireMessageCodec.encodeBody(answer.name()))));
   }
 
   /**
@@ -378,8 +451,12 @@ public final class GameProtocolAdapter implements WorldEventSink {
   private void sendObjectAction(int ident, WorldObjectSnapshot object) {
     Position position = object.position();
     String body = new CharacterDescription(object.feature(), object.status()).encode();
+    // Series = MakeWord(direction, light) for the appearance/movement family
+    // (ObjBase.pas:5296/5316/5446) — the client reads the high byte into
+    // actor.m_nChrLight (PlayScn.pas:2444) to size the actor's fog hole.
     output.accept(new GameOutbound.Packet(packet(
-        ident, object.id(), position.x(), position.y(), object.direction().code(), body)));
+        ident, object.id(), position.x(), position.y(),
+        makeWord(object.direction().code(), object.light()), body)));
   }
 
   /** {@code RM_HIT} carries only the attacker id, cell and direction; the body stays empty. */

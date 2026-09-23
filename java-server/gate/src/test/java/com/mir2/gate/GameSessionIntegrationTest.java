@@ -40,19 +40,23 @@ class GameSessionIntegrationTest {
         int certificationTwo = prepareCharacter(handler, "two", "乙");
 
         try (Socket one = connectGame(ports.game(), "one", "甲", certificationOne)) {
-          List<WirePacket> oneEntry = readPackets(one, 4);
-          assertEquals(List.of(ProtocolConstants.SM_NEWMAP, ProtocolConstants.SM_LOGON,
-              ProtocolConstants.SM_MAPDESCRIPTION, ProtocolConstants.SM_ABILITY), idents(oneEntry));
-          byte[] logonBody = SixBitCodec.decodeString(oneEntry.get(1).encodedBody());
+          List<WirePacket> oneEntry = readPackets(one, 7);
+          assertEquals(List.of(ProtocolConstants.SM_NEWMAP, ProtocolConstants.SM_CHANGELIGHT,
+              ProtocolConstants.SM_LOGON, ProtocolConstants.SM_FEATURECHANGED,
+              ProtocolConstants.SM_USERNAME, ProtocolConstants.SM_MAPDESCRIPTION,
+              ProtocolConstants.SM_ABILITY), idents(oneEntry));
+          byte[] logonBody = SixBitCodec.decodeString(oneEntry.get(2).encodedBody());
           assertEquals(0x01050100,
               ByteBuffer.wrap(logonBody).order(ByteOrder.LITTLE_ENDIAN).getInt(),
               "CM_NEWCHR gender/hair must reach SM_LOGON Feature");
 
           Socket two = connectGame(ports.game(), "two", "乙", certificationTwo);
           try (two) {
-            List<WirePacket> twoEntry = readPackets(two, 5);
-            assertEquals(List.of(ProtocolConstants.SM_NEWMAP, ProtocolConstants.SM_LOGON,
-                ProtocolConstants.SM_MAPDESCRIPTION, ProtocolConstants.SM_TURN, ProtocolConstants.SM_ABILITY), idents(twoEntry));
+            List<WirePacket> twoEntry = readPackets(two, 8);
+            assertEquals(List.of(ProtocolConstants.SM_NEWMAP, ProtocolConstants.SM_CHANGELIGHT,
+                ProtocolConstants.SM_LOGON, ProtocolConstants.SM_FEATURECHANGED,
+                ProtocolConstants.SM_USERNAME, ProtocolConstants.SM_MAPDESCRIPTION,
+                ProtocolConstants.SM_TURN, ProtocolConstants.SM_ABILITY), idents(twoEntry));
             Position twoPosition = new Position(twoEntry.getFirst().message().param(),
                 twoEntry.getFirst().message().tag());
 
@@ -96,7 +100,7 @@ class GameSessionIntegrationTest {
   }
 
   @Test
-  void certificationIsConsumedOnEntryAndCannotBeReplayedAfterDisconnect() throws Exception {
+  void softCloseKeepsTheCertificationForTheReSelectFlow() throws Exception {
     AuthService auth = new AuthService();
     auth.register("solo", "pw");
     CharacterService characters = new CharacterService();
@@ -112,22 +116,76 @@ class GameSessionIntegrationTest {
         gates.start();
         int certification = prepareCharacter(handler, "solo", "甲");
 
+        // A second GAME connection while the character is online must still fail entry
+        // (the world's "player is already online" guard), which is what keeps a retained
+        // certification from being quietly double-admitted. The first session's entry is
+        // drained before the second connects so the guard's outcome is deterministic.
         try (Socket first = connectGame(ports.game(), "solo", "甲", certification)) {
-          readPackets(first, 4);
+          readPackets(first, 7);
+          try (Socket replayed = connectGame(ports.game(), "solo", "甲", certification)) {
+            WirePacket rejected = WireMessageCodec.readPacket(replayed.getInputStream());
+            assertEquals(ProtocolConstants.SM_STARTFAIL, rejected.message().ident(),
+                "a live session must block a duplicate GAME entry");
+          }
         }
-        assertEquals(0, awaitOnlinePlayers(world, 0), "first session must leave the world on disconnect");
+        assertEquals(0, awaitOnlinePlayers(world, 0), "both sessions must leave the world on disconnect");
 
-        // Same certification, second GAME connection: mir2.exe never resubmits a spent
-        // certification, but a replay attempt (or a stale retry after the world already
-        // admitted the player) must now be rejected with SM_STARTFAIL instead of quietly
-        // re-entering the world (matching the RunLogin rejection path for any other invalid
-        // certification, see authenticateGameConnection's SecurityException branch).
-        try (Socket replayed = connectGame(ports.game(), "solo", "甲", certification)) {
-          WirePacket rejected = WireMessageCodec.readPacket(replayed.getInputStream());
-          assertEquals(ProtocolConstants.SM_STARTFAIL, rejected.message().ident(),
-              "a spent certification must be rejected, not silently re-admitted");
+        // mir2.exe's CM_SOFTCLOSE flow (ClMain.pas AppLogout -> tcSoftClose -> tcReSelConnect):
+        // after the game socket closes, the client goes back to the SELECT gate and
+        // re-queries/re-selects with the very same certification — the Delphi id-server
+        // session survives the game entry (IdSrvClient.pas admission is a pure check), so
+        // the re-query must succeed and a fresh GAME entry must be admitted.
+        LegacyGateHandler.ConnectionState reselectState = new LegacyGateHandler.ConnectionState();
+        WirePacket requery = handler.dispatch(GateKind.SELECT, reselectState,
+            request(ProtocolConstants.CM_QUERYCHR, "solo/" + certification));
+        assertEquals(ProtocolConstants.SM_QUERYCHR, requery.message().ident(),
+            "the certification must survive the game entry for the soft-close re-select");
+
+        WirePacket reselected = handler.dispatch(GateKind.SELECT, reselectState,
+            request(ProtocolConstants.CM_SELCHR, "solo/甲"));
+        assertEquals(ProtocolConstants.SM_STARTPLAY, reselected.message().ident());
+
+        try (Socket reentered = connectGame(ports.game(), "solo", "甲", certification)) {
+          List<WirePacket> entry = readPackets(reentered, 7);
+          assertEquals(ProtocolConstants.SM_NEWMAP, entry.getFirst().message().ident(),
+              "the same certification must re-enter the world after the re-select");
         }
-        assertEquals(0, awaitOnlinePlayers(world, 0), "the replayed certification must not re-enter the world");
+        assertEquals(0, awaitOnlinePlayers(world, 0));
+      }
+    }
+  }
+
+  @Test
+  void softClosePacketLeavesTheWorldWithoutAnAckAndTeardownIsIdempotent() throws Exception {
+    AuthService auth = new AuthService();
+    auth.register("solo", "pw");
+    CharacterService characters = new CharacterService();
+    GateSessionRegistry sessions = new GateSessionRegistry();
+
+    try (WorldEngine world = new WorldEngine(List.of(GameMap.empty("0", "比奇", 40, 40)))) {
+      world.start();
+      LegacyGateHandler handler = new LegacyGateHandler(new SessionRouter(auth, characters), sessions,
+          LegacyGateHandler.Config.defaults(), error -> {},
+          new LegacyGateHandler.WorldConfig(world, "0", new Position(16, 16), Direction.DOWN));
+      GatePorts ports = distinctPorts();
+      try (GateServer gates = new GateServer(ports, handler)) {
+        gates.start();
+        int certification = prepareCharacter(handler, "solo", "甲");
+
+        try (Socket socket = connectGame(ports.game(), "solo", "甲", certification)) {
+          readPackets(socket, 7);
+          assertEquals(1, awaitOnlinePlayers(world, 1));
+          // CM_SOFTCLOSE: recog/param/tag/series are all zero on the wire (ClMain.pas:1728).
+          WireMessageCodec.writePacket(socket.getOutputStream(),
+              new WirePacket(new DefaultMessage(0, ProtocolConstants.CM_SOFTCLOSE, 0, 0, 0)));
+          // Delphi answers nothing (ObjBase.pas:4751 only raises m_boSoftClose); the only
+          // tolerated traffic is a status frame, so wait for the world to ghost the player.
+          assertEquals(0, awaitOnlinePlayers(world, 0),
+              "CM_SOFTCLOSE must remove the player like MakeGhost on the next tick");
+        }
+        // The teardown path runs softClose again after the socket closes; it must be a no-op
+        // rather than throwing for the already-departed player id.
+        assertEquals(0, awaitOnlinePlayers(world, 0));
       }
     }
   }
