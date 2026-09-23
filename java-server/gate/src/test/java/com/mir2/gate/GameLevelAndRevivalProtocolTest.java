@@ -90,7 +90,7 @@ class GameLevelAndRevivalProtocolTest {
       GameProtocolAdapter adapter = new GameProtocolAdapter(world, 1, output::add, () -> 77);
       BackpackItem venison = BackpackItem.of(StdItems.require("肉"), 41);
       BackpackItem potion = BackpackItem.of(StdItems.smallHealingPotion(), 42);
-      adapter.send(new WorldEvent.ItemsRemoved(1, List.of(venison, potion)));
+      adapter.send(WorldEvent.ItemsRemoved.ofItems(1, List.of(venison, potion)));
 
       WirePacket packet = firstPacket(output, ProtocolConstants.SM_DELITEMS);
       // SendDelItemList: series = item count, body = "<name>/<MakeIndex>/" repeated.

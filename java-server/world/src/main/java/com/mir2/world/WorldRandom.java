@@ -46,6 +46,8 @@ public final class WorldRandom {
     LOOT_DROP,
     /** {@code ScatterBagItems}: the 1/3 bag-drop decision taken on player death. */
     DEATH_SCATTER,
+    /** {@code DropUseItems}: the 1/30 (1/15 while red) worn-gear drop decision on death. */
+    DEATH_DROP_USE_ITEM,
     /** {@code RegenMonsters}: respawn cell and facing selection. */
     SPAWN
   }

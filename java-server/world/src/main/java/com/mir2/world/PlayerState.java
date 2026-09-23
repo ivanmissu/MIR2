@@ -12,7 +12,8 @@ import java.util.UUID;
  * rather than inside {@code TAbility} (which never carries it on the wire).
  */
 public record PlayerState(
-    UUID characterId, Ability ability, List<BackpackItem> backpack, Equipment equipment, long gold) {
+    UUID characterId, Ability ability, List<BackpackItem> backpack, Equipment equipment, long gold,
+    int pkPoint) {
   /** Delphi {@code MAXBAGITEM}; equipped items are stored separately. */
   public static final int MAX_BACKPACK_ITEMS = 46;
 
@@ -38,28 +39,46 @@ public record PlayerState(
     if (backpack.stream().anyMatch(Objects::isNull)) {
       throw new IllegalArgumentException("backpack must not contain null items");
     }
+    if (pkPoint < 0) throw new IllegalArgumentException("pk point must not be negative");
   }
 
   /** Compatibility overload for callers predating the equipment slice. */
   public PlayerState(UUID characterId, Ability ability, List<BackpackItem> backpack) {
-    this(characterId, ability, backpack, Equipment.empty(), 0);
+    this(characterId, ability, backpack, Equipment.empty(), 0, 0);
   }
 
   /** Compatibility overload for callers predating the gold slice. */
   public PlayerState(
       UUID characterId, Ability ability, List<BackpackItem> backpack, Equipment equipment) {
-    this(characterId, ability, backpack, equipment, 0);
+    this(characterId, ability, backpack, equipment, 0, 0);
+  }
+
+  /** Compatibility overload for callers predating the PK slice. */
+  public PlayerState(
+      UUID characterId, Ability ability, List<BackpackItem> backpack, Equipment equipment,
+      long gold) {
+    this(characterId, ability, backpack, equipment, gold, 0);
   }
 
   public static PlayerState initial(UUID characterId) {
-    return new PlayerState(characterId, Ability.defaultPlayer(), List.of(), Equipment.empty(), 0);
+    return new PlayerState(characterId, Ability.defaultPlayer(), List.of(), Equipment.empty(), 0, 0);
   }
 
   public PlayerState withEquipment(Equipment newEquipment) {
-    return new PlayerState(characterId, ability, backpack, newEquipment, gold);
+    return new PlayerState(characterId, ability, backpack, newEquipment, gold, pkPoint);
   }
 
   public PlayerState withGold(long newGold) {
-    return new PlayerState(characterId, ability, backpack, equipment, newGold);
+    return new PlayerState(characterId, ability, backpack, equipment, newGold, pkPoint);
+  }
+
+  /** {@code m_nPkPoint}: the murder counter {@code PKLevel} is derived from. */
+  public PlayerState withPkPoint(int newPkPoint) {
+    return new PlayerState(characterId, ability, backpack, equipment, gold, newPkPoint);
+  }
+
+  /** {@code TBaseObject.PKLevel} = {@code m_nPkPoint div 100}. */
+  public int pkLevel() {
+    return PkLevel.of(pkPoint);
   }
 }
