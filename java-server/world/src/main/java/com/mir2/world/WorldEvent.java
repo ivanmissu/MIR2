@@ -39,6 +39,7 @@ public sealed interface WorldEvent
         WorldEvent.SystemMessage,
         WorldEvent.NameColorChanged,
         WorldEvent.DayChanging,
+        WorldEvent.LightChanged,
         WorldEvent.ItemEquipped,
         WorldEvent.EquipRejected,
         WorldEvent.ItemUnequipped,

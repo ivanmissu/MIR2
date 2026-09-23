@@ -118,13 +118,15 @@ class GameSessionIntegrationTest {
 
         // A second GAME connection while the character is online must still fail entry
         // (the world's "player is already online" guard), which is what keeps a retained
-        // certification from being quietly double-admitted.
-        try (Socket first = connectGame(ports.game(), "solo", "甲", certification);
-            Socket replayed = connectGame(ports.game(), "solo", "甲", certification)) {
+        // certification from being quietly double-admitted. The first session's entry is
+        // drained before the second connects so the guard's outcome is deterministic.
+        try (Socket first = connectGame(ports.game(), "solo", "甲", certification)) {
           readPackets(first, 7);
-          WirePacket rejected = WireMessageCodec.readPacket(replayed.getInputStream());
-          assertEquals(ProtocolConstants.SM_STARTFAIL, rejected.message().ident(),
-              "a live session must block a duplicate GAME entry");
+          try (Socket replayed = connectGame(ports.game(), "solo", "甲", certification)) {
+            WirePacket rejected = WireMessageCodec.readPacket(replayed.getInputStream());
+            assertEquals(ProtocolConstants.SM_STARTFAIL, rejected.message().ident(),
+                "a live session must block a duplicate GAME entry");
+          }
         }
         assertEquals(0, awaitOnlinePlayers(world, 0), "both sessions must leave the world on disconnect");
 
