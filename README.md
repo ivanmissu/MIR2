@@ -55,14 +55,14 @@ Java 服务端。
 - **近战战斗闭环**：`CM_HIT / CM_HEAVYHIT / CM_BIGHIT` 攻击判定（共用 Delphi 的 CM_HIT 动作间隔）、
   `SM_STRUCK / SM_HEALTHSPELLCHANGED / SM_DEATH / SM_WINEXP` 广播
 - **近战怪物 AI**：鸡与半兽人两种模板（W09 起首批 10 种），视野内索敌、追击、按自身间隔攻击、死亡后尸体定时清理
-- **掉落与拾取**：按 Delphi「N 分之一」概率的掉落表、`SM_ITEMSHOW / SM_ITEMHIDE`、`CM_PICKUP` 与 `SM_ADDITEM`
+- **掉落与拾取**：按 Delphi「N 分之一」概率的掉落表、`SM_ITEMSHOW / SM_ITEMHIDE`、`CM_PICKUP` 与 `SM_ADDITEM` / `SM_GOLDCHANGED`
 - **真实官方数据库导入（W18）**：以官方 1.76 GEEM2 基线转储（`cjlaaa/Mir2-GeeM2`）为数据源，由
   `java-server/scripts/extract-geem2-db.py` 确定性生成受管工件 `db/MonsterDb.tsv`（378 行）、
   `db/StdItemsDb.tsv`（686 行，上游重名首行收敛为 684 项）与 `db/MonItems/`（10 张掉落表）；
   世界侧新增 `MonsterDb / StdItemsDb / MonsterDropTable` 加载器——首批 10 种怪 + 木桩的
   HP/防御/攻击/等级/经验/走攻节拍与掉落全部替换为真实数值（W04/W09/W12/W15/W17 的
   TODO(verify) 占位就此消除，`鹿肉` 占位掉落退役为真库 `肉`），SQLite `std_items` 启动
-  种子自动跟随；`金币` 掉落行已解析但按 P3 计划延期（金币地面堆切片落地前不生效）
+  种子自动跟随；`金币` 掉落行已接入地面金币堆，拾取后直接进入钱包并触发 `SM_GOLDCHANGED`。
 - **战斗/背包存档**：HP、MP、等级、经验与 46 格背包通过 SQLite 事务保存，在角色进图前恢复；支持从旧 W02 schema 原位升级
 - **物品目录与背包同步（W04）**：最小标准物品库（`StdItem` 完整 `TStdItem` 字段 + SQLite `std_items` 表）、
   复刻 `GetItemNumber` 的稳定 `MakeIndex`、耐久字段、76 字节 `TClientItem` 小端编解码，
@@ -339,7 +339,8 @@ docker compose -f java-server/compose.yml up --build
   `TStdItem` 模板、稳定 `MakeIndex` 与耐久，`SM_ADDITEM/SM_BAGITEMS` 输出 76 字节 `TClientItem`
   载荷（`TStdItem` 为 66 字节：`String[20]` 占 21 字节，Delphi 源码 "60 bytes" 注释已过时）；
   物品数值已由 W18 的真实 StdItems.DB 全量导入收口（684 项权威目录，占位与 TODO(verify) 消除；
-  真库不存在 `鹿肉`，掉落表已改引用真库 `肉`）；W12 已补齐装备穿脱、使用（`CM_EAT`）与
+  真库不存在 `鹿肉`，掉落表已改引用真库 `肉`）；`金币` 行已按 `Count div 2 + Random(Count)`
+  生成地面金币堆，拾取只改钱包不占背包；W12 已补齐装备穿脱、使用（`CM_EAT`）与
   丢弃（`CM_DROPITEM`），装备属性映射逐条取自 `ItmUnit.pas` 且数值随真实目录一起权威；
   W15 的修理（普通/特殊）与复活戒指（`ItemDamageRevivalRing`）数值同样真实化
   （复活戒指 AC/MAC 0-1、Looks 175、等级 16、价 20000）；套装效果（Shape/AniCount

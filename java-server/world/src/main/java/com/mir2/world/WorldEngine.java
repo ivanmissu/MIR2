@@ -52,6 +52,15 @@ public final class WorldEngine implements AutoCloseable {
    */
   private static final int DIE_SCATTER_BAG_RATE = 3;
 
+  /** {@code g_Config.nMonOneDropGoldCount} (M2Share.pas:1959): one monster gold pile caps here. */
+  private static final int MON_ONE_DROP_GOLD_COUNT = 2_000;
+
+  /** {@code DropGoldDown} always scatters within range 3 around the corpse. */
+  private static final int GOLD_DROP_RANGE = 3;
+
+  /** {@code ScatterGolds} stops after 17 successful pile attempts. */
+  private static final int MAX_GOLD_DROP_PILES = 17;
+
   /**
    * {@code g_Config.dwMakeGhostTime} (M2Share.pas:1796): a corpse becomes a ghost — i.e. it
    * leaves the map — three minutes after death.
@@ -673,6 +682,20 @@ public final class WorldEngine implements AutoCloseable {
     });
   }
 
+  /** Places a wallet-gold pile on the map; mainly used by protocol tests and future scripts. */
+  public CompletableFuture<GroundItem> spawnGroundGold(int amount, String mapId, Position position) {
+    Objects.requireNonNull(mapId, "mapId");
+    Objects.requireNonNull(position, "position");
+    if (amount < 1) throw new IllegalArgumentException("gold amount must be positive");
+    return submit(() -> {
+      GameMap map = requireMap(mapId);
+      GroundItem item = putGoldPile(map, position, amount);
+      WorldEvent appeared = new WorldEvent.ItemAppeared(item);
+      for (int viewerId : visibleIds(map, item.position(), 0)) emit(players.get(viewerId), appeared);
+      return item;
+    });
+  }
+
   /** Current worn set, used by the adapter to answer with {@code SM_SENDUSEITEMS}. */
   public CompletableFuture<Equipment> equipment(int playerId) {
     return submit(() -> requirePlayer(playerId).equipment);
@@ -1111,6 +1134,7 @@ public final class WorldEngine implements AutoCloseable {
       emit(player, new WorldEvent.PickupRejected(player.id, WorldEvent.PickupRejection.NO_ITEM));
       return false;
     }
+    if (item.gold()) return pickUpGold(player, item);
     if (player.backpack.size() >= PlayerState.MAX_BACKPACK_ITEMS) {
       emit(player, new WorldEvent.PickupRejected(player.id, WorldEvent.PickupRejection.BACKPACK_FULL));
       return false;
@@ -1129,6 +1153,33 @@ public final class WorldEngine implements AutoCloseable {
     groundItems.remove(item.id());
     itemDropTimes.remove(item.id());
     emit(player, new WorldEvent.ItemPickedUp(player.id, item, backpackItem));
+    WorldEvent hidden = new WorldEvent.ItemDisappeared(item);
+    for (int viewerId : visibleIds(player.map, item.position(), 0)) emit(players.get(viewerId), hidden);
+    return true;
+  }
+
+  /**
+   * Gold piles are {@code TMapItem} rows named {@code 金币}. Picking one up calls Delphi's
+   * {@code IncGold}: the whole pile is accepted only if it fits within {@code nHumanMaxGold};
+   * otherwise the pile remains on the floor and the client action fails.
+   */
+  private boolean pickUpGold(Player player, GroundItem item) {
+    long nextGold = player.gold + item.count();
+    if (nextGold > PlayerState.MAX_GOLD) {
+      emit(player, new WorldEvent.PickupRejected(player.id, WorldEvent.PickupRejection.WALLET_FULL));
+      return false;
+    }
+    long previousGold = player.gold;
+    player.gold = nextGold;
+    try {
+      persist(player);
+    } catch (RuntimeException failure) {
+      player.gold = previousGold;
+      throw failure;
+    }
+    groundItems.remove(item.id());
+    itemDropTimes.remove(item.id());
+    emit(player, new WorldEvent.GoldPickedUp(player.id, item, player.gold));
     WorldEvent hidden = new WorldEvent.ItemDisappeared(item);
     for (int viewerId : visibleIds(player.map, item.position(), 0)) emit(players.get(viewerId), hidden);
     return true;
@@ -2072,11 +2123,66 @@ public final class WorldEngine implements AutoCloseable {
         emit(players.get(viewerId), appeared);
       }
     }
+
+    int gold = 0;
+    for (MonsterDropTable.GoldDrop drop : monster.template.goldDrops()) {
+      if (random.nextInt(WorldRandom.Stream.LOOT_DROP, drop.oneIn()) != 0) continue;
+      gold += (drop.count() / 2) + random.nextInt(WorldRandom.Stream.LOOT_DROP, drop.count());
+    }
+    scatterGold(monster, gold);
+  }
+
+  private void scatterGold(Monster monster, int gold) {
+    if (gold <= 0) return;
+    int remaining = gold;
+    for (int pile = 0; pile < MAX_GOLD_DROP_PILES && remaining > 0; pile++) {
+      int amount = Math.min(remaining, MON_ONE_DROP_GOLD_COUNT);
+      remaining -= amount;
+      Position dropPosition = findDropPosition(monster.map, monster.position, GOLD_DROP_RANGE);
+      if (dropPosition == null) break;
+      GroundItem item = putGoldPile(monster.map, dropPosition, amount);
+      monster.droppedItemIds.add(item.id());
+      WorldEvent appeared = new WorldEvent.ItemAppeared(item);
+      for (int viewerId : visibleIds(monster.map, item.position(), 0)) {
+        emit(players.get(viewerId), appeared);
+      }
+    }
+  }
+
+  private GroundItem putGoldPile(GameMap map, Position position, int amount) {
+    if (amount < 1) throw new IllegalArgumentException("gold amount must be positive");
+    for (GroundItem item : groundItems.values()) {
+      if (!item.gold() || !item.mapId().equals(map.id()) || !item.position().equals(position)) continue;
+      int merged = item.count() + amount;
+      if (merged > MON_ONE_DROP_GOLD_COUNT) continue;
+      GroundItem updated = item.withCountAndLooks(merged, goldShape(merged));
+      groundItems.put(updated.id(), updated);
+      itemDropTimes.put(updated.id(), clock.getAsLong());
+      return updated;
+    }
+    int itemId = allocateObjectId();
+    GroundItem item = new GroundItem(itemId, GroundItem.GOLD_NAME, goldShape(amount), map.id(), position, amount);
+    groundItems.put(itemId, item);
+    itemDropTimes.put(itemId, clock.getAsLong());
+    return item;
+  }
+
+  private static int goldShape(int gold) {
+    int shape = 112;
+    if (gold >= 30) shape = 113;
+    if (gold >= 70) shape = 114;
+    if (gold >= 300) shape = 115;
+    if (gold >= 1000) shape = 116;
+    return shape;
   }
 
   private Position findDropPosition(GameMap map, Position center) {
+    return findDropPosition(map, center, 2);
+  }
+
+  private Position findDropPosition(GameMap map, Position center, int maxRadius) {
     if (map.isTerrainWalkable(center)) return center;
-    for (int radius = 1; radius <= 2; radius++) {
+    for (int radius = 1; radius <= maxRadius; radius++) {
       for (int dx = -radius; dx <= radius; dx++) {
         for (int dy = -radius; dy <= radius; dy++) {
           Position candidate = new Position(center.x() + dx, center.y() + dy);

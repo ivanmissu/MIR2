@@ -79,6 +79,7 @@ class Geem2BaselineImportTest {
       MonsterTemplate template = MonsterTemplate.forName(entry.getKey());
       MonsterDropTable.Result table = MonsterDropTable.load(entry.getValue(), catalog);
       assertEquals(table.drops(), template.drops(), entry.getKey() + " drop list");
+      assertEquals(table.goldDrops(), template.goldDrops(), entry.getKey() + " gold drop list");
     }
 
     MonsterTemplate chicken = MonsterTemplate.chicken();
@@ -95,7 +96,7 @@ class Geem2BaselineImportTest {
         new ItemDrop("复活戒指", StdItems.revivalRing().looks(), 10_000_000)),
         "洞蛆 keeps the 1/10M special-ring rows");
 
-    // Wallet-gold rows are parsed and deferred, not dropped as items.
+    // Wallet-gold rows are parsed separately from ordinary item rows and now feed ground piles.
     assertEquals(List.of(
         new MonsterDropTable.GoldDrop(2, 100),
         new MonsterDropTable.GoldDrop(10000, 1000)),
