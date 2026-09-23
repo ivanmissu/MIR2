@@ -271,6 +271,13 @@ class GameCombatProtocolTest {
       adapter.send(new WorldEvent.ItemDisappeared(new GroundItem(12, "金创药", 40, "0", new Position(7, 8))));
       assertEquals(ProtocolConstants.SM_ITEMHIDE,
           ((GameOutbound.Packet) output.remove(0)).packet().message().ident());
+
+      adapter.send(new WorldEvent.GoldPickedUp(
+          1, new GroundItem(13, GroundItem.GOLD_NAME, 114, "0", new Position(7, 8), 88), 6_088));
+      assertEquals(new GameOutbound.Status(true, 1), output.remove(0));
+      WirePacket gold = ((GameOutbound.Packet) output.remove(0)).packet();
+      assertEquals(ProtocolConstants.SM_GOLDCHANGED, gold.message().ident());
+      assertEquals(6_088, gold.message().recog());
       assertTrue(output.isEmpty());
     }
   }

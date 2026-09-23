@@ -165,6 +165,7 @@ public final class GameProtocolAdapter implements WorldEventSink {
       case WorldEvent.ItemAppeared appeared -> sendItemShow(appeared.item());
       case WorldEvent.ItemDisappeared disappeared -> sendItemHide(disappeared.item());
       case WorldEvent.ItemPickedUp pickedUp -> sendItemPickedUp(pickedUp);
+      case WorldEvent.GoldPickedUp pickedUp -> sendGoldPickedUp(pickedUp);
       case WorldEvent.ObjectDisappeared disappeared -> output.accept(new GameOutbound.Packet(
           packet(ProtocolConstants.SM_DISAPPEAR, disappeared.objectId(), 0, 0, 0, "")));
       case WorldEvent.DoorOpened opened -> output.accept(new GameOutbound.Packet(
@@ -476,6 +477,14 @@ public final class GameProtocolAdapter implements WorldEventSink {
     output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_ADDITEM, pickedUp.playerId(),
         0, 0, 1, ClientItemCodec.encode(pickedUp.backpackItem()))));
     sendItemHide(pickedUp.item());
+  }
+
+  private void sendGoldPickedUp(WorldEvent.GoldPickedUp pickedUp) {
+    if (pickedUp.playerId() != playerId) return;
+    sendStatus(true);
+    // Gold piles never become bag entries: ClientPickUpItem calls IncGold + GoldChanged.
+    output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_GOLDCHANGED,
+        (int) pickedUp.gold(), 0, 0, 0, "")));
   }
 
   /**

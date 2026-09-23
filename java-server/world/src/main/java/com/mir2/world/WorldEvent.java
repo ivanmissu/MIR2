@@ -28,6 +28,7 @@ public sealed interface WorldEvent
         WorldEvent.ItemAppeared,
         WorldEvent.ItemDisappeared,
         WorldEvent.ItemPickedUp,
+        WorldEvent.GoldPickedUp,
         WorldEvent.PickupRejected,
         WorldEvent.DoorOpened,
         WorldEvent.DoorClosed,
@@ -255,6 +256,16 @@ public sealed interface WorldEvent
     }
   }
 
+  /** A ground gold pile was picked up; no backpack item is created. */
+  record GoldPickedUp(int playerId, GroundItem item, long gold) implements WorldEvent {
+    public GoldPickedUp {
+      if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
+      Objects.requireNonNull(item, "item");
+      if (!item.gold()) throw new IllegalArgumentException("picked item must be a gold pile");
+      if (gold < 0) throw new IllegalArgumentException("gold must not be negative");
+    }
+  }
+
   record PickupRejected(int playerId, PickupRejection reason) implements WorldEvent {
     public PickupRejected {
       if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
@@ -456,8 +467,10 @@ public sealed interface WorldEvent
   /**
    * {@code RM_GOLDCHANGED -> SM_GOLDCHANGED}: Recog carries the new wallet total. Delphi only
    * fires this when gold actually changes through a source that calls {@code GoldChanged}
-   * (gold pickups, castle exchange); the repair path syncs the wallet through
-   * SM_USERREPAIRITEM_OK instead, exactly as the original does.
+   * (castle exchange and other non-pickup wallet changes). Ground-pile pickup uses
+   * {@link GoldPickedUp} so the adapter can release the pickup action and send the wallet
+   * refresh together; the repair path syncs the wallet through SM_USERREPAIRITEM_OK instead,
+   * exactly as the original does.
    */
   record GoldChanged(int playerId, long gold) implements WorldEvent {
     public GoldChanged {
@@ -608,6 +621,7 @@ public sealed interface WorldEvent
   enum PickupRejection {
     NO_ITEM,
     ACTOR_DEAD,
-    BACKPACK_FULL
+    BACKPACK_FULL,
+    WALLET_FULL
   }
 }

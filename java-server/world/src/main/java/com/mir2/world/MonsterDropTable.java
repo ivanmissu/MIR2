@@ -24,10 +24,10 @@ import java.util.List;
  *
  * <p>Two annotations may mark a row:
  * <ul>
- *   <li>{@code GOLD-DROP} — the item is {@code 金币}; on the real engine this spawns a
- *       ground gold pile whose pickup fills the wallet ({@code TGoldObject}), a behaviour
- *       slice the Java engine has not landed yet. The row stays in the data (see
- *       {@link Result#goldDrops()}) but is not dropped until that slice ships;
+ *   <li>{@code GOLD-DROP} — the item is {@code 金币}; this spawns ground gold piles whose
+ *       pickup fills the wallet ({@code TGoldObject}). The row is kept separate from ordinary
+ *       item drops (see {@link Result#goldDrops()}) because it rolls a random coin amount and
+ *       never enters the backpack;
  *   <li>{@code DEAD-ROW} — the name has no {@code StdItems} entry (upstream quirk);
  *       Delphi keeps such rows and silently fails the name lookup at drop time, so the
  *       loader keeps them too, in {@link Result#deadRows()}.
@@ -56,10 +56,15 @@ public final class MonsterDropTable {
     boolean dead() { return annotation.equals(DEAD_ROW); }
   }
 
-  /** A wallet-gold row preserved for the future gold-pile slice: {@code oneIn} chance, {@code count} coins. */
-  public record GoldDrop(int oneIn, int count) {}
+  /** A wallet-gold row: {@code oneIn} chance, then {@code count div 2 + Random(count)} coins. */
+  public record GoldDrop(int oneIn, int count) {
+    public GoldDrop {
+      if (oneIn < 1) throw new IllegalArgumentException("gold drop denominator must be positive");
+      if (count < 1) throw new IllegalArgumentException("gold drop count must be positive");
+    }
+  }
 
-  /** The resolved table: engine-consumable drops plus the deferred gold rows. */
+  /** The resolved table: engine-consumable item drops plus separate wallet-gold rows. */
   public record Result(List<ItemDrop> drops, List<GoldDrop> goldDrops, List<Row> deadRows) {
     public Result {
       drops = List.copyOf(drops);

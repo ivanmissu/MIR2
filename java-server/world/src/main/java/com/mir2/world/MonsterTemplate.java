@@ -22,8 +22,9 @@ import java.util.function.Supplier;
  * correction): HP, DC range, AC/MAC, level, fight experience and the {@code WALK_SPD} /
  * {@code ATTACK_SPD} action intervals all come from {@link MonsterDb}, with the loader's
  * 200&nbsp;ms floor applied ({@code LoadMonsterDB} clamps both). The kill drop tables are
- * the imported {@code MonItems/<name>.txt} rows (see {@code db/MonItems/}), gold-pile rows
- * aside — those await the ground-gold behaviour slice.
+ * the imported {@code MonItems/<name>.txt} rows (see {@code db/MonItems/}); ordinary item rows
+ * enter {@link #drops()}, while {@code 金币} rows enter {@link #goldDrops()} for the ground-gold
+ * pile path.
  *
  * <p>What the DB does <em>not</em> carry: the AI view range (Delphi sets it per monster
  * subclass in {@code ObjMon*.pas} constants), the Java-side behaviour family selection and
@@ -39,7 +40,8 @@ public record MonsterTemplate(
     long attackIntervalMillis,
     long experience,
     MonsterBehavior behavior,
-    List<ItemDrop> drops) {
+    List<ItemDrop> drops,
+    List<MonsterDropTable.GoldDrop> goldDrops) {
 
   public MonsterTemplate {
     if (name == null || name.isBlank()) throw new IllegalArgumentException("monster name must not be blank");
@@ -50,13 +52,22 @@ public record MonsterTemplate(
       throw new IllegalArgumentException("action intervals must be positive");
     if (experience < 0) throw new IllegalArgumentException("experience must not be negative");
     drops = List.copyOf(drops);
+    goldDrops = List.copyOf(goldDrops);
+  }
+
+  /** Compatibility constructor for templates that have ordinary item drops but no gold rows. */
+  public MonsterTemplate(String name, int feature, Ability ability, int viewRange,
+      long walkIntervalMillis, long attackIntervalMillis, long experience, MonsterBehavior behavior,
+      List<ItemDrop> drops) {
+    this(name, feature, ability, viewRange, walkIntervalMillis, attackIntervalMillis, experience,
+        behavior, drops, List.of());
   }
 
   /** Compatibility constructor for the W03 melee slice: everything defaults to aggressive AI. */
   public MonsterTemplate(String name, int feature, Ability ability, int viewRange,
       long walkIntervalMillis, long attackIntervalMillis, long experience, List<ItemDrop> drops) {
     this(name, feature, ability, viewRange, walkIntervalMillis, attackIntervalMillis, experience,
-        MonsterBehavior.AGGRESSIVE, drops);
+        MonsterBehavior.AGGRESSIVE, drops, List.of());
   }
 
   /**
@@ -132,10 +143,10 @@ public record MonsterTemplate(
         ability, viewRange,
         MonsterDb.clampActionInterval(row.walkSpd()),
         MonsterDb.clampActionInterval(row.attackSpd()),
-        row.exp(), behavior, drops.drops());
+        row.exp(), behavior, drops.drops(), drops.goldDrops());
   }
 
-  /** The defers-gold drops of a template (engine cannot spawn wallet piles yet); for docs/tests. */
+  /** The wallet-gold rows of a template; exposed for docs/tests alongside ordinary drops. */
   public static List<MonsterDropTable.GoldDrop> goldDropsOf(String dbName) {
     return MonsterDropTable.load(dbName, DEFAULT_CATALOG).goldDrops();
   }
