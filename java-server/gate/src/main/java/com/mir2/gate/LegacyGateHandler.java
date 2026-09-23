@@ -105,13 +105,16 @@ public final class LegacyGateHandler implements BiConsumer<ClientConnection, IOE
           world.direction(), state.selectedCharacter.feature(), 0,
           // btJob selects the RecalcLevelAbilitys growth branch (warrior/wizard/taoist).
           state.selectedCharacter.job(), adapter).join().id();
-      // The certification is a one-time admission ticket, mirroring the Delphi id-server's
-      // single-use session id (M2Server/IdSrvClient.pas:DelSession). It is consumed only once
-      // the world has actually admitted the player, not merely once RunLogin authenticated:
-      // a transient world rejection (e.g. the previous session's leavePlayer race, "player is
-      // already online") must leave the certification intact so LoadtestMain/Mir2Bot's
-      // ENTER_ATTEMPTS retry can open a fresh GAME connection with the same certification.
-      sessions.remove(state.certification);
+      // The certification deliberately survives the GAME entry. The Delphi id-server session
+      // does too: admission (IdSrvClient.pas GetAdmission) is a check, and the teardown
+      // paths that do close a session — GetCancelAdmissionA / a new login for the account —
+      // are not the entry itself. This is what makes mir2.exe's 退出到选人 flow work: after
+      // CM_SOFTCLOSE the client reconnects to the SELECT gate and re-queries/re-selects with
+      // the very same certification (ClMain.pas tcReSelConnect → SendQueryChr), which must
+      // still validate. Replay safety comes from the world's "player is already online"
+      // guard (a second GAME entry while online fails with SM_STARTFAIL) and from
+      // GateSessionRegistry.register evicting the account's previous session on the next
+      // CM_IDPASSWORD.
       WirePacket packet;
       while ((packet = WireMessageCodec.readPacket(connection.input())) != null) {
         adapter.handle(packet);
@@ -122,17 +125,13 @@ public final class LegacyGateHandler implements BiConsumer<ClientConnection, IOE
       }
       throw error;
     } finally {
-      // Disconnect cleanup mirrors the entry guard above: only a connection that actually
-      // entered the world (playerId > 0) may have consumed the certification, so only that
-      // case needs the idempotent safety-net removal here. A failed entry attempt (playerId
-      // stays 0, e.g. the previous session's leavePlayer race reported "player is already
-      // online") must leave the certification untouched — the retry loop in
-      // Mir2Bot#openGameSession opens a brand new GAME connection with the very same
-      // certification, and unconditionally removing it here would make every retry fail
-      // authentication instead of eventually succeeding.
+      // Disconnect cleanup: a connection that actually entered the world (playerId > 0)
+      // leaves it. softClose is the idempotent form — CM_SOFTCLOSE already removed the
+      // player ~2s before the client closes the socket, and the teardown must not throw
+      // for the already-departed id. The certification stays registered for the re-select
+      // flow; it is evicted by the account's next login (GateSessionRegistry.register).
       if (playerId > 0) {
-        world.engine().leavePlayer(playerId);
-        sessions.remove(state.certification);
+        world.engine().softClose(playerId);
       }
     }
   }

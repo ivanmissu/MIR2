@@ -376,6 +376,21 @@ public sealed interface WorldEvent
   }
 
   /**
+   * {@code RecalcAbilitys} light change → {@code SendRefMsg(RM_CHANGELIGHT)} →
+   * {@code SM_CHANGELIGHT} (ObjBase.pas:3387, 5948): recog is the object whose light
+   * radius changed, param the new {@code m_nLight} (0 or 3). Delphi ships it to the
+   * object itself and everyone watching ({@code SendRefMsg}); the client applies it
+   * through {@code actor.m_nChrLight := msg.Param} (ClMain.pas:4624) to resize the fog
+   * hole around the actor.
+   */
+  record LightChanged(int objectId, int light) implements WorldEvent {
+    public LightChanged {
+      if (objectId <= 0) throw new IllegalArgumentException("object id must be positive");
+      if (light < 0 || light > 0xff) throw new IllegalArgumentException("light must be a byte value");
+    }
+  }
+
+  /**
    * A bag item moved into an equipment slot. {@code feature}/{@code featureEx} carry the
    * recomputed appearance that {@code SM_TAKEON_OK} echoes back as recog/param.
    */

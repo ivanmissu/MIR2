@@ -1,6 +1,7 @@
 package com.mir2.bootstrap;
 
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
@@ -144,5 +145,33 @@ class ServerConfigTest {
         () -> ServerConfig.from(Map.of("MIR2_MONSTER_KIND", "dragon")));
     assertThrows(IllegalArgumentException.class,
         () -> ServerConfig.from(Map.of("MIR2_MONSTER_COUNT", "5000")));
+  }
+
+  @Test
+  void spawnIsOnlyMarkedConfiguredWhenAnEnvironmentVariableNamesIt() {
+    // The classic 比奇省 start-point auto-pick in Mir2Server must not override an operator
+    // who pinned a spawn, and must not fire for harnesses that build configs inline (their
+    // compatibility constructors always count as configured).
+    assertFalse(ServerConfig.from(Map.of()).spawnConfigured());
+    assertTrue(ServerConfig.from(Map.of("MIR2_SPAWN_X", "10")).spawnConfigured());
+    assertTrue(ServerConfig.from(Map.of("MIR2_SPAWN_Y", "618")).spawnConfigured());
+    assertTrue(ServerConfig.from(Map.of("MIR2_SPAWN_X", "10", "MIR2_SPAWN_Y", "10"))
+        .spawnConfigured());
+  }
+
+  @Test
+  void npcListParsesCustomEntriesAndHonoursNone() {
+    assertEquals(ServerConfig.DEFAULT_NPCS, ServerConfig.parseNpcList(null));
+    assertEquals(ServerConfig.DEFAULT_NPCS, ServerConfig.parseNpcList("  "));
+    assertEquals(List.of(), ServerConfig.parseNpcList("none"));
+
+    List<ServerConfig.NpcPlacement> custom = ServerConfig.parseNpcList(
+        "屠夫:3:5:0, 药店老板:4:-5:2");
+    assertEquals(2, custom.size());
+    assertEquals(new ServerConfig.NpcPlacement("屠夫", 3, 5, 0), custom.get(0));
+    assertEquals(new ServerConfig.NpcPlacement("药店老板", 4, -5, 2), custom.get(1));
+
+    assertThrows(IllegalArgumentException.class, () -> ServerConfig.parseNpcList("屠夫:3:5"));
+    assertThrows(IllegalArgumentException.class, () -> ServerConfig.parseNpcList("屠夫:x:5:0"));
   }
 }

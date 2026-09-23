@@ -210,6 +210,7 @@ public final class WorldEngine implements AutoCloseable {
   private final Map<Integer, Player> players = new HashMap<>();
   private final Map<String, Integer> playersByName = new HashMap<>();
   private final Map<Integer, Monster> monsters = new LinkedHashMap<>();
+  private final Map<Integer, Npc> npcs = new LinkedHashMap<>();
   private final List<Spawner> spawners = new ArrayList<>();
   private final Map<Integer, GroundItem> groundItems = new LinkedHashMap<>();
   private final Map<Integer, Long> itemDropTimes = new HashMap<>();
@@ -483,6 +484,45 @@ public final class WorldEngine implements AutoCloseable {
     Objects.requireNonNull(position, "position");
     Objects.requireNonNull(direction, "direction");
     return submit(() -> spawn(template, mapId, position, direction));
+  }
+
+  /**
+   * Places a static {@code TNormNpc}/{@code TMerchant} stand-in on the map — the visible
+   * half of the NPC slice. The object never moves and never fights; it occupies its cell
+   * (so nothing can stand on it), appears in every entering/moving viewer's sight through
+   * the ordinary {@code SM_TURN} appearance flow, and answers {@code CM_QUERYUSERNAME}
+   * with its name like any other actor.
+   *
+   * <p>{@code appearance} is the {@code Npc.wil} sprite index the client's
+   * {@code TNpcActor} renders ({@code m_nBodyOffset := MERCHANTFRAME * m_wAppearance},
+   * Actor.pas:2896), i.e. the high word of {@code MakeMonsterFeature(RC_NPC, 0, wAppr)}.
+   * The low byte stays {@code RC_NPC = 50} so the client dispatches to {@code TNpcActor}
+   * (PlayScn.pas NewActor). The Market_Def script engine, dialogues and trading stay
+   * red-lined exactly as documented in docs/translation-map.md.
+   *
+   * @throws IllegalStateException when the cell is not walkable or already occupied
+   */
+  public CompletableFuture<WorldObjectSnapshot> spawnNpc(
+      String name, String mapId, Position position, int appearance, Direction direction) {
+    Objects.requireNonNull(name, "name");
+    Objects.requireNonNull(mapId, "mapId");
+    Objects.requireNonNull(position, "position");
+    Objects.requireNonNull(direction, "direction");
+    if (appearance < 0 || appearance > 0xffff) {
+      throw new IllegalArgumentException("npc appearance must be a 16-bit value");
+    }
+    return submit(() -> {
+      GameMap map = requireMap(mapId);
+      if (!map.canWalk(position)) throw new IllegalStateException("spawn cell is not available: " + position);
+      if (map.objectAt(position) != 0) throw new IllegalStateException("spawn cell is occupied: " + position);
+      int id = allocateObjectId();
+      Npc npc = new Npc(id, name, map, position, appearance, direction);
+      map.place(id, position);
+      npcs.put(id, npc);
+      WorldEvent appeared = new WorldEvent.ObjectAppeared(npc.snapshot());
+      for (int viewerId : visibleIds(map, position, id)) emit(players.get(viewerId), appeared);
+      return npc.snapshot();
+    });
   }
 
   /**
@@ -848,6 +888,60 @@ public final class WorldEngine implements AutoCloseable {
     });
   }
 
+  /**
+   * {@code CM_SOFTCLOSE} (ObjBase.pas:4751): the client's 退出到选人 button asks to leave
+   * the world without a server acknowledgement — Delphi only raises {@code m_boSoftClose}
+   * and the object turns into a ghost on its next {@code Operate} tick
+   * (ObjBase.pas:6573). The socket is deliberately left open for the client to close
+   * itself (~2s later); unlike a hard {@link #leavePlayer} this is idempotent, because
+   * the gate's connection-teardown path will ask again once the client actually
+   * disconnects.
+   */
+  public CompletableFuture<Void> softClose(int playerId) {
+    return submit(() -> {
+      if (players.containsKey(playerId)) leave(playerId);
+      return null;
+    });
+  }
+
+  /**
+   * Result of a {@code CM_QUERYUSERNAME}: either the actor's show name plus its
+   * {@code GetCharColor} palette byte, or a ghost marker when the client asked about a
+   * cell that no longer holds the actor.
+   */
+  public record UserNameQuery(int objectId, String name, int nameColor, boolean present) {
+    public UserNameQuery {
+      if (objectId <= 0) throw new IllegalArgumentException("object id must be positive");
+      if (nameColor < 0 || nameColor > 0xFF) throw new IllegalArgumentException("name colour must be a byte");
+    }
+
+    static UserNameQuery ghost(int objectId) {
+      return new UserNameQuery(objectId, "", 0, false);
+    }
+  }
+
+  /**
+   * {@code ClientQueryUserName} (ObjBase.pas:2638): answers {@code SM_USERNAME} when the
+   * target stands within the 3×3 block around the cell the client quoted
+   * ({@code CretInNearXY}, ObjBase.pas:16854), otherwise {@code SM_GHOST} so the client can
+   * forget a stale actor. The palette byte is {@code GetCharColor}: white (255) for
+   * monsters, NPCs and clean players, the PK colour model for players.
+   */
+  public CompletableFuture<UserNameQuery> queryUserName(int playerId, int targetId, int x, int y) {
+    return submit(() -> {
+      Player player = requirePlayer(playerId);
+      WorldObject target = findObject(targetId);
+      if (target == null || !target.map().id().equals(player.map.id())
+          || Math.abs(target.position().x() - x) > 1 || Math.abs(target.position().y() - y) > 1) {
+        return UserNameQuery.ghost(targetId);
+      }
+      int color = target instanceof Player queried
+          ? PkLevel.nameColor(queried.pkPoint, queried.pkFlag)
+          : 255;
+      return new UserNameQuery(targetId, target.snapshot().name(), color, true);
+    });
+  }
+
   public CompletableFuture<WorldObjectSnapshot> snapshot(int objectId) {
     return submit(() -> requireObject(objectId).snapshot());
   }
@@ -1050,7 +1144,7 @@ public final class WorldEngine implements AutoCloseable {
     // RecalcAbilitys runs once at login so the restored gear is reflected before the client
     // receives its first ability packet. Current HP/MP are carried over untouched: Delphi
     // only refills them on revival, not on login.
-    recalculateAbilities(player);
+    recalculateAbilities(player, false);
     // UsrEngn.pas:576-600 revives a character that was saved at zero HP before it re-enters
     // the world; the Delphi server relocates it home first, which the single-map PoC cannot
     // do, so the player simply stands up on the restored cell with the classic 14 HP.
@@ -1185,7 +1279,11 @@ public final class WorldEngine implements AutoCloseable {
 
     Position front = player.position.translate(direction, 1);
     WorldObject target = objectAt(player.map, front);
-    if (target == null || !target.ability().alive()) return AttackResult.missed(attacker);
+    // IsAttackTarget is False for TNormNpc/TMerchant (ObjNpc.pas), so a swing at an
+    // NPC's cell connects with nothing — the minimal NPC slice keeps them decorative.
+    if (target == null || target instanceof Npc || !target.ability().alive()) {
+      return AttackResult.missed(attacker);
+    }
 
     int damage = rollDamage(player.ability, target.ability());
     applyDamage(target, player, damage);
@@ -1546,6 +1644,17 @@ public final class WorldEngine implements AutoCloseable {
    * when the new maxima are lower.
    */
   private void recalculateAbilities(Player player) {
+    recalculateAbilities(player, true);
+  }
+
+  /**
+   * The single {@code RecalcAbilitys} pass (ObjBase.pas:2818). {@code announceLightChange}
+   * suppresses only the {@code RM_CHANGELIGHT} side effect: at login the RM_LOGON handler
+   * itself sends the light right after {@code SM_NEWMAP} (ObjBase.pas:5620), before which
+   * the client has no actor to attach it to yet, so the entry call stays silent and lets
+   * {@link #sendMapEntered}'s packet carry the initial radius.
+   */
+  private void recalculateAbilities(Player player, boolean announceLightChange) {
     EquipmentBonus bonus = player.equipment.bonus();
     Ability base = player.baseAbility;
     int maxHp = clampWord(base.maxHp() + bonus.hp());
@@ -1566,6 +1675,24 @@ public final class WorldEngine implements AutoCloseable {
     player.revival = equipmentGrantsRevival(player.equipment);
     // The same RecalcAbilitys pass rebuilds the three death-penalty flags.
     player.dropProtection = DropProtection.of(player.equipment);
+    // ObjBase.pas:3387: the light radius comes solely from the right-hand slot — a worn
+    // item with durability left lights the actor at 3, everything else is 0. (The dress
+    // StdItem.Light branch inside the slot loop at ObjBase.pas:3129 writes m_nLight := 3
+    // only to be unconditionally overwritten by this trailing if/else, so the effective
+    // Delphi behaviour is exactly this rule. The TStdItem.Light flag is not part of the
+    // W18 GEEM2 catalog import either.)
+    int oldLight = player.light;
+    player.light = player.equipment.at(EquipmentSlot.RIGHT_HAND)
+        .filter(item -> item.dura() > 0)
+        .map(ignored -> 3)
+        .orElse(0);
+    if (announceLightChange && oldLight != player.light) {
+      WorldEvent relit = new WorldEvent.LightChanged(player.id, player.light);
+      emit(player, relit);
+      for (int viewerId : visibleIds(player.map, player.position, player.id)) {
+        emit(players.get(viewerId), relit);
+      }
+    }
   }
 
   /**
@@ -2818,7 +2945,10 @@ public final class WorldEngine implements AutoCloseable {
   private List<Integer> visibleIds(GameMap map, Position center, int excludedId) {
     List<Integer> result = new ArrayList<>();
     for (int id : map.objectsInSquare(center, config.viewRange())) {
-      if (id != excludedId && (players.containsKey(id) || monsters.containsKey(id))) result.add(id);
+      if (id != excludedId && (players.containsKey(id) || monsters.containsKey(id)
+          || npcs.containsKey(id))) {
+        result.add(id);
+      }
     }
     return result;
   }
@@ -2880,7 +3010,9 @@ public final class WorldEngine implements AutoCloseable {
   private WorldObject findObject(int id) {
     Player player = players.get(id);
     if (player != null) return player;
-    return monsters.get(id);
+    Monster monster = monsters.get(id);
+    if (monster != null) return monster;
+    return npcs.get(id);
   }
 
   private WorldObject requireObject(int id) {
@@ -3003,7 +3135,7 @@ public final class WorldEngine implements AutoCloseable {
   }
 
   /** Common state of every solid object tracked by the map occupancy index. */
-  private sealed interface WorldObject permits Player, Monster {
+  private sealed interface WorldObject permits Player, Monster, Npc {
     int id();
 
     GameMap map();
@@ -3043,6 +3175,13 @@ public final class WorldEngine implements AutoCloseable {
     private long diedAt;
     /** {@code m_nGold}: the wallet, restored from the character record at login. */
     private long gold;
+    /**
+     * {@code m_nLight} (ObjBase.pas:169): the actor's light radius, rebuilt by
+     * {@code RecalcAbilitys} from the right-hand slot (0 or 3). Zero until a right-hand
+     * item with durability is worn; travels to the client in the high byte of the
+     * RM_TURN/RM_WALK/RM_RUN/SM_LOGON {@code Series} word and via SM_CHANGELIGHT.
+     */
+    private int light;
     /**
      * {@code m_boRevival}: recalculated by {@code RecalcAbilitys} from the worn set — a
      * revival-capable ring/weapon grants the death-defying branch in {@code TBaseObject.Run}.
@@ -3238,7 +3377,8 @@ public final class WorldEngine implements AutoCloseable {
     @Override
     public WorldObjectSnapshot snapshot() {
       return new WorldObjectSnapshot(
-          id, name, WorldObjectType.PLAYER, map.id(), position, direction, feature(), status, ability);
+          id, name, WorldObjectType.PLAYER, map.id(), position, direction, feature(), status,
+          light, ability);
     }
   }
 
@@ -3297,6 +3437,67 @@ public final class WorldEngine implements AutoCloseable {
       return new WorldObjectSnapshot(
           id, template.name(), WorldObjectType.MONSTER, map.id(), position, direction,
           template.feature(), 0, ability);
+    }
+  }
+
+  /**
+   * A static, immortal stand-in for Delphi's {@code TNormNpc}/{@code TMerchant}
+   * (ObjNpc.pas). NPCs occupy their cell and are seen like any other actor, but never
+   * tick, never move and cannot be attacked — {@code TNormNpc.Run} is a no-op and the
+   * client renders them from {@code Npc.wil} via {@code TNpcActor}.
+   */
+  private static final class Npc implements WorldObject {
+    private final int id;
+    private final String name;
+    private final GameMap map;
+    private final Position position;
+    private final Direction direction;
+    /**
+     * {@code MakeMonsterFeature(RC_NPC, 0, wAppr)} (Grobal2.pas:2736): low byte
+     * {@code RC_NPC = 50} selects {@code TNpcActor}; the high word is the
+     * {@code Npc.wil} appearance index ({@code m_wAppearance}).
+     */
+    private final int feature;
+
+    private Npc(int id, String name, GameMap map, Position position, int appearance,
+        Direction direction) {
+      this.id = id;
+      this.name = name;
+      this.map = map;
+      this.position = position;
+      this.direction = direction;
+      this.feature = ((appearance & 0xffff) << 16) | 50;
+    }
+
+    @Override
+    public int id() {
+      return id;
+    }
+
+    @Override
+    public GameMap map() {
+      return map;
+    }
+
+    @Override
+    public Position position() {
+      return position;
+    }
+
+    @Override
+    public Ability ability() {
+      return Ability.immortal();
+    }
+
+    @Override
+    public void setAbility(Ability ability) {
+      // NPCs never take damage; nothing can change an immortal's ability.
+    }
+
+    @Override
+    public WorldObjectSnapshot snapshot() {
+      return new WorldObjectSnapshot(
+          id, name, WorldObjectType.NPC, map.id(), position, direction, feature, 0);
     }
   }
 }

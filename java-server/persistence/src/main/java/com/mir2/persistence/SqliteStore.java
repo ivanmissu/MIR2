@@ -178,6 +178,11 @@ public final class SqliteStore implements AutoCloseable,
     ensureColumn("std_items", "reserved", "INTEGER NOT NULL DEFAULT 0");
     seedStandardItems();
     migrateStandardItemReservedFlags();
+    // W04-era databases keep placeholder rows the INSERT OR IGNORE seed can never correct
+    // (e.g. 鸡肉 Looks=41 — 炼狱's icon — where the authoritative catalog says 13). The
+    // catalog has been the authoritative W18 import since then, so booting on an old file
+    // now re-converges every catalogued row to StdItemsDb.
+    reconcileStandardItems();
   }
 
   /** Boot-time catalog seed; existing rows are never overwritten by the seed itself. */
@@ -220,25 +225,82 @@ public final class SqliteStore implements AutoCloseable,
     }
   }
 
+  /**
+   * W21 catalog self-heal: every row whose name is part of the authoritative W18
+   * StdItems.DB import is re-converged to that import, so a database seeded by the W04
+   * placeholder catalog (five hand-picked rows with wrong Looks/shape/durability values —
+   * 鸡肉 carried 炼狱's Looks 41, which the ground-drop renderer faithfully drew as the
+   * sword) repairs itself at boot instead of surviving forever behind the INSERT OR
+   * IGNORE seed. Rows the operator added that are not in the import stay untouched.
+   */
+  private void reconcileStandardItems() throws SQLException {
+    try (PreparedStatement statement = connection.prepareStatement("""
+        UPDATE std_items
+        SET std_mode = ?, shape = ?, weight = ?, ani_count = ?, source = ?, reserved = ?,
+            need_identify = ?, looks = ?, dura_max = ?, ac = ?, mac = ?, dc = ?, mc = ?, sc = ?,
+            need = ?, need_level = ?, price = ?
+        WHERE name = ? AND (std_mode <> ? OR shape <> ? OR weight <> ? OR ani_count <> ?
+           OR source <> ? OR reserved <> ? OR need_identify <> ? OR looks <> ? OR dura_max <> ?
+           OR ac <> ? OR mac <> ? OR dc <> ? OR mc <> ? OR sc <> ? OR need <> ? OR need_level <> ?
+           OR price <> ?)
+        """)) {
+      for (StdItem item : StdItems.defaults()) {
+        bindCatalogColumns(statement, item);
+        statement.setString(18, item.name());
+        statement.setInt(19, item.stdMode());
+        statement.setInt(20, item.shape());
+        statement.setInt(21, item.weight());
+        statement.setInt(22, item.aniCount());
+        statement.setInt(23, item.source());
+        statement.setInt(24, item.reserved());
+        statement.setInt(25, item.needIdentify());
+        statement.setInt(26, item.looks());
+        statement.setLong(27, item.duraMax());
+        statement.setLong(28, item.ac());
+        statement.setLong(29, item.mac());
+        statement.setLong(30, item.dc());
+        statement.setLong(31, item.mc());
+        statement.setLong(32, item.sc());
+        statement.setLong(33, item.need());
+        statement.setLong(34, item.needLevel());
+        statement.setLong(35, item.price());
+        statement.addBatch();
+      }
+      statement.executeBatch();
+    }
+  }
+
   private static void bindStdItem(PreparedStatement statement, StdItem item) throws SQLException {
     statement.setString(1, item.name());
-    statement.setInt(2, item.stdMode());
-    statement.setInt(3, item.shape());
-    statement.setInt(4, item.weight());
-    statement.setInt(5, item.aniCount());
-    statement.setInt(6, item.source());
-    statement.setInt(7, item.reserved());
-    statement.setInt(8, item.needIdentify());
-    statement.setInt(9, item.looks());
-    statement.setLong(10, item.duraMax());
-    statement.setLong(11, item.ac());
-    statement.setLong(12, item.mac());
-    statement.setLong(13, item.dc());
-    statement.setLong(14, item.mc());
-    statement.setLong(15, item.sc());
-    statement.setLong(16, item.need());
-    statement.setLong(17, item.needLevel());
-    statement.setLong(18, item.price());
+    bindCatalogColumns(statement, item, 2);
+  }
+
+  /** Binds the seventeen non-name catalog columns of {@code std_items}, starting at {@code offset}. */
+  private static void bindCatalogColumns(PreparedStatement statement, StdItem item, int offset)
+      throws SQLException {
+    statement.setInt(offset, item.stdMode());
+    statement.setInt(offset + 1, item.shape());
+    statement.setInt(offset + 2, item.weight());
+    statement.setInt(offset + 3, item.aniCount());
+    statement.setInt(offset + 4, item.source());
+    statement.setInt(offset + 5, item.reserved());
+    statement.setInt(offset + 6, item.needIdentify());
+    statement.setInt(offset + 7, item.looks());
+    statement.setLong(offset + 8, item.duraMax());
+    statement.setLong(offset + 9, item.ac());
+    statement.setLong(offset + 10, item.mac());
+    statement.setLong(offset + 11, item.dc());
+    statement.setLong(offset + 12, item.mc());
+    statement.setLong(offset + 13, item.sc());
+    statement.setLong(offset + 14, item.need());
+    statement.setLong(offset + 15, item.needLevel());
+    statement.setLong(offset + 16, item.price());
+  }
+
+  /** Binds the seventeen non-name catalog columns starting at parameter 1 (reconcile path). */
+  private static void bindCatalogColumns(PreparedStatement statement, StdItem item)
+      throws SQLException {
+    bindCatalogColumns(statement, item, 1);
   }
 
   /**

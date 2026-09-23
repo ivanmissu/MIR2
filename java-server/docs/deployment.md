@@ -233,7 +233,7 @@ $JAVA --enable-native-access=ALL-UNNAMED -XX:MaxRAMPercentage=75 \
 | `MIR2_MAP_FILE` | `/maps/0.map`（compose）/ 未设置（裸 JAR） | Delphi `.map` 地图文件路径。`compose.yml` 默认把客户端 Map 目录只读挂到 `/maps` 并指向比奇省 `0.map`；未设置时回退到 256×256 空白 PoC 地图并打印告警（与 `MIR2_MAPINFO_FILE` 互斥） |
 | `MIR2_MAPINFO_FILE` | 未设置 | 可选：经典 `MapInfo.txt` 路径（W10）；文件内每个 `[id desc idx]` 条目从同目录加载 `<id>.map`，缺失文件告警并跳过（Delphi `AddMapInfo` 语义）；路线行 `src srcX srcY -> dst dstX dstY` 注册为地图连接点，`loadmapinfo` 从 `MapInfo/` 子目录包含子文件 |
 | `MIR2_MAP_ID` | `0` | 地图 ID（对应客户端地图文件名；`MIR2_MAPINFO_FILE` 多图模式下必须是已加载地图之一，否则启动 fail-fast） |
-| `MIR2_SPAWN_X` / `MIR2_SPAWN_Y` | `289` / `618`（compose）/ `10` / `10`（裸 JAR 默认） | 首次进图出生点。compose 默认用原版比奇省新手村坐标（`!Setup.txt`：`HomeMap=0 HomeX=289 HomeY=618`）；被占用或不可走时自动选择邻近可行走格 |
+| `MIR2_SPAWN_X` / `MIR2_SPAWN_Y` | `289` / `618`（compose）/ `10` / `10`（裸 JAR 默认） | 首次进图出生点。compose 默认用原版比奇省新手村坐标（`!Setup.txt`：`HomeMap=0 HomeX=289 HomeY=618`）；被占用或不可走时自动选择邻近可行走格。**未显式设置且加载的是真实比奇省 `0` 号图时，裸 JAR 也会自动采用经典出生点 289,618**（W21：角落默认值 10,10 落在左上山区，人物会被地形贴图盖住"看不见"，跑出山区才显形） |
 
 ### 5.3 世界与战斗
 
@@ -243,6 +243,7 @@ $JAVA --enable-native-access=ALL-UNNAMED -XX:MaxRAMPercentage=75 \
 | `MIR2_MONSTER_COUNT` | `0` | 启动时在出生点四周生成的怪物数，0–1000。怪物**均匀分布在安全区之外的一圈**（半径 `MIR2_SAFE_ZONE_SIZE + 1`），不会贴脸生成 |
 | `MIR2_SAFE_ZONE_SIZE` | `10` | 出生点安全区半径（对应 `!Setup.txt` 的 `SafeZoneSize`）。对应 Delphi `TBaseObject.InSafeZone`：站在安全区内的玩家**不会被怪物选为攻击目标**（`IsAttackTarget`）。设为 0 可关闭（压测/对拍用），地图自带的 `boSAFE` 标志不受影响 |
 | `MIR2_MONSTER_KIND` | `chicken` | 首批 10 种模板之一：`chicken`（鸡）、`deer`（鹿，逃跑型）、`scarecrow`（稻草人）、`hookcat`（多钩猫）、`rakecat`（钉耙猫）、`cavemaggot`（洞蛆）、`scorpion`（蝎子）、`orc`（半兽人）、`orcwarrior`（半兽勇士）、`orcfighter`（半兽战士）；另有 `trainer`（木桩，站桩不还手，对应 Delphi `TRAINER`=55 / `TTrainer` 伤害测试木桩，供对拍用）；中文名同样有效 |
+| `MIR2_NPC_LIST` | 内置三人 | 可见 NPC 摆设（W21 最小 NPC 切片）：逗号分隔的 `名字:外观:dx:dy`，`外观` 是 `Npc.wil` 精灵索引（`TNpcActor` 的 `m_wAppearance`），`dx/dy` 为相对出生点偏移（可为负）。默认 `老兵:0:5:0,老板:1:-5:0,商人:2:0:-5`；设为 `none` 关闭。NPC 只站立可见、占格、可被查询名字（`CM_QUERYUSERNAME`），不可攻击；Market_Def 商人脚本/交易仍在红线外 |
 | `MIR2_MONGEN_FILE` | 未设置 | 可选的经典 `MonGen.txt` 路径；支持 `loadgen`、引号怪物名、范围/数量/分钟/刷新率字段；每行注册为自动刷新的 spawner（对应 `TUserEngine.RegenMonsters`），按行内分钟数补足被击杀的怪物 |
 | `MIR2_SAVE_INTERVAL_SECONDS` | `600` | 在线玩家周期存档间隔（对应 Delphi `SaveHumanRcdTime`，默认 10 分钟）；事件型存档（伤害/拾取/离场）不受影响 |
 | `MIR2_TEST_GOLD` | `0` | 测试服登录金币下限（对应 Delphi `boTestServer`/`nTestGold`，`UserLogon` 语义）：登录时金币低于该值即补足并下发 `SM_GOLDCHANGED`；0 = 不生效，上限 10,000,000（`nHumanMaxGold`） |
@@ -381,6 +382,46 @@ java -jar mir2-server.jar
 
 若仍是空条，请确认客户端连的是含此修复的构建（`dist` 分支产物或重新
 `docker compose up --build`）。
+
+**Q12：进图后人物看不见/被黑雾盖住，跑一会儿才显形。**
+2026-09-23（W21）修复，两个成因：
+1. **登录亮度/光照包缺失**。Delphi `RM_LOGON`（`ObjBase.pas:5618`）在 `SM_NEWMAP`
+   之后紧跟 `SM_CHANGELIGHT`，`SendLogon` 的 `SM_LOGON` 携带
+   `Series=MakeWord(方向, 光照)` 且**必须**随后补发 `SM_FEATURECHANGED`。旧版只发
+   `SM_NEWMAP + SM_LOGON(纯方向)`，客户端在黑夜时段（`DarkLevel>0` 开雾）拿不到
+   自己的光照半径，人物连着地图一起被雾层盖住。现按原版顺序补齐
+   `SM_CHANGELIGHT / SM_FEATURECHANGED / SM_USERNAME`，并把光照字节
+   （`m_nLight`：右手装备耐久>0 即 3，裸装 0）打进所有 `SM_TURN/WALK/RUN` 的
+   `Series` 高字节。
+2. **出生点在左上山区**。裸 JAR 不设 `MIR2_SPAWN_X/Y` 时默认 (10,10)，在真实
+   比奇省是山区，人物站在高地贴图后面。现未显式配置时自动改用经典出生点
+   (289,618)。
+   注意：**夜晚变暗本身是原版行为**（`FrnEngn.pas` 时段表：11/23 点最暗，0-3、
+   12-14 点夜暗）。想要常亮地图，用 `MIR2_MAPINFO_FILE` 加载带 `DAY` 标志的
+   `MapInfo.txt`（`TPlayObject.DayBright` 对 `DAYLIGHT` 图恒为 0），或给角色右手
+   装上火把/蜡烛类物品（光照 3）。
+
+**Q13：鸡死后地上显示"炼狱"，捡起来却是肉。**
+旧库脏数据（W21 修复）：W04 占位目录给 `鸡肉` 填了 `Looks=41`（恰是"炼狱"的图标
+索引）。`SqliteStore.seedStandardItems` 用 `INSERT OR IGNORE`，旧行永远纠不回来。
+现在启动时会执行目录自愈（`reconcileStandardItems`）：凡属 W18 权威
+`StdItems.DB` 导入的行，全部列强制回归权威值；自建条目不受影响。
+
+**Q14：点 OUT（退出到选人）退不出去。**
+2026-09-23（W21）修复：客户端小退按钮发 `CM_SOFTCLOSE`（1009）后等约 2 秒主动断
+线，再拿**同一张 certification** 回选人门重查角色列表（`ClMain.pas` 的
+`tcReSelConnect`）。旧版两处都不兼容：`CM_SOFTCLOSE` 不在支持列表被静默丢弃，且
+certification 在进游戏时即被消费（`SM_QUERYCHR_FAIL`）。现按 Delphi 语义
+（`ObjBase.pas:4751` 只置 `m_boSoftClose`、id-server 会话在 admission 时是纯校验）
+处理：`CM_SOFTCLOSE` 幂等地把角色移出世界且不回包，certification 保留到该账号
+下次登录（`register` 时淘汰旧会话）。重复登录保护由世界的"player is already
+online"守卫承担（并发二次进图会收到 `SM_STARTFAIL`）。
+
+**Q15：地图上看不到 NPC。**
+W21 起提供最小 NPC 切片：默认在出生点旁摆 3 个可见 NPC（`老兵/老板/商人`，可用
+`MIR2_NPC_LIST` 自定义名字、`Npc.wil` 外观与位置）。NPC 会出现在视野广播
+（`SM_TURN`）、占用所在格、可被 `CM_QUERYUSERNAME` 查询名字；不可攻击、不移动。
+商人对话/买卖/修理脚本（Market_Def）仍在后续切片红线外。
 
 ## 8. 生产环境建议（P4 前的过渡态）
 

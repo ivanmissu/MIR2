@@ -102,12 +102,31 @@ class GameProtocolAdapterTest {
       assertEquals(player.position().y(), newMap.message().tag());
       assertEquals("0", WireMessageCodec.decodeBody(newMap.encodedBody()));
 
+      // RM_LOGON order (ObjBase.pas:5618): SM_CHANGELIGHT follows SM_NEWMAP, then SendLogon's
+      // SM_LOGON + SM_FEATURECHANGED, then the proactive SM_USERNAME, then SM_MAPDESCRIPTION.
+      WirePacket changeLight = ((GameOutbound.Packet) output.removeFirst()).packet();
+      assertEquals(ProtocolConstants.SM_CHANGELIGHT, changeLight.message().ident());
+      assertEquals(player.id(), changeLight.message().recog());
+      assertEquals(0, changeLight.message().param(), "naked character carries no light");
+
       WirePacket logon = ((GameOutbound.Packet) output.removeFirst()).packet();
       assertEquals(ProtocolConstants.SM_LOGON, logon.message().ident());
       byte[] logonBody = SixBitCodec.decodeString(logon.encodedBody());
       assertEquals(16, logonBody.length);
       assertEquals(0x01020304, littleEndianInt(logonBody, 0));
       assertEquals(0x05060708, littleEndianInt(logonBody, 4));
+
+      WirePacket featureChanged = ((GameOutbound.Packet) output.removeFirst()).packet();
+      assertEquals(ProtocolConstants.SM_FEATURECHANGED, featureChanged.message().ident());
+      assertEquals(player.id(), featureChanged.message().recog());
+      assertEquals(0x0304, featureChanged.message().param(), "LoWord of the feature");
+      assertEquals(0x0102, featureChanged.message().tag(), "HiWord of the feature");
+
+      WirePacket userName = ((GameOutbound.Packet) output.removeFirst()).packet();
+      assertEquals(ProtocolConstants.SM_USERNAME, userName.message().ident());
+      assertEquals(player.id(), userName.message().recog());
+      assertEquals(255, userName.message().param(), "white name palette byte");
+      assertEquals("second", WireMessageCodec.decodeBody(userName.encodedBody()));
 
       WirePacket description = ((GameOutbound.Packet) output.removeFirst()).packet();
       assertEquals(ProtocolConstants.SM_MAPDESCRIPTION, description.message().ident());
@@ -282,6 +301,43 @@ class GameProtocolAdapterTest {
       assertEquals(12, doorClosed.message().param());
       assertEquals(12, doorClosed.message().tag());
 
+      assertTrue(output.isEmpty());
+    }
+  }
+
+  @Test
+  void queryUserNameAnswersSmUsernameNearbyAndSmGhostForStaleCells() {
+    try (WorldEngine world = new WorldEngine(List.of(GameMap.empty("0", "PoC", 20, 20)))) {
+      List<GameOutbound> output = new ArrayList<>();
+      var first = world.enterPlayer("first", "0", new Position(5, 5), Direction.DOWN,
+          ignored -> {});
+      var second = world.enterPlayerNear("second", "0", new Position(5, 5), Direction.UP,
+          0, 0, ignored -> {});
+      world.tickOnce();
+      int askerId = first.join().id();
+      WorldObjectSnapshot asked = second.join();
+      GameProtocolAdapter adapter = new GameProtocolAdapter(world, askerId, output::add, () -> 7);
+
+      // ClMain.pas:3601 SendQueryUserName: recog=target, param/tag=the quoted cell.
+      assertTrue(adapter.handle(new WirePacket(new DefaultMessage(asked.id(),
+          ProtocolConstants.CM_QUERYUSERNAME, asked.position().x(), asked.position().y(), 0))));
+      world.tickOnce();
+      WirePacket named = ((GameOutbound.Packet) output.removeFirst()).packet();
+      assertEquals(ProtocolConstants.SM_USERNAME, named.message().ident());
+      assertEquals(asked.id(), named.message().recog());
+      assertEquals(255, named.message().param(), "white palette byte for a clean player");
+      assertEquals("second", WireMessageCodec.decodeBody(named.encodedBody()));
+
+      // A cell two tiles away is outside CretInNearXY's 3x3 window: SM_GHOST with the
+      // client's quoted cell echoed back (ObjBase.pas:2651).
+      assertTrue(adapter.handle(new WirePacket(new DefaultMessage(asked.id(),
+          ProtocolConstants.CM_QUERYUSERNAME, asked.position().x() + 2, asked.position().y(), 0))));
+      world.tickOnce();
+      WirePacket ghost = ((GameOutbound.Packet) output.removeFirst()).packet();
+      assertEquals(ProtocolConstants.SM_GHOST, ghost.message().ident());
+      assertEquals(asked.id(), ghost.message().recog());
+      assertEquals(asked.position().x() + 2, ghost.message().param());
+      assertEquals(asked.position().y(), ghost.message().tag());
       assertTrue(output.isEmpty());
     }
   }

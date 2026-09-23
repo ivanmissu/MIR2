@@ -65,6 +65,28 @@ class GateSessionRegistryTest {
         () -> sessions.requireGame("hero", "法师", certification));
   }
 
+  @Test
+  void registerRetiresTheAccountsPreviousCertification() {
+    GateSessionRegistry sessions = new GateSessionRegistry();
+    Character character = createCharacter("hero", "战士");
+    int first = sessions.register("hero", "token");
+    sessions.select("hero", first, character);
+
+    // Since the certification outlives the GAME entry (the soft-close re-select flow needs
+    // it), a fresh CM_IDPASSWORD for the same account is what retires the abandoned ticket
+    // — mirroring the login server closing the older session of a reconnecting account.
+    int second = sessions.register("hero", "token");
+
+    assertNotEquals(first, second);
+    assertThrows(SecurityException.class, () -> sessions.require("hero", first));
+    assertEquals("战士", sessions.require("hero", second).selectedCharacter() == null
+        ? null : sessions.require("hero", second).selectedCharacter().name());
+
+    // Other accounts are untouched by the eviction.
+    int other = sessions.register("other", "token");
+    assertDoesNotThrow(() -> sessions.require("other", other));
+  }
+
   private static Character createCharacter(String account, String name) {
     CharacterService characters = new CharacterService();
     return characters.create(account, name, 0);

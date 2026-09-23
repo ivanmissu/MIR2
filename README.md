@@ -82,6 +82,25 @@ Java 服务端。
   死亡时 `boDieRedScatterBagAll` 让包裹**全掉**而非三分之一。`character_state.pk_point`
   原位加列落库，交手旗按原版语义不落库。同时纠正了一处长期错误：包裹掉落豁免用的是
   地图 `NODROPITEM` 旗，而非此前误用的 `NOTHROWITEM`（原版是两个不同的旗）。
+- **真实客户端四联修复（W21）**：针对 mir2.exe 实机反馈的四个问题——
+  (1) **进图人物被雾盖住**：按 `RM_LOGON`（`ObjBase.pas:5618`）原版顺序补发
+  `SM_CHANGELIGHT`、`SM_FEATURECHANGED` 与主动 `SM_USERNAME`，并把
+  `m_nLight`（右手有耐久装备即 3）打进 `SM_LOGON/SM_TURN/SM_WALK/SM_RUN` 的
+  `Series=MakeWord(方向, 光照)` 高字节，装备变化经 `SM_CHANGELIGHT` 即时广播；
+  未显式配置出生点且加载真实比奇省时自动采用经典出生点 289,618（角落默认 10,10
+  在左上山区，人物被地形贴图盖住）。
+  (2) **旧库图标错乱**（鸡掉"炼狱"）：启动时目录自愈 `reconcileStandardItems`，
+  W18 权威导入内的行强制回归权威值，W04 占位残留（`鸡肉 Looks=41`）自动纠正，
+  自建条目不动。
+  (3) **小退失效**：`CM_SOFTCLOSE`（1009）按 `ObjBase.pas:4751` 语义处理（无回包、
+  幂等移出世界），certification 改为跨进图保留（Delphi admission 是纯校验），账号
+  重新登录时淘汰旧会话，客户端 `tcReSelConnect` 同证书回选人门可正常
+  查询/重选/再进图。
+  (4) **NPC 不可见**：最小 NPC 切片——`WorldEngine.spawnNpc` 以
+  `MakeMonsterFeature(RC_NPC=50, 0, wAppr)` 特征放置静态 NPC（客户端
+  `TNpcActor` 渲染），占格、入视野广播、可查名（`CM_QUERYUSERNAME →
+  SM_USERNAME/SM_GHOST` 复刻 `CretInNearXY` 3×3 窗口），不可攻击；默认出生点旁
+  3 个，`MIR2_NPC_LIST` 可自定义，Market_Def 商人功能仍在红线外。
 - **战斗/背包存档**：HP、MP、等级、经验与 46 格背包通过 SQLite 事务保存，在角色进图前恢复；支持从旧 W02 schema 原位升级
 - **物品目录与背包同步（W04）**：最小标准物品库（`StdItem` 完整 `TStdItem` 字段 + SQLite `std_items` 表）、
   复刻 `GetItemNumber` 的稳定 `MakeIndex`、耐久字段、76 字节 `TClientItem` 小端编解码，
@@ -283,10 +302,11 @@ java -jar java-server/shadowdiff/target/mir2-shadowdiff.jar \
 | `MIR2_MAP_FILE` | 未设置 | 可选：首张 Delphi `.map` 文件；未设置时建立 256×256 空白 PoC 地图（与 `MIR2_MAPINFO_FILE` 互斥） |
 | `MIR2_MAPINFO_FILE` | 未设置 | 可选：经典 `MapInfo.txt`（`loadmapinfo` 包含、`[id|alias desc idx]` 地图条目、路线行）；按条目从同目录加载 `<id>.map` 多图并注册地图连接点（与 `MIR2_MAP_FILE` 互斥） |
 | `MIR2_MAP_ID` | `0` | 首张地图 ID（对应客户端地图文件名；`MIR2_MAPINFO_FILE` 模式下必须是已加载地图之一） |
-| `MIR2_SPAWN_X` / `MIR2_SPAWN_Y` | `10` / `10` | GAME 首次进图坐标；占用时自动选择邻近可行走格 |
+| `MIR2_SPAWN_X` / `MIR2_SPAWN_Y` | `10` / `10` | GAME 首次进图坐标；占用时自动选择邻近可行走格 |；未显式设置且加载真实比奇省 `0` 号图时自动采用经典出生点 289,618（W21）
 | `MIR2_WORLD_TICK_MS` | `50` | 世界逻辑 Tick 间隔（毫秒） |
 | `MIR2_MONSTER_COUNT` | `0` | 启动时在出生点四周生成的怪物数量（0 表示不生成） |
 | `MIR2_MONSTER_KIND` | `chicken` | 怪物种类：`chicken`（鸡）或 `orc`（半兽人） |
+| `MIR2_NPC_LIST` | 内置三人 | 可见 NPC 摆设（W21 最小切片）：`名字:外观:dx:dy` 逗号分隔，`外观`为 `Npc.wil` 精灵索引，`dx/dy` 相对出生点偏移；`none` 关闭。仅站立可见/占格/查名，不含 Market_Def 商人功能 |
 | `MIR2_MONGEN_FILE` | 未设置 | 可选：经典 `MonGen.txt` 刷怪配置；支持 `loadgen`、地图/坐标/范围/数量/分钟/刷新率字段（当前启动时生成首批） |
 | `MIR2_MAX_CONNECTIONS_PER_IP` | `128` | 三个网关合计的单 IP 活跃连接上限 |
 | `MIR2_CONNECTION_ATTEMPTS_PER_WINDOW` | `300` | 单 IP 滑动窗口内的新连接尝试上限 |
