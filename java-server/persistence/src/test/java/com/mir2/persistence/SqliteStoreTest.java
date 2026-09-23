@@ -71,19 +71,22 @@ class SqliteStoreTest {
       ItemDatabase catalog = store.itemDatabase();
       assertEquals(StdItems.chickenMeat(), catalog.find("鸡肉").orElseThrow());
       assertEquals(StdItems.woodenSword(), catalog.find("木剑").orElseThrow());
-      assertTrue(catalog.find("屠龙").isEmpty(), "the minimal catalog must not invent items");
+      // W18: the seeded catalog is the full 1.76 StdItems.DB import; 屠龙 is real now,
+      // so the unknown-name placeholder case uses a name the DB genuinely lacks.
+      assertTrue(catalog.find("屠龙").isPresent(), "the import carries the classic endgame items too");
+      assertTrue(catalog.find("根本不存在之剑").isEmpty(), "the catalog must not invent items");
 
       // A bag item without a catalog entry survives a round trip as a placeholder template.
-      BackpackItem relic = new BackpackItem(StdItem.placeholder("屠龙", 8), 900, 5, 5);
+      BackpackItem relic = new BackpackItem(StdItem.placeholder("根本不存在之剑", 8), 900, 5, 5);
       store.save(new PlayerState(characterId, Ability.defaultPlayer(), List.of(relic)));
     }
     try (SqliteStore reopened = new SqliteStore(url)) {
       BackpackItem restored = reopened.load(characterId).orElseThrow().backpack().getFirst();
-      assertEquals("屠龙", restored.name());
+      assertEquals("根本不存在之剑", restored.name());
       assertEquals(8, restored.looks());
       assertEquals(900, restored.makeIndex());
       assertEquals(5, restored.dura());
-      assertEquals(StdItem.placeholder("屠龙", 8), restored.item());
+      assertEquals(StdItem.placeholder("根本不存在之剑", 8), restored.item());
     } finally {
       Files.deleteIfExists(file);
     }

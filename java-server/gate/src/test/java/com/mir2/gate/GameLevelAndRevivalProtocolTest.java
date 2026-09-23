@@ -88,7 +88,7 @@ class GameLevelAndRevivalProtocolTest {
     List<GameOutbound> output = new ArrayList<>();
     try (WorldEngine world = engine()) {
       GameProtocolAdapter adapter = new GameProtocolAdapter(world, 1, output::add, () -> 77);
-      BackpackItem venison = BackpackItem.of(StdItems.deerMeat(), 41);
+      BackpackItem venison = BackpackItem.of(StdItems.require("肉"), 41);
       BackpackItem potion = BackpackItem.of(StdItems.smallHealingPotion(), 42);
       adapter.send(new WorldEvent.ItemsRemoved(1, List.of(venison, potion)));
 

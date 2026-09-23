@@ -128,7 +128,8 @@ class GameCombatProtocolTest {
       assertEquals("鸡肉", WireMessageCodec.decodeBody(item.encodedBody()));
       assertEquals(6, item.message().param());
       assertEquals(5, item.message().tag());
-      assertEquals(41, item.message().series());
+      // The ground icon is the template's real StdItems.DB Looks value (13 for 鸡肉).
+      assertEquals(StdItems.chickenMeat().looks(), item.message().series());
     }
   }
 

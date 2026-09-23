@@ -33,15 +33,17 @@ class ClientItemCodecTest {
     assertEquals((byte) 0xA3, bytes[4]);
     for (int pad = 5; pad < 21; pad++) assertEquals(0, bytes[pad], "name slot padding at " + pad);
 
+    // Field expectations are the authoritative 1.76 StdItems.DB row for 木剑 (W18 import):
+    // StdMode 5, Shape 1, Weight 4, AniCount 0, Looks 30, DuraMax 4000, DC 2-5, NeedLevel 1, Price 50.
     assertEquals(5, u8(bytes, ClientItemCodec.STD_MODE_OFFSET));      // StdMode: weapon
-    assertEquals(0, u8(bytes, ClientItemCodec.SHAPE_OFFSET));
-    assertEquals(2, u8(bytes, ClientItemCodec.WEIGHT_OFFSET));
+    assertEquals(1, u8(bytes, ClientItemCodec.SHAPE_OFFSET));
+    assertEquals(4, u8(bytes, ClientItemCodec.WEIGHT_OFFSET));
     assertEquals(0, u8(bytes, ClientItemCodec.ANI_COUNT_OFFSET));
     assertEquals(0, bytes[ClientItemCodec.SOURCE_OFFSET]);
     assertEquals(0, u8(bytes, ClientItemCodec.RESERVED_OFFSET));
     assertEquals(0, u8(bytes, ClientItemCodec.NEED_IDENTIFY_OFFSET));
-    assertEquals(1, u16(bytes, ClientItemCodec.LOOKS_OFFSET));
-    assertEquals(20, u32(bytes, ClientItemCodec.DURA_MAX_OFFSET));     // template DuraMax dword
+    assertEquals(30, u16(bytes, ClientItemCodec.LOOKS_OFFSET));
+    assertEquals(4000, u32(bytes, ClientItemCodec.DURA_MAX_OFFSET));   // template DuraMax dword
     assertEquals(0, u32(bytes, ClientItemCodec.AC_OFFSET));
     assertEquals(0, u32(bytes, ClientItemCodec.MAC_OFFSET));
     // DC is packed MakeLong(min=2, max=5) the way ItmUnit.pas GetItemAddValue does.
@@ -49,8 +51,8 @@ class ClientItemCodecTest {
     assertEquals(0, u32(bytes, ClientItemCodec.MC_OFFSET));
     assertEquals(0, u32(bytes, ClientItemCodec.SC_OFFSET));
     assertEquals(0, u32(bytes, ClientItemCodec.NEED_OFFSET));
-    assertEquals(0, u32(bytes, ClientItemCodec.NEED_LEVEL_OFFSET));
-    assertEquals(400, u32(bytes, ClientItemCodec.PRICE_OFFSET));
+    assertEquals(1, u32(bytes, ClientItemCodec.NEED_LEVEL_OFFSET));
+    assertEquals(50, u32(bytes, ClientItemCodec.PRICE_OFFSET));
     // Alignment padding between the packed TStdItem and the aligned MakeIndex Integer.
     assertEquals(0, bytes[66]);
     assertEquals(0, bytes[67]);

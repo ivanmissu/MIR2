@@ -81,7 +81,7 @@ class WorldEquipmentTest {
       assertTrue(run(world, world.equip(player.id(), EquipmentSlot.WEAPON.index(), 1, "木剑")));
 
       WorldEvent.WeightChanged worn = single(events, WorldEvent.WeightChanged.class);
-      assertEquals(2, worn.handWeight(), "weapon weight belongs to HandWeight");
+      assertEquals(woodenSword().weight(), worn.handWeight(), "weapon weight belongs to HandWeight");
       assertEquals(0, worn.wearWeight());
       assertEquals(0, worn.weight(), "the bag is empty once the sword is worn");
 
@@ -144,7 +144,8 @@ class WorldEquipmentTest {
       // Take a hit first so the restore has room to work.
       WorldObjectSnapshot orc = run(world,
           world.spawnMonster(MonsterTemplate.orc(), "0", new Position(6, 5), Direction.LEFT));
-      advance(2_000);
+      // The orc's attack interval is the imported Monster.DB ATTACK_SPD (2500 ms).
+      advance(MonsterTemplate.orc().attackIntervalMillis() + 500);
       world.tickOnce();
       int damaged = run(world, world.snapshot(player.id())).ability().hp();
       assertTrue(damaged < 100, "the orc must land a hit before the potion is drunk");

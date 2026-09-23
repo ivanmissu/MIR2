@@ -1,0 +1,13 @@
+# MonItems index — monster name to ASCII resource file (generated; do not hand-edit)
+# source: https://github.com/cjlaaa/Mir2-GeeM2 @ 9981a8d7aecc (数据库/GEEM2.db.sql blob bfdc71d5943b7126a98604dca21bd62850f1cccc) — Envir/MonItems/
+# columns: monsterName<TAB>fileName
+鸡	chicken.txt
+鹿	deer.txt
+稻草人	scarecrow.txt
+多钩猫	hookcat.txt
+钉耙猫	rakecat.txt
+洞蛆	cavemaggot.txt
+蝎子	scorpion.txt
+半兽人	orc.txt
+半兽勇士	orcwarrior.txt
+半兽战士	orcfighter.txt

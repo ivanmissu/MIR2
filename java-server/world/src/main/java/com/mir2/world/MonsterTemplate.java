@@ -15,6 +15,20 @@ import java.util.function.Supplier;
  *
  * <p>{@code behavior} selects the AI family: {@code AGGRESSIVE} is the {@code TATMonster}
  * chase-and-attack loop, {@code PASSIVE_FLEE} the {@code TChickenDeer} run-away mode.
+ *
+ * <p><b>W18 — stats are now data-verified, not placeholders.</b> Every template below is
+ * built from the official 1.76 {@code Monster.DB} row imported in {@code db/MonsterDb.tsv}
+ * (GEEM2 baseline dump; the same provenance that already backed the RaceImg/Appr
+ * correction): HP, DC range, AC/MAC, level, fight experience and the {@code WALK_SPD} /
+ * {@code ATTACK_SPD} action intervals all come from {@link MonsterDb}, with the loader's
+ * 200&nbsp;ms floor applied ({@code LoadMonsterDB} clamps both). The kill drop tables are
+ * the imported {@code MonItems/<name>.txt} rows (see {@code db/MonItems/}), gold-pile rows
+ * aside — those await the ground-gold behaviour slice.
+ *
+ * <p>What the DB does <em>not</em> carry: the AI view range (Delphi sets it per monster
+ * subclass in {@code ObjMon*.pas} constants), the Java-side behaviour family selection and
+ * the monster's walk step logic. The view-range figures below remain code-side estimates to
+ * be audited against the subclass constructors in a later slice ({@code TODO(verify)}).
  */
 public record MonsterTemplate(
     String name,
@@ -71,7 +85,8 @@ public record MonsterTemplate(
       Map.entry("orcfighter", MonsterTemplate::orcFighter),
       Map.entry("半兽战士", MonsterTemplate::orcFighter),
       Map.entry("trainer", MonsterTemplate::trainer),
-      Map.entry("木桩", MonsterTemplate::trainer));
+      Map.entry("木桩", MonsterTemplate::trainer),
+      Map.entry("练功师", MonsterTemplate::trainer));
 
   /** Resolves the templates currently supported by the Java combat slice. */
   public static MonsterTemplate forName(String name) {
@@ -88,113 +103,116 @@ public record MonsterTemplate(
     return (appearance << 16) | (weapon << 8) | raceImage;
   }
 
+  // ------------------------------------------------------------------ DB-driven builders
+  //
+  // The wire feature carries the DB's RaceImg (not the server-side Race!) plus Appr: the
+  // client decodes RACEfeature(feature)=byte0 as RaceImg to pick its actor class and action
+  // table (PlayScn.pas NewActor / Actor.pas GetRaceByPM), and APPRfeature(feature)=high word
+  // as Appr to pick the sprite: GetMonImg(appr) opens Data\Mon(appr div 10 + 1).wil and
+  // GetOffset(appr) selects the (appr mod 10) frame block.
+
+  private static final ItemDatabase DEFAULT_CATALOG = ItemDatabase.of(StdItemsDb.all());
+
+  /**
+   * Builds a template from the imported Monster.DB row and MonItems drop table
+   * ({@code UsrEngn.pas:2581} field mapping; race/Undead/CoolEye/SPEED/HIT have no engine
+   * consumer yet and stay readable through {@link MonsterDb}).
+   */
+  private static MonsterTemplate fromDb(String dbName, String displayName, int viewRange,
+      MonsterBehavior behavior) {
+    MonsterDb.Row row = MonsterDb.byName(dbName)
+        .orElseThrow(() -> new IllegalStateException("MonsterDb is missing row: " + dbName));
+    // UsrEngn.pas:2581 — AC := MakeLong(wAC, wAC) (flat, not a range); the engine has no
+    // MAC consumer yet (melee defense rolls the AC range), so MAC stays on MonsterDb.Row.
+    // Monsters enter with MP := 0 / MaxMP := wMP by Delphi; the engine uses neither.
+    Ability ability = new Ability(
+        row.hp(), row.hp(), 0, 0, row.dc(), row.dcMax(), row.ac(), row.ac(), row.level(), 0);
+    MonsterDropTable.Result drops = MonsterDropTable.load(dbName, DEFAULT_CATALOG);
+    return new MonsterTemplate(displayName, packFeature(row.raceImg(), row.monsterWeapon(), row.appr()),
+        ability, viewRange,
+        MonsterDb.clampActionInterval(row.walkSpd()),
+        MonsterDb.clampActionInterval(row.attackSpd()),
+        row.exp(), behavior, drops.drops());
+  }
+
+  /** The defers-gold drops of a template (engine cannot spawn wallet piles yet); for docs/tests. */
+  public static List<MonsterDropTable.GoldDrop> goldDropsOf(String dbName) {
+    return MonsterDropTable.load(dbName, DEFAULT_CATALOG).goldDrops();
+  }
+
   // ------------------------------------------------------------------ first-ten templates
-  //
-  // APPEARANCE IS NOW DATA-VERIFIED. The (raceImg, appr) pairs below are taken from the
-  // official 1.76 Monster.DB (GEEM2 baseline, GPL dump of the 2005 leak — e.g.
-  // cjlaaa/Mir2-GeeM2 数据库/GEEM2.db.sql, Monster table columns Name/Race/RaceImg/Appr).
-  // The wire feature must carry the DB's RaceImg (not the server-side Race!) plus Appr:
-  // the client decodes RACEfeature(feature)=byte0 as RaceImg to pick its actor class and
-  // action table (PlayScn.pas NewActor / Actor.pas GetRaceByPM), and APPRfeature(feature)
-  // = high word as Appr to pick the sprite: GetMonImg(appr) opens Data\Mon(appr div 10 + 1)
-  // .wil and GetOffset(appr) selects the (appr mod 10) frame block. With the old
-  // placeholders every monster carried appr=0, which rendered as Mon1.wil block 0 — the
-  // 大刀守卫/卫士 sprite (Monster.DB row '卫士': Race 11, RaceImg 12, Appr 0): a real
-  // mir2.exe showed a flock of guards instead of chickens.
-  //
-  // Numeric combat stats below the two shipped W03 templates are still TODO(verify)
-  // placeholders in classic Monster.DB magnitude; the real import lands with the P2 data
-  // work and must be confirmed by the byte-level client comparison before being treated
-  // as canonical.
 
   /** 鸡 (chicken): the weakest melee target, used for the first kill/drop/pickup loop. */
   // TODO(verify): Delphi TChickenDeer is a fleeing animal; the W03 slice shipped it as an
   // aggressive target because the whole kill/drop/pickup loop (tests, bot-swarm, CI) hunts it.
   // Flip to PASSIVE_FLEE once the client comparison fixture validates the flee broadcasts.
+  // TODO(verify): view range is a code-side constant (ObjMon subclass), not a DB column.
   public static MonsterTemplate chicken() {
-    return new MonsterTemplate("鸡", packFeature(11, 0, 160), Ability.monster(6, 1, 2, 0, 0),
-        6, 800, 1200, 6, MonsterBehavior.AGGRESSIVE, List.of(new ItemDrop("鸡肉", 41, 1)));
+    return fromDb("鸡", "鸡", 6, MonsterBehavior.AGGRESSIVE);
   }
 
   /** 鹿 (deer): TChickenDeer flee AI — never attacks, walks away from the nearest player. */
+  // TChickenDeer.Create sets m_nViewRange := 5.
   public static MonsterTemplate deer() {
-    // TChickenDeer.Create sets m_nViewRange := 5.
-    return new MonsterTemplate("鹿", packFeature(11, 0, 161), Ability.monster(30, 0, 1, 0, 0),
-        5, 800, 2000, 8, MonsterBehavior.PASSIVE_FLEE, List.of(new ItemDrop("鹿肉", 42, 1)));
+    return fromDb("鹿", "鹿", 5, MonsterBehavior.PASSIVE_FLEE);
   }
 
   /** 稻草人 (scarecrow): the first aggressive melee mob outside the farm animals. */
   public static MonsterTemplate scarecrow() {
-    return new MonsterTemplate("稻草人", packFeature(18, 0, 27), Ability.monster(15, 2, 4, 0, 0),
-        7, 700, 1100, 12, MonsterBehavior.AGGRESSIVE, List.of(new ItemDrop("金创药(小量)", 40, 8)));
+    return fromDb("稻草人", "稻草人", 7, MonsterBehavior.AGGRESSIVE);
   }
 
   /** 多钩猫 (hook cat): faster melee chaser of the Bichon outskirts. */
   public static MonsterTemplate hookCat() {
-    return new MonsterTemplate("多钩猫", packFeature(17, 0, 25), Ability.monster(32, 4, 7, 0, 1),
-        8, 600, 1000, 26, MonsterBehavior.AGGRESSIVE, List.of(new ItemDrop("金创药(小量)", 40, 6)));
+    return fromDb("多钩猫", "多钩猫", 8, MonsterBehavior.AGGRESSIVE);
   }
 
   /** 钉耙猫 (rake cat): tougher sibling of the hook cat. */
   public static MonsterTemplate rakeCat() {
-    return new MonsterTemplate("钉耙猫", packFeature(17, 0, 26), Ability.monster(45, 5, 9, 0, 2),
-        8, 600, 1000, 44, MonsterBehavior.AGGRESSIVE, List.of(new ItemDrop("金创药(小量)", 40, 5)));
+    return fromDb("钉耙猫", "钉耙猫", 8, MonsterBehavior.AGGRESSIVE);
   }
 
   /** 洞蛆 (cave maggot): slow, tanky cave dweller (TSlowATMonster pacing). */
   public static MonsterTemplate caveMaggot() {
-    return new MonsterTemplate("洞蛆", packFeature(16, 0, 24), Ability.monster(60, 4, 8, 2, 5),
-        5, 1400, 1800, 50, MonsterBehavior.AGGRESSIVE, List.of(new ItemDrop("金创药(小量)", 40, 5)));
+    return fromDb("洞蛆", "洞蛆", 5, MonsterBehavior.AGGRESSIVE);
   }
 
   /** 蝎子 (scorpion): TScorpion melee, hits noticeably harder than the cats. */
   public static MonsterTemplate scorpion() {
-    return new MonsterTemplate("蝎子", packFeature(32, 0, 83), Ability.monster(70, 10, 14, 2, 4),
-        8, 700, 1100, 100, MonsterBehavior.AGGRESSIVE, List.of(new ItemDrop("金创药(小量)", 40, 4)));
+    return fromDb("蝎子", "蝎子", 8, MonsterBehavior.AGGRESSIVE);
   }
 
   /** 半兽人 (orc): a melee monster strong enough to damage a level-one player. */
   public static MonsterTemplate orc() {
-    return new MonsterTemplate("半兽人", packFeature(19, 0, 100), Ability.monster(45, 4, 9, 0, 2),
-        8, 600, 1000, 60, MonsterBehavior.AGGRESSIVE,
-        List.of(new ItemDrop("鹿肉", 42, 2), new ItemDrop("木剑", 1, 20)));
+    return fromDb("半兽人", "半兽人", 8, MonsterBehavior.AGGRESSIVE);
   }
 
   /** 半兽勇士 (orc warrior): mid-tier orc cave melee. */
   public static MonsterTemplate orcWarrior() {
-    return new MonsterTemplate("半兽勇士", packFeature(19, 0, 102), Ability.monster(80, 8, 13, 1, 3),
-        8, 600, 1000, 90, MonsterBehavior.AGGRESSIVE,
-        List.of(new ItemDrop("木剑", 1, 15), new ItemDrop("金创药(小量)", 40, 4)));
+    return fromDb("半兽勇士", "半兽勇士", 8, MonsterBehavior.AGGRESSIVE);
   }
 
   /** 半兽战士 (orc fighter): strongest of the first-ten batch. */
   public static MonsterTemplate orcFighter() {
-    return new MonsterTemplate("半兽战士", packFeature(19, 0, 101), Ability.monster(110, 12, 18, 2, 5),
-        9, 550, 950, 140, MonsterBehavior.AGGRESSIVE,
-        List.of(new ItemDrop("木剑", 1, 10), new ItemDrop("金创药(小量)", 40, 3)));
+    return fromDb("半兽战士", "半兽战士", 9, MonsterBehavior.AGGRESSIVE);
   }
 
   /**
    * 木桩 (training dummy): the Delphi {@code TRAINER} (M2Share.pas:152 → {@code TTrainer},
    * ObjNpc.pas:2626) — the damage-test object that stands still, never retaliates and
-   * reports 破坏力/平均值 for every blow it absorbs.
+   * reports 破坏力/平均值 for every blow it absorbs. Built from the Monster.DB row
+   * {@code 练功师} (race 55) as of W18; 「木桩」 is the hand-picked display name (the
+   * Delphi sources and ini files carry no Chinese for it). The row's 1-exp kill credit is
+   * kept verbatim; the dummy still drops nothing (it has no MonItems file upstream).
    *
    * <p>It is modelled here as a {@link MonsterBehavior#STATIONARY} monster rather than an
    * NPC because the NPC/script engine is still behind the red line: the observable wire
    * behaviour needed (stand, take damage, die, drop nothing) is fully covered by the monster
-   * object, and no script hook is introduced.
-   *
-   * <p>This is the one target whose behaviour is independent of the wall clock, so it is
-   * what the shadow-comparison harness attacks when 对拍'ing PvE damage across two servers.
-   * Its HP is deliberately large enough to survive a scripted melee sequence, and it drops
-   * nothing so a comparison run cannot be perturbed by loot timing.
+   * object, and no script hook is introduced. This is the one target whose behaviour is
+   * independent of the wall clock, so it is what the shadow-comparison harness attacks when
+   * 对拍'ing PvE damage across two servers.
    */
-  // TODO(verify): Delphi builds the trainer from Monster.DB row '练功师' (Race 55,
-  // RaceImg 19, Appr 72 — 1.76 GEEM2 dump), so HP/AC are whatever that row carries; the
-  // values below are placeholders chosen to be a stable punching bag until the real
-  // Monster.DB import lands. The wire feature now carries the verified RaceImg/Appr pair.
   public static MonsterTemplate trainer() {
-    return new MonsterTemplate("木桩", packFeature(19, 0, 72), Ability.monster(5_000, 0, 0, 0, 0),
-        1, 1_000, 1_000, 0, MonsterBehavior.STATIONARY, List.of());
+    return fromDb("练功师", "木桩", 1, MonsterBehavior.STATIONARY);
   }
 }
