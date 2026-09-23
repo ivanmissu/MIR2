@@ -66,7 +66,8 @@ class WorldPersistenceIntegrationTest {
         // An orc's minimum attack is above the player's maximum defence, guaranteeing durable HP loss.
         run(world, world.spawnMonster(
             MonsterTemplate.orc(), "0", new Position(6, 6), Direction.UP));
-        now.addAndGet(1_000);
+        // The orc's attack interval is the imported Monster.DB ATTACK_SPD (2500 ms).
+        now.addAndGet(MonsterTemplate.orc().attackIntervalMillis() + 500);
         world.tickOnce();
 
         beforeRestart = run(world, world.playerState(player.id()));

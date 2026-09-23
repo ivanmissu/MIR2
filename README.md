@@ -54,8 +54,15 @@ Java 服务端。
   `leavePlayer` 竞态）仍可安全复用同一认证码直至真正进图成功
 - **近战战斗闭环**：`CM_HIT / CM_HEAVYHIT / CM_BIGHIT` 攻击判定（共用 Delphi 的 CM_HIT 动作间隔）、
   `SM_STRUCK / SM_HEALTHSPELLCHANGED / SM_DEATH / SM_WINEXP` 广播
-- **近战怪物 AI**：鸡与半兽人两种模板，视野内索敌、追击、按自身间隔攻击、死亡后尸体定时清理
+- **近战怪物 AI**：鸡与半兽人两种模板（W09 起首批 10 种），视野内索敌、追击、按自身间隔攻击、死亡后尸体定时清理
 - **掉落与拾取**：按 Delphi「N 分之一」概率的掉落表、`SM_ITEMSHOW / SM_ITEMHIDE`、`CM_PICKUP` 与 `SM_ADDITEM`
+- **真实官方数据库导入（W18）**：以官方 1.76 GEEM2 基线转储（`cjlaaa/Mir2-GeeM2`）为数据源，由
+  `java-server/scripts/extract-geem2-db.py` 确定性生成受管工件 `db/MonsterDb.tsv`（378 行）、
+  `db/StdItemsDb.tsv`（686 行，上游重名首行收敛为 684 项）与 `db/MonItems/`（10 张掉落表）；
+  世界侧新增 `MonsterDb / StdItemsDb / MonsterDropTable` 加载器——首批 10 种怪 + 木桩的
+  HP/防御/攻击/等级/经验/走攻节拍与掉落全部替换为真实数值（W04/W09/W12/W15/W17 的
+  TODO(verify) 占位就此消除，`鹿肉` 占位掉落退役为真库 `肉`），SQLite `std_items` 启动
+  种子自动跟随；`金币` 掉落行已解析但按 P3 计划延期（金币地面堆切片落地前不生效）
 - **战斗/背包存档**：HP、MP、等级、经验与 46 格背包通过 SQLite 事务保存，在角色进图前恢复；支持从旧 W02 schema 原位升级
 - **物品目录与背包同步（W04）**：最小标准物品库（`StdItem` 完整 `TStdItem` 字段 + SQLite `std_items` 表）、
   复刻 `GetItemNumber` 的稳定 `MakeIndex`、耐久字段、76 字节 `TClientItem` 小端编解码，
@@ -117,7 +124,7 @@ Java 服务端。
   `MIR2_SAVE_INTERVAL_SECONDS`（默认 600s）逐玩家周期落库（`SaveHumanRcdTime` 语义）；
   怪物线上 Feature 的 **RaceImg/Appr 已按官方 1.76 Monster.DB（GEEM2 基线转储）校正**
   （此前 Appr 占位值 0 会让真实 mir2.exe 把所有怪渲染成 `Mon1.wil` 第 0 块的卫士/大刀守卫），
-  回归测试 `MonsterAppearanceTest` 钉死该对照表；战斗数值仍为 TODO(verify) 占位
+  回归测试 `MonsterAppearanceTest` 钉死该对照表；战斗数值已由 W18 的真实 Monster.DB 导入收口
 - **门与传送点（W10）**：`.map` 门锚点解析（`btDoorIndex` `$80` 锚点 + 同 index `±10` 共享
   `TDoorStatus`）、`CM_OPENDOOR → SM_OPENDOOR_OK`（±12 广播）、500ms 扫拍 + 5 秒自动关门
   （`ProcessMapDoor` 语义，广播 `SM_CLOSEDOOR`）；`MapInfo.txt`（`loadmapinfo` 包含、`;` 注释、
@@ -331,11 +338,13 @@ docker compose -f java-server/compose.yml up --build
 - 近战战斗、近战怪物 AI、掉落/拾取及 HP/MP/等级/经验/背包重登存档已实现；W04 起背包条目携带完整
   `TStdItem` 模板、稳定 `MakeIndex` 与耐久，`SM_ADDITEM/SM_BAGITEMS` 输出 76 字节 `TClientItem`
   载荷（`TStdItem` 为 66 字节：`String[20]` 占 21 字节，Delphi 源码 "60 bytes" 注释已过时）；
-  物品数值仍是最小占位目录，待导入真实 StdItems 数据后校正；W12 已补齐装备穿脱、使用（`CM_EAT`）与
-  丢弃（`CM_DROPITEM`），但装备属性映射虽逐条取自 `ItmUnit.pas`，具体数值同样等 `StdItems.DB`
-  导入才算权威；W15 已补齐修理（普通/特殊）与复活戒指（`ItemDamageRevivalRing`，
-  目录新增 `复活戒指` 占位模板，数值 `TODO(verify)`）；套装效果（Shape/AniCount
-  111-217 表的其余行）、技能/魔法、远程攻击与剩余 47 种怪物仍未实现；修理目前是
+  物品数值已由 W18 的真实 StdItems.DB 全量导入收口（684 项权威目录，占位与 TODO(verify) 消除；
+  真库不存在 `鹿肉`，掉落表已改引用真库 `肉`）；W12 已补齐装备穿脱、使用（`CM_EAT`）与
+  丢弃（`CM_DROPITEM`），装备属性映射逐条取自 `ItmUnit.pas` 且数值随真实目录一起权威；
+  W15 的修理（普通/特殊）与复活戒指（`ItemDamageRevivalRing`）数值同样真实化
+  （复活戒指 AC/MAC 0-1、Looks 175、等级 16、价 20000）；套装效果（Shape/AniCount
+  111-217 表未收录行为）、技能/魔法、远程攻击与剩余 47 种怪物仍未实现——**Monster.DB 全 378 行
+  虽已入库，但红线内 47 种怪不接线行为，仅数据待命**；修理目前是
   协议级最小闭环（`m_sScriptLable` 状态机 + 修理三消息），**NPC 对象、商家距离校验
   与 Market_Def 脚本引擎未实现**（受「NPC 脚本对拍前不得扩展」红线约束）；
 - 等级提升与死亡/复活闭环（W14）已实现，但死亡掉落**只覆盖背包**：`DropUseItems`（死亡掉

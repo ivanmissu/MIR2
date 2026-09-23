@@ -32,9 +32,9 @@ class WorldLevelAndDeathTest {
       assertEquals(15, player.ability().maxHp());
       assertEquals(100, player.ability().maxExperience());
 
-      // 鸡 awards 6 experience apiece; a level-one warrior (DC 1-2) can actually beat one.
-      // Seventeen of them cross the 100-point level-one threshold with 2 to spare.
-      for (int kill = 0; kill < 16; kill++) {
+      // 鸡 awards its Monster.DB experience of 9 apiece; a level-one warrior (DC 1-2) can
+      // actually beat one. Eleven of them reach 99, just short of the 100-point threshold.
+      for (int kill = 0; kill < 11; kill++) {
         killAdjacentMonster(world, player.id(), MonsterTemplate.chicken(), new Position(6, 5));
       }
       events.clear();
@@ -45,8 +45,8 @@ class WorldLevelAndDeathTest {
           .map(WorldEvent.LevelUp.class::cast)
           .findFirst().orElseThrow();
       assertEquals(2, levelUp.level());
-      // GetExp deducts exactly one threshold: 17 * 6 - 100 = 2 carried into level 2.
-      assertEquals(2, levelUp.experience());
+      // GetExp deducts exactly one threshold: 12 * 9 - 100 = 8 carried into level 2.
+      assertEquals(8, levelUp.experience());
       // HasLevelUp refreshes MaxExp from GetLevelExp(2) = 200.
       assertEquals(200, levelUp.ability().maxExperience());
       // RecalcLevelAbilitys: a level-2 warrior is 24 HP / 18 MP, and its DC narrows from the
@@ -65,7 +65,7 @@ class WorldLevelAndDeathTest {
 
       WorldObjectSnapshot after = run(world, world.snapshot(player.id()));
       assertEquals(2, after.ability().level());
-      assertEquals(2, after.ability().experience());
+      assertEquals(8, after.ability().experience());
     }
   }
 
