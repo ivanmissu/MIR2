@@ -37,6 +37,15 @@ import java.util.Map;
  */
 public final class ShadowDiffMain {
 
+  /**
+   * The P2/G3 first-ten monster slice, in the same order as the development plan.
+   * Keep this deliberately separate from {@code MonsterTemplate}'s aliases: the matrix must
+   * never silently grow into the still-forbidden remaining 47 monster behaviours.
+   */
+  static final List<String> AI_MONSTER_KINDS = List.of(
+      "chicken", "deer", "scarecrow", "hookcat", "rakecat",
+      "cavemaggot", "scorpion", "orc", "orcwarrior", "orcfighter");
+
   public static void main(String[] args) {
     int status;
     try {
@@ -70,9 +79,17 @@ public final class ShadowDiffMain {
     String serverName = options.getOrDefault("server-name", "MIR2");
 
     if (options.containsKey("embedded")) {
+      if (options.containsKey("ai-all")) {
+        if (options.containsKey("monster-kind"))
+          throw new IllegalArgumentException("--ai-all cannot be combined with --monster-kind");
+        return runAiMatrix(options, script, settle, strictMessages, reportDir,
+            account, password, serverName);
+      }
       return runEmbedded(options, script, settle, strictMessages, reportDir,
           account, password, serverName);
     }
+    if (options.containsKey("ai-all"))
+      throw new IllegalArgumentException("--ai-all is only available with --embedded");
     return runRemote(options, script, settle, strictMessages, reportDir,
         account, password, serverName);
   }
@@ -92,7 +109,7 @@ public final class ShadowDiffMain {
     // thing a `hit` op depends on is the seeded damage stream — the whole point of the PvE
     // comparison. `--monster-kind` can point at a walking monster, but then only the
     // clock-independent parts of the state stay comparable.
-    boolean ai = options.containsKey("ai");
+    boolean ai = options.containsKey("ai") || options.containsKey("ai-all");
     int monsters = (int) longOption(options, "monsters",
         ai ? 4 : options.containsKey("pve") ? 8 : 0);
     // --ai compares *moving* monsters, so it defaults to a walking template and a manual
@@ -110,6 +127,61 @@ public final class ShadowDiffMain {
           reportDir, account, password, serverName);
     }
   }
+
+  /**
+   * Runs the deterministic moving-AI comparison once for every template in the P2 first-ten
+   * slice. Each row gets an isolated pair of servers/databases and its own detailed report;
+   * failures do not short-circuit the remaining rows, so one invocation always yields a
+   * complete G3 evidence table.
+   */
+  private static int runAiMatrix(Map<String, String> options, List<Op> script,
+      Duration settle, boolean strictMessages, Path reportDir,
+      String account, String password, String serverName) throws Exception {
+    Files.createDirectories(reportDir);
+    List<AiMatrixRow> rows = new ArrayList<>(AI_MONSTER_KINDS.size());
+    for (String kind : AI_MONSTER_KINDS) {
+      Map<String, String> rowOptions = new LinkedHashMap<>(options);
+      rowOptions.put("ai", "true");
+      rowOptions.put("monster-kind", kind);
+      Path rowReportDir = reportDir.resolve(kind);
+      System.out.printf(Locale.ROOT, "%n[shadowdiff] AI matrix: %s (%d/%d)%n",
+          kind, rows.size() + 1, AI_MONSTER_KINDS.size());
+      int status;
+      String note = "";
+      try {
+        status = runEmbedded(rowOptions, script, settle, strictMessages, rowReportDir,
+            account, password, serverName);
+      } catch (Exception error) {
+        status = 2;
+        note = error.getClass().getSimpleName() + ": "
+            + String.valueOf(error.getMessage()).replace('|', '/').replace('\n', ' ');
+        System.err.printf(Locale.ROOT, "[shadowdiff] AI matrix row %s failed: %s%n", kind, error);
+      }
+      rows.add(new AiMatrixRow(kind, status, note));
+    }
+
+    Path summary = reportDir.resolve("ai-matrix.md");
+    StringBuilder markdown = new StringBuilder()
+        .append("# MIR2 first-ten monster AI shadow matrix\n\n")
+        .append("Deterministic embedded comparison with a seeded random source and MANUAL world clock.\n\n")
+        .append("| Monster | Verdict | Detailed report | Note |\n")
+        .append("| --- | --- | --- | --- |\n");
+    for (AiMatrixRow row : rows) {
+      markdown.append("| `").append(row.kind()).append("` | **")
+          .append(row.status() == 0 ? "PASS" : row.status() == 1 ? "FAIL" : "ERROR")
+          .append("** | [shadow-report.md](").append(row.kind())
+          .append("/shadow-report.md) | ").append(row.note()).append(" |\n");
+    }
+    long passed = rows.stream().filter(row -> row.status() == 0).count();
+    markdown.append("\nResult: **").append(passed).append('/')
+        .append(rows.size()).append(" PASS**.\n");
+    Files.writeString(summary, markdown, StandardCharsets.UTF_8);
+    System.out.printf(Locale.ROOT, "%n[shadowdiff] AI matrix=%d/%d PASS, report: %s%n",
+        passed, rows.size(), summary.toAbsolutePath());
+    return passed == rows.size() ? 0 : 1;
+  }
+
+  private record AiMatrixRow(String kind, int status, String note) {}
 
   private static int runRemote(Map<String, String> options, List<Op> script,
       Duration settle, boolean strictMessages, Path reportDir,
@@ -235,7 +307,7 @@ public final class ShadowDiffMain {
     }
     // --pve selects the built-in combat script; it only means anything with a pinned seed
     // and trainer dummies, which is exactly what --pve configures below.
-    if (options.containsKey("ai")) return Op.aiScript();
+    if (options.containsKey("ai") || options.containsKey("ai-all")) return Op.aiScript();
     return options.containsKey("pve") ? Op.pveScript() : Op.defaultScript();
   }
 
@@ -258,7 +330,7 @@ public final class ShadowDiffMain {
      * 4" — every new switch has to be listed here.
      */
     static final java.util.Set<String> FLAGS =
-        java.util.Set.of("embedded", "help", "strict-messages", "pve", "ai");
+        java.util.Set.of("embedded", "help", "strict-messages", "pve", "ai", "ai-all");
 
     static Map<String, String> parse(String[] args) {
       Map<String, String> options = new LinkedHashMap<>();
@@ -315,9 +387,13 @@ public final class ShadowDiffMain {
                                怪物走位/攻击节拍因此只由 tick 数决定，与两台主机的墙钟无关；
                                状态快照新增 near=（视野内其它角色的格子+朝向）与 worldTime=。
                                remote 模式需要两台服务端都以 MANUAL 时钟启动（非生产配置）。
+        --ai-all               （embedded）W24 首批 10 种怪 AI 矩阵：依次以 chicken/deer/
+                               scarecrow/hookcat/rakecat/cavemaggot/scorpion/orc/orcwarrior/
+                               orcfighter 运行 --ai；每种使用隔离双服并继续收集失败行，最终生成
+                               ai-matrix.md 与十份详细报告。不得与 --monster-kind 同用。
         --right-seed N         （embedded）只给右侧换种子 —— 负向对照：对拍必须因此 FAIL，
                                用来证明本次判定不是空转。
-        --monsters N           （embedded）出生点周围放 N 只怪（默认 0；--pve 时默认 8，--ai 时默认 4）
+        --monsters N           （embedded）出生点周围放 N 只怪（默认 0；--pve 时默认 8，--ai/--ai-all 时默认 4）
         --monster-kind NAME    （embedded）怪物模板（默认 trainer/木桩：站桩不还手，
                                行为与墙钟无关，是唯一可确定性对拍的 PvE 目标）
         --left-label/-host/-login-port/-select-port/-game-port    左侧目标

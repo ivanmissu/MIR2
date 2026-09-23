@@ -4,6 +4,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.mir2.world.MonsterBehavior;
+import com.mir2.world.MonsterTemplate;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
@@ -30,7 +33,19 @@ class ShadowDiffMainArgsTest {
   void everySwitchTheRunnerTreatsAsAFlagIsRegisteredAsOne() {
     // containsKey() checks in run()/runEmbedded() only work for registered flags.
     assertTrue(ShadowDiffMain.Args.FLAGS.containsAll(
-        java.util.List.of("embedded", "help", "pve", "ai", "strict-messages")));
+        java.util.List.of("embedded", "help", "pve", "ai", "ai-all", "strict-messages")));
+  }
+
+  @Test
+  void aiMatrixIsPinnedToExactlyTheExistingP2FirstTenTemplates() {
+    assertEquals(List.of(
+        "chicken", "deer", "scarecrow", "hookcat", "rakecat",
+        "cavemaggot", "scorpion", "orc", "orcwarrior", "orcfighter"),
+        ShadowDiffMain.AI_MONSTER_KINDS);
+    assertEquals(10, ShadowDiffMain.AI_MONSTER_KINDS.stream()
+        .map(MonsterTemplate::forName)
+        .filter(template -> template.behavior() != MonsterBehavior.STATIONARY)
+        .count(), "the matrix must resolve ten live-AI templates and must not include trainer");
   }
 
   @Test
