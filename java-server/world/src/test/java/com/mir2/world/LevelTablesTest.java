@@ -98,6 +98,15 @@ class LevelTablesTest {
     assertEquals(1, LevelAbilities.maxDc(wizard, 7));
     assertEquals(6, LevelAbilities.minDc(taoist, 50));
     assertEquals(7, LevelAbilities.maxDc(taoist, 50));
+    // RecalcLevelAbilitys mirrors that caster range into MC for wizards and SC for Taoists.
+    assertEquals(6, LevelAbilities.minMc(wizard, 50));
+    assertEquals(7, LevelAbilities.maxMc(wizard, 50));
+    assertEquals(0, LevelAbilities.maxSc(wizard, 50));
+    assertEquals(6, LevelAbilities.minSc(taoist, 50));
+    assertEquals(7, LevelAbilities.maxSc(taoist, 50));
+    // Taoist MAC is a separate Round(Level/6) curve.
+    assertEquals(4, LevelAbilities.minMac(taoist, 50));
+    assertEquals(9, LevelAbilities.maxMac(taoist, 50));
   }
 
   @Test
@@ -146,6 +155,11 @@ class LevelTablesTest {
     assertEquals(1, fresh.minDc());
     assertEquals(2, fresh.maxDc());
     assertEquals(0, fresh.maxAc());
+    assertEquals(0, fresh.maxMac());
+    assertEquals(1, fresh.minMc());
+    assertEquals(2, fresh.maxMc());
+    assertEquals(1, fresh.minSc());
+    assertEquals(2, fresh.maxSc());
     assertEquals(0, fresh.experience());
     assertEquals(100, fresh.maxExperience());
   }

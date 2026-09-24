@@ -6,6 +6,8 @@ import com.mir2.world.BackpackItem;
 import com.mir2.world.Equipment;
 import com.mir2.world.EquipmentSlot;
 import com.mir2.world.ItemDatabase;
+import com.mir2.world.LevelExperience;
+import com.mir2.world.PlayerSkill;
 import com.mir2.world.PlayerState;
 import com.mir2.world.PlayerStateStore;
 import com.mir2.world.StdItem;
@@ -101,6 +103,12 @@ public final class SqliteStore implements AutoCloseable,
             max_dc INTEGER NOT NULL,
             min_ac INTEGER NOT NULL,
             max_ac INTEGER NOT NULL,
+            min_mac INTEGER NOT NULL DEFAULT 0,
+            max_mac INTEGER NOT NULL DEFAULT 0,
+            min_mc INTEGER NOT NULL DEFAULT 0,
+            max_mc INTEGER NOT NULL DEFAULT 0,
+            min_sc INTEGER NOT NULL DEFAULT 0,
+            max_sc INTEGER NOT NULL DEFAULT 0,
             level INTEGER NOT NULL,
             experience INTEGER NOT NULL
           )
@@ -151,6 +159,16 @@ public final class SqliteStore implements AutoCloseable,
             PRIMARY KEY(character_id, slot)
           )
           """);
+      statement.executeUpdate("""
+          CREATE TABLE IF NOT EXISTS character_magic (
+            character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+            magic_id INTEGER NOT NULL,
+            level INTEGER NOT NULL DEFAULT 0,
+            training_points INTEGER NOT NULL DEFAULT 0,
+            key_code INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY(character_id, magic_id)
+          )
+          """);
       statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_characters_account ON characters(account)");
       // Backfill pre-W03 characters with the same naked baseline a new character gets, so a
       // schema upgrade and a fresh creation never disagree.
@@ -177,6 +195,15 @@ public final class SqliteStore implements AutoCloseable,
     // Upgrade W20 states in place: rows predating the W22 body-luck slice carry no accumulator.
     // Delphi's HumData.dBodyLuck defaults to 0 for every character (ObjBase.pas:1226).
     ensureColumn("character_state", "body_luck", "REAL NOT NULL DEFAULT 0");
+    // W28 restores the three TAbility ranges that the melee-only W03 schema omitted.
+    // Existing rows default to zero; WorldEngine re-derives naked MC/SC/MAC from job+level on
+    // entry, while every subsequent save records the explicit values here.
+    ensureColumn("character_state", "min_mac", "INTEGER NOT NULL DEFAULT 0");
+    ensureColumn("character_state", "max_mac", "INTEGER NOT NULL DEFAULT 0");
+    ensureColumn("character_state", "min_mc", "INTEGER NOT NULL DEFAULT 0");
+    ensureColumn("character_state", "max_mc", "INTEGER NOT NULL DEFAULT 0");
+    ensureColumn("character_state", "min_sc", "INTEGER NOT NULL DEFAULT 0");
+    ensureColumn("character_state", "max_sc", "INTEGER NOT NULL DEFAULT 0");
     // Upgrade equipment rows in place: the W22 MakeWeaponUnlock slice adds the per-instance
     // weapon luck/curse points (TUserItem.btValue[3]/[4]); they default to 0 for every item.
     ensureColumn("character_equipment", "weapon_luck", "INTEGER NOT NULL DEFAULT 0");
@@ -455,9 +482,10 @@ public final class SqliteStore implements AutoCloseable,
     Ability defaults = Ability.defaultPlayer();
     try (PreparedStatement statement = connection.prepareStatement("""
         INSERT INTO character_state(
-          character_id, hp, max_hp, mp, max_mp, min_dc, max_dc, min_ac, max_ac, level, experience,
+          character_id, hp, max_hp, mp, max_mp, min_dc, max_dc, min_ac, max_ac,
+          min_mac, max_mac, min_mc, max_mc, min_sc, max_sc, level, experience,
           gold, pk_point, body_luck)
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """)) {
       bindAbility(statement, characterId, defaults, level, 0, 0, 0);
       statement.executeUpdate();
@@ -508,8 +536,9 @@ public final class SqliteStore implements AutoCloseable,
   public synchronized Optional<PlayerState> load(UUID characterId) {
     Objects.requireNonNull(characterId, "characterId");
     try (PreparedStatement statement = connection.prepareStatement("""
-        SELECT hp, max_hp, mp, max_mp, min_dc, max_dc, min_ac, max_ac, level, experience, gold,
-               pk_point, body_luck
+        SELECT hp, max_hp, mp, max_mp, min_dc, max_dc, min_ac, max_ac,
+               min_mac, max_mac, min_mc, max_mc, min_sc, max_sc,
+               level, experience, gold, pk_point, body_luck
         FROM character_state WHERE character_id = ?
         """)) {
       statement.setString(1, characterId.toString());
@@ -524,15 +553,41 @@ public final class SqliteStore implements AutoCloseable,
             result.getInt("max_dc"),
             result.getInt("min_ac"),
             result.getInt("max_ac"),
+            result.getInt("min_mac"),
+            result.getInt("max_mac"),
+            result.getInt("min_mc"),
+            result.getInt("max_mc"),
+            result.getInt("min_sc"),
+            result.getInt("max_sc"),
             result.getInt("level"),
-            result.getLong("experience"));
+            result.getLong("experience"),
+            LevelExperience.forLevel(result.getInt("level")));
         return Optional.of(new PlayerState(
             characterId, ability, loadBackpack(characterId), loadEquipment(characterId),
-            result.getLong("gold"), result.getInt("pk_point"), result.getDouble("body_luck")));
+            result.getLong("gold"), result.getInt("pk_point"), result.getDouble("body_luck"),
+            loadSkills(characterId)));
       }
     } catch (SQLException error) {
       throw failure(error);
     }
+  }
+
+  private List<PlayerSkill> loadSkills(UUID characterId) throws SQLException {
+    List<PlayerSkill> skills = new ArrayList<>();
+    try (PreparedStatement statement = connection.prepareStatement("""
+        SELECT magic_id, level, training_points, key_code
+        FROM character_magic WHERE character_id = ? ORDER BY rowid
+        """)) {
+      statement.setString(1, characterId.toString());
+      try (ResultSet result = statement.executeQuery()) {
+        while (result.next()) {
+          skills.add(new PlayerSkill(
+              result.getInt("magic_id"), result.getInt("level"),
+              result.getInt("training_points"), result.getInt("key_code")));
+        }
+      }
+    }
+    return List.copyOf(skills);
   }
 
   /** Shared projection of an item row joined to its template; used by bag and worn set. */
@@ -669,6 +724,7 @@ public final class SqliteStore implements AutoCloseable,
             state.bodyLuck());
         replaceBackpack(state.characterId(), state.backpack());
         replaceEquipment(state.characterId(), state.equipment());
+        replaceSkills(state.characterId(), state.skills());
         return null;
       });
     } catch (SQLException error) {
@@ -681,9 +737,10 @@ public final class SqliteStore implements AutoCloseable,
       throws SQLException {
     try (PreparedStatement statement = connection.prepareStatement("""
         INSERT INTO character_state(
-          character_id, hp, max_hp, mp, max_mp, min_dc, max_dc, min_ac, max_ac, level, experience,
+          character_id, hp, max_hp, mp, max_mp, min_dc, max_dc, min_ac, max_ac,
+          min_mac, max_mac, min_mc, max_mc, min_sc, max_sc, level, experience,
           gold, pk_point, body_luck)
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(character_id) DO UPDATE SET
           hp = excluded.hp,
           max_hp = excluded.max_hp,
@@ -693,6 +750,12 @@ public final class SqliteStore implements AutoCloseable,
           max_dc = excluded.max_dc,
           min_ac = excluded.min_ac,
           max_ac = excluded.max_ac,
+          min_mac = excluded.min_mac,
+          max_mac = excluded.max_mac,
+          min_mc = excluded.min_mc,
+          max_mc = excluded.max_mc,
+          min_sc = excluded.min_sc,
+          max_sc = excluded.max_sc,
           level = excluded.level,
           experience = excluded.experience,
           gold = excluded.gold,
@@ -716,11 +779,40 @@ public final class SqliteStore implements AutoCloseable,
     statement.setInt(7, ability.maxDc());
     statement.setInt(8, ability.minAc());
     statement.setInt(9, ability.maxAc());
-    statement.setInt(10, level);
-    statement.setLong(11, ability.experience());
-    statement.setLong(12, gold);
-    statement.setInt(13, pkPoint);
-    statement.setDouble(14, bodyLuck);
+    statement.setInt(10, ability.minMac());
+    statement.setInt(11, ability.maxMac());
+    statement.setInt(12, ability.minMc());
+    statement.setInt(13, ability.maxMc());
+    statement.setInt(14, ability.minSc());
+    statement.setInt(15, ability.maxSc());
+    statement.setInt(16, level);
+    statement.setLong(17, ability.experience());
+    statement.setLong(18, gold);
+    statement.setInt(19, pkPoint);
+    statement.setDouble(20, bodyLuck);
+  }
+
+  private void replaceSkills(UUID characterId, List<PlayerSkill> skills) throws SQLException {
+    try (PreparedStatement statement = connection.prepareStatement(
+        "DELETE FROM character_magic WHERE character_id = ?")) {
+      statement.setString(1, characterId.toString());
+      statement.executeUpdate();
+    }
+    if (skills.isEmpty()) return;
+    try (PreparedStatement statement = connection.prepareStatement("""
+        INSERT INTO character_magic(character_id, magic_id, level, training_points, key_code)
+        VALUES(?, ?, ?, ?, ?)
+        """)) {
+      for (PlayerSkill skill : skills) {
+        statement.setString(1, characterId.toString());
+        statement.setInt(2, skill.magicId());
+        statement.setInt(3, skill.level());
+        statement.setInt(4, skill.trainingPoints());
+        statement.setInt(5, skill.key());
+        statement.addBatch();
+      }
+      statement.executeBatch();
+    }
   }
 
   /**

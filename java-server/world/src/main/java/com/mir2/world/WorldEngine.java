@@ -163,6 +163,15 @@ public final class WorldEngine implements AutoCloseable {
    */
   private static final int REVIVE_ON_LOGIN_HP = 14;
 
+  /** Shipped g_Config values used by ClientSpellXY/MagicManager.DoSpell. */
+  private static final int MAGIC_ATTACK_RANGE = 8;
+  private static final long MAGIC_HIT_INTERVAL_MILLIS = 1_350;
+  private static final long FIREBALL_IMPACT_DELAY_MILLIS = 600;
+  private static final long HEAL_IMPACT_DELAY_MILLIS = 800;
+  private static final int SKILL_FIREBALL = 1;
+  private static final int SKILL_HEALING = 2;
+  private static final int SKILL_MAGIC_SHIELD = 31;
+
   public record Config(
       Duration tickInterval,
       int viewRange,
@@ -226,6 +235,7 @@ public final class WorldEngine implements AutoCloseable {
   private final List<Spawner> spawners = new ArrayList<>();
   private final Map<Integer, GroundItem> groundItems = new LinkedHashMap<>();
   private final Map<Integer, Long> itemDropTimes = new HashMap<>();
+  private final List<PendingMagicImpact> pendingMagicImpacts = new ArrayList<>();
   private final ConcurrentLinkedQueue<Pending<?>> commands = new ConcurrentLinkedQueue<>();
   private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(
       Thread.ofPlatform().name("mir2-world").factory());
@@ -249,6 +259,7 @@ public final class WorldEngine implements AutoCloseable {
   private final WorldRandom random;
   private final PlayerStateStore playerStateStore;
   private final ItemDatabase itemDatabase;
+  private final MagicCatalog magicCatalog;
   private final IntSupplier hourSupplier;
   private int gameTime;
   private int nextObjectId = 1;
@@ -414,6 +425,7 @@ public final class WorldEngine implements AutoCloseable {
     this.random = Objects.requireNonNull(random, "random");
     this.playerStateStore = Objects.requireNonNull(playerStateStore, "playerStateStore");
     this.itemDatabase = Objects.requireNonNull(itemDatabase, "itemDatabase");
+    this.magicCatalog = MagicCatalog.defaults();
     this.hourSupplier = Objects.requireNonNull(hourSupplier, "hourSupplier");
     this.gameTime = gameTimeFromHour(hourSupplier.getAsInt());
     this.nextItemMakeIndex = seedMakeIndex(playerStateStore.itemMakeIndexHighWater());
@@ -703,6 +715,30 @@ public final class WorldEngine implements AutoCloseable {
     Objects.requireNonNull(direction, "direction");
     Objects.requireNonNull(attack, "attack");
     return submit(() -> attackWith(playerId, claimedPosition, direction, attack));
+  }
+
+  /** CM_SPELL: target id is MakeLong(Param,Series), while Recog carries the target cell. */
+  public CompletableFuture<Boolean> castSpell(
+      int playerId, int magicId, Position target, int targetId) {
+    Objects.requireNonNull(target, "target");
+    if (magicId < 1) throw new IllegalArgumentException("magic id must be positive");
+    if (targetId < 0) throw new IllegalArgumentException("target id must not be negative");
+    return submit(() -> castPlayerSpell(playerId, magicId, target, targetId));
+  }
+
+  /** CM_MAGICKEYCHANGE changes durable TUserMagic.btKey and has no direct wire response. */
+  public CompletableFuture<Boolean> changeMagicKey(int playerId, int magicId, int key) {
+    if (magicId < 1) throw new IllegalArgumentException("magic id must be positive");
+    if (key < 0 || key > 0xff) throw new IllegalArgumentException("magic key must be a byte");
+    return submit(() -> changePlayerMagicKey(playerId, magicId, key));
+  }
+
+  public CompletableFuture<List<PlayerSkill>> skills(int playerId) {
+    return submit(() -> List.copyOf(requirePlayer(playerId).skills.values()));
+  }
+
+  public CompletableFuture<Boolean> magicShieldActive(int playerId) {
+    return submit(() -> requirePlayer(playerId).magicShieldUntil > clock.getAsLong());
   }
 
   /**
@@ -1265,6 +1301,8 @@ public final class WorldEngine implements AutoCloseable {
    * command).
    */
   private void runTickBody() {
+    resolvePendingMagicImpacts();
+    expireSkillBuffs();
     regenSpawners();
     updateMonsters();
     decayPkPoints();
@@ -1331,6 +1369,11 @@ public final class WorldEngine implements AutoCloseable {
     List<Integer> visibleIds = visibleIds(map, position, 0);
     Player player = new Player(id, characterId, name, map, position, direction, feature, status,
         restored.ability(), restored.backpack(), restored.equipment(), job, sink);
+    for (PlayerSkill skill : restored.skills()) {
+      // Unknown rows are retained in storage by SqliteStore but not exposed to a world whose
+      // vetted Magic.DB intersection cannot resolve them.
+      if (magicCatalog.find(skill.magicId()).isPresent()) player.skills.put(skill.magicId(), skill);
+    }
     // UsrEngn.pas:2310 restores m_nGold from the character record (HumData.nGold).
     player.gold = restored.gold();
     // HumData.nPKPOINT (ObjBase.pas:24904) travels with the character record; m_boPKFlag does
@@ -1347,15 +1390,23 @@ public final class WorldEngine implements AutoCloseable {
     // has its actor before the wallet arrives.
     boolean goldFloored = player.gold < config.testGold();
     if (goldFloored) player.gold = config.testGold();
-    // MaxExp is derived state in Delphi (HasLevelUp refreshes it from GetLevelExp), so it is
-    // never persisted; rebuild it from the restored level before anything reads it.
-    player.baseAbility = new Ability(
-        player.baseAbility.hp(), player.baseAbility.maxHp(),
-        player.baseAbility.mp(), player.baseAbility.maxMp(),
-        player.baseAbility.minDc(), player.baseAbility.maxDc(),
-        player.baseAbility.minAc(), player.baseAbility.maxAc(),
-        player.baseAbility.level(), player.baseAbility.experience(),
-        LevelExperience.forLevel(player.baseAbility.level()));
+    // MaxExp and naked magical ranges are level-derived. W03-era rows have no MAC/MC/SC
+    // columns, so rebuild those ranges on entry rather than treating migration zeroes as real.
+    if (player.baseAbility.level() > 1) {
+      player.baseAbility = LevelAbilities.forLevel(job, player.baseAbility.level(), player.baseAbility);
+    } else {
+      Ability base = player.baseAbility;
+      Ability initial = Ability.defaultPlayer();
+      player.baseAbility = new Ability(
+          base.hp(), base.maxHp(), base.mp(), base.maxMp(),
+          base.minDc(), base.maxDc(), base.minAc(), base.maxAc(),
+          base.minMac(), base.maxMac(),
+          base.minMc() == 0 && base.maxMc() == 0 ? initial.minMc() : base.minMc(),
+          base.minMc() == 0 && base.maxMc() == 0 ? initial.maxMc() : base.maxMc(),
+          base.minSc() == 0 && base.maxSc() == 0 ? initial.minSc() : base.minSc(),
+          base.minSc() == 0 && base.maxSc() == 0 ? initial.maxSc() : base.maxSc(),
+          base.level(), base.experience(), LevelExperience.forLevel(base.level()));
+    }
     // RecalcAbilitys runs once at login so the restored gear is reflected before the client
     // receives its first ability packet. Current HP/MP are carried over untouched: Delphi
     // only refills them on revival, not on login.
@@ -1385,6 +1436,9 @@ public final class WorldEngine implements AutoCloseable {
     // the Delphi login path only refreshes weight when something actually changes it.
     if (!player.equipment.isEmpty()) {
       emit(player, new WorldEvent.EquipmentSent(player.id, player.equipment));
+    }
+    if (!player.skills.isEmpty()) {
+      emit(player, new WorldEvent.SkillsSent(player.id, learnedMagics(player)));
     }
     // RM_ABILITY is part of the login refresh in the Delphi server. Sending the complete
     // packed ability immediately after the map bootstrap prevents a fresh client from
@@ -1475,6 +1529,152 @@ public final class WorldEngine implements AutoCloseable {
     return true;
   }
 
+  private boolean changePlayerMagicKey(int playerId, int magicId, int key) {
+    Player player = requirePlayer(playerId);
+    PlayerSkill current = player.skills.get(magicId);
+    if (current == null) return false;
+    player.skills.put(magicId, current.withKey(key));
+    try {
+      persist(player);
+    } catch (RuntimeException failure) {
+      player.skills.put(magicId, current);
+      throw failure;
+    }
+    return true;
+  }
+
+  /** W28 minimum skill framework: fireball, healing and magic-shield lifecycle. */
+  private boolean castPlayerSpell(int playerId, int magicId, Position requestedTarget, int targetId) {
+    Player player = requirePlayer(playerId);
+    if (!player.ability.alive())
+      return rejectSpell(player, magicId, WorldEvent.SpellRejection.ACTOR_DEAD, "死亡状态无法施法");
+
+    PlayerSkill skill = player.skills.get(magicId);
+    MagicDefinition magic = magicCatalog.find(magicId).orElse(null);
+    if (skill == null || magic == null)
+      return rejectSpell(player, magicId, WorldEvent.SpellRejection.UNKNOWN_SKILL, "尚未学习该技能");
+    if (magic.job() != MagicDefinition.ANY_JOB && magic.job() != player.job)
+      return rejectSpell(player, magicId, WorldEvent.SpellRejection.WRONG_JOB, "当前职业无法使用该技能");
+    if (player.ability.level() < magic.requiredLevel(skill.level()))
+      return rejectSpell(player, magicId, WorldEvent.SpellRejection.LEVEL_TOO_LOW, "等级不足，无法使用该技能");
+    if (magicId != SKILL_FIREBALL && magicId != SKILL_HEALING && magicId != SKILL_MAGIC_SHIELD)
+      return rejectSpell(player, magicId, WorldEvent.SpellRejection.UNSUPPORTED_SKILL, "该技能尚未开放");
+
+    Position target = magicId == SKILL_MAGIC_SHIELD ? player.position : requestedTarget;
+    if (chebyshev(player.position, target) > MAGIC_ATTACK_RANGE)
+      return rejectSpell(player, magicId, WorldEvent.SpellRejection.OUT_OF_RANGE, "施法距离过远");
+
+    WorldObject targetObject;
+    if (magicId == SKILL_MAGIC_SHIELD) {
+      targetObject = player;
+      targetId = player.id;
+      if (player.magicShieldUntil > clock.getAsLong()) {
+        return rejectSpell(player, magicId, WorldEvent.SpellRejection.BUFF_ALREADY_ACTIVE,
+            "魔法盾效果仍在持续");
+      }
+    } else if (magicId == SKILL_HEALING && targetId == 0) {
+      targetObject = player;
+      targetId = player.id;
+      target = player.position;
+    } else {
+      targetObject = findObject(targetId);
+    }
+    if (!validSpellTarget(player, targetObject, target, magicId))
+      return rejectSpell(player, magicId, WorldEvent.SpellRejection.INVALID_TARGET, "施法目标无效");
+
+    long now = clock.getAsLong();
+    if (now - player.lastSpellAt < MAGIC_HIT_INTERVAL_MILLIS + magic.delayMillis())
+      return rejectSpell(player, magicId, WorldEvent.SpellRejection.TOO_FAST, "技能冷却中");
+    int mana = magic.manaCost(skill.level());
+    if (player.ability.mp() < mana)
+      return rejectSpell(player, magicId, WorldEvent.SpellRejection.NOT_ENOUGH_MANA, "魔法值不足");
+
+    Ability before = player.ability;
+    player.lastSpellAt = now;
+    if (!player.position.equals(target)) player.direction = Direction.toward(player.position, target);
+    player.setAbility(player.ability.withMp(player.ability.mp() - mana));
+    try {
+      persist(player);
+    } catch (RuntimeException failure) {
+      player.setAbility(before);
+      player.lastSpellAt = Long.MIN_VALUE / 4;
+      throw failure;
+    }
+
+    emit(player, new WorldEvent.SpellAccepted(player.id, magic.id()));
+    emitToObserversAndSelf(player, new WorldEvent.HealthChanged(player.snapshot()));
+    WorldEvent cast = new WorldEvent.ObjectSpellCast(player.snapshot(), target, magic);
+    for (int viewerId : visibleIds(player.map, player.position, player.id)) emit(players.get(viewerId), cast);
+    emitToObserversAndSelf(player, new WorldEvent.MagicFired(player.id, target, targetId, magic));
+
+    if (magicId == SKILL_FIREBALL) {
+      int power = rollFireballPower(player, skill, magic);
+      pendingMagicImpacts.add(new PendingMagicImpact(
+          now + FIREBALL_IMPACT_DELAY_MILLIS, MagicImpactKind.DAMAGE,
+          player.id, targetId, target, power));
+    } else if (magicId == SKILL_HEALING) {
+      int power = rollHealingPower(player, skill, magic);
+      pendingMagicImpacts.add(new PendingMagicImpact(
+          now + HEAL_IMPACT_DELAY_MILLIS, MagicImpactKind.HEAL,
+          player.id, targetId, target, power));
+    } else {
+      int seconds = rollMagicShieldSeconds(player, skill, magic);
+      player.magicShieldLevel = skill.level();
+      player.magicShieldUntil = now + Math.max(1, seconds) * 1_000L;
+      emit(player, new WorldEvent.SystemMessage(player.id,
+          "魔法盾已生效，持续" + Math.max(1, seconds) + "秒"));
+    }
+    return true;
+  }
+
+  private boolean validSpellTarget(
+      Player caster, WorldObject target, Position claimed, int magicId) {
+    if (target == null || !target.ability().alive() || target.map() != caster.map) return false;
+    if (chebyshev(target.position(), claimed) > 1) return false;
+    if (magicId == SKILL_FIREBALL) return target.id() != caster.id && !(target instanceof Npc);
+    return target instanceof Player;
+  }
+
+  private static int chebyshev(Position left, Position right) {
+    return Math.max(Math.abs(left.x() - right.x()), Math.abs(left.y() - right.y()));
+  }
+
+  private boolean rejectSpell(
+      Player player, int magicId, WorldEvent.SpellRejection reason, String message) {
+    emit(player, new WorldEvent.SpellRejected(player.id, magicId, reason, message));
+    return false;
+  }
+
+  private int rollFireballPower(Player player, PlayerSkill skill, MagicDefinition magic) {
+    int base = getMagicPower(magic, skill.level(), rollExclusive(magic.power(), magic.maxPower()))
+        + player.ability.minMc();
+    return base + random.nextInt(WorldRandom.Stream.MAGIC,
+        player.ability.maxMc() - player.ability.minMc() + 1);
+  }
+
+  private int rollHealingPower(Player player, PlayerSkill skill, MagicDefinition magic) {
+    int base = getMagicPower(magic, skill.level(), rollExclusive(magic.power(), magic.maxPower()))
+        + player.ability.minSc() * 2;
+    return base + random.nextInt(WorldRandom.Stream.MAGIC,
+        (player.ability.maxSc() - player.ability.minSc()) * 2 + 1);
+  }
+
+  private int rollMagicShieldSeconds(Player player, PlayerSkill skill, MagicDefinition magic) {
+    int mc = random.between(WorldRandom.Stream.MAGIC,
+        player.ability.minMc(), player.ability.maxMc());
+    return getMagicPower(magic, skill.level(), mc + 15);
+  }
+
+  private int getMagicPower(MagicDefinition magic, int skillLevel, int rawPower) {
+    return magic.scalePower(rawPower, skillLevel)
+        + rollExclusive(magic.defPower(), magic.defMaxPower());
+  }
+
+  /** Delphi Random(max-min) excludes max and consumes no draw for a flat range. */
+  private int rollExclusive(int min, int max) {
+    return max <= min ? min : min + random.nextInt(WorldRandom.Stream.MAGIC, max - min);
+  }
+
   private AttackResult attackWith(
       int playerId, Position claimedPosition, Direction direction, AttackKind attack) {
     Player player = requirePlayer(playerId);
@@ -1503,6 +1703,7 @@ public final class WorldEngine implements AutoCloseable {
     // m_nLuck = sum of worn Luck minus UnLuck (RecalcAbilitys, ObjBase.pas:3401); with no gear
     // it is zero and rollDamage draws exactly as before.
     int damage = rollDamage(player.ability, target.ability(), playerLuck(player));
+    damage = applyMagicShield(target, damage);
     applyDamage(target, player, damage);
     // AttackTarget.GetHitStruckDamage only assigns weapon wear when the blow penetrates AC.
     if (damage > 0) damageEquipment(player, EquipmentSlot.WEAPON,
@@ -1692,9 +1893,8 @@ public final class WorldEngine implements AutoCloseable {
   }
 
   /**
-   * {@code TPlayObject.ClientUseItems} (ObjBase.pas:17300) restricted to the drinkable
-   * StdModes 0-3 that {@code EatItems} (ObjBase.pas:23324) implements. Books (StdMode 4) and
-   * the StdMode 31 unpack action belong to slices that do not exist yet.
+   * {@code TPlayObject.ClientUseItems} (ObjBase.pas:17300): drinkable StdModes 0-3 plus
+   * StdMode 4 books through {@code ReadBook}. StdMode 31 unpacking remains deferred.
    */
   private boolean consumeItem(int playerId, int makeIndex, String itemName) {
     Player player = requirePlayer(playerId);
@@ -1709,9 +1909,8 @@ public final class WorldEngine implements AutoCloseable {
     }
     BackpackItem item = player.backpack.get(bagIndex);
     int stdMode = item.item().stdMode();
+    if (stdMode == 4) return readSkillBook(player, bagIndex, item);
     if (stdMode > 3) {
-      // TODO(verify): StdMode 4 (books/skills) and 31 (unpack) need the skill and container
-      // slices; refusing keeps the bag consistent instead of silently eating the item.
       emit(player, new WorldEvent.UseItemRejected(player.id, WorldEvent.UseItemRejection.NOT_CONSUMABLE));
       return false;
     }
@@ -1749,6 +1948,34 @@ public final class WorldEngine implements AutoCloseable {
       emitToObserversAndSelf(player, new WorldEvent.HealthChanged(player.snapshot()));
     }
     // ClientUseItems ends in WeightChanged() because the bag just got lighter.
+    emitWeight(player);
+    return true;
+  }
+
+  /** {@code ReadBook}: learn by exact item/magic name, with job and NeedL1 validation. */
+  private boolean readSkillBook(Player player, int bagIndex, BackpackItem book) {
+    MagicDefinition definition = magicCatalog.find(book.name()).orElse(null);
+    if (definition == null || player.skills.containsKey(definition.id())
+        || (definition.job() != MagicDefinition.ANY_JOB && definition.job() != player.job)
+        || player.ability.level() < definition.requiredLevel(0)) {
+      emit(player, new WorldEvent.UseItemRejected(player.id, WorldEvent.UseItemRejection.NOT_CONSUMABLE));
+      return false;
+    }
+
+    List<BackpackItem> previousBackpack = List.copyOf(player.backpack);
+    player.backpack.remove(bagIndex);
+    PlayerSkill skill = PlayerSkill.learned(definition.id());
+    player.skills.put(skill.magicId(), skill);
+    try {
+      persist(player);
+    } catch (RuntimeException failure) {
+      player.backpack.clear();
+      player.backpack.addAll(previousBackpack);
+      player.skills.remove(skill.magicId());
+      throw failure;
+    }
+    emit(player, new WorldEvent.SkillLearned(player.id, new LearnedMagic(skill, definition)));
+    emit(player, new WorldEvent.ItemUsed(player.id, book, 0, 0));
     emitWeight(player);
     return true;
   }
@@ -1886,6 +2113,12 @@ public final class WorldEngine implements AutoCloseable {
         base.maxDc() + bonus.maxDc(),
         base.minAc() + bonus.minAc(),
         base.maxAc() + bonus.maxAc(),
+        base.minMac() + bonus.minMac(),
+        base.maxMac() + bonus.maxMac(),
+        base.minMc() + bonus.minMc(),
+        base.maxMc() + bonus.maxMc(),
+        base.minSc() + bonus.minSc(),
+        base.maxSc() + bonus.maxSc(),
         base.level(),
         base.experience(),
         base.maxExperience());
@@ -2169,6 +2402,8 @@ public final class WorldEngine implements AutoCloseable {
     player.map.remove(player.id, player.position);
     players.remove(playerId);
     playersByName.remove(player.name);
+    pendingMagicImpacts.removeIf(impact ->
+        impact.casterId() == playerId || impact.targetId() == playerId);
     emit(player, new WorldEvent.MapLeft(playerId));
     WorldEvent disappeared = new WorldEvent.ObjectDisappeared(playerId);
     for (int viewerId : visibleIds) emit(players.get(viewerId), disappeared);
@@ -2233,6 +2468,60 @@ public final class WorldEngine implements AutoCloseable {
   private int randomBetween(int min, int max) {
     if (min >= max) return min;
     return random.between(WorldRandom.Stream.DAMAGE, min, max);
+  }
+
+  /** Magic shield reduces a penetrating blow to (level+2)*8 percent and burns 3 seconds. */
+  private int applyMagicShield(WorldObject victim, int damage) {
+    if (!(victim instanceof Player player) || damage <= 0
+        || player.magicShieldUntil <= clock.getAsLong()) return damage;
+    int reduced = (int) Math.rint(damage / 100.0 * (player.magicShieldLevel + 2) * 8.0);
+    long now = clock.getAsLong();
+    player.magicShieldUntil = Math.max(now + 1_000, player.magicShieldUntil - 3_000);
+    return Math.max(0, reduced);
+  }
+
+  private void resolvePendingMagicImpacts() {
+    long now = clock.getAsLong();
+    for (int index = pendingMagicImpacts.size() - 1; index >= 0; index--) {
+      PendingMagicImpact impact = pendingMagicImpacts.get(index);
+      if (impact.dueAt() > now) continue;
+      pendingMagicImpacts.remove(index);
+      WorldObject caster = findObject(impact.casterId());
+      WorldObject target = findObject(impact.targetId());
+      if (caster == null || target == null || !caster.ability().alive() || !target.ability().alive()
+          || caster.map() != target.map() || chebyshev(target.position(), impact.target()) > 1) continue;
+      if (impact.kind() == MagicImpactKind.DAMAGE) {
+        int defence = random.between(WorldRandom.Stream.MAGIC,
+            target.ability().minMac(), target.ability().maxMac());
+        int damage = applyMagicShield(target, Math.max(0, impact.power() - defence));
+        applyDamage(target, caster, damage);
+      } else {
+        Ability before = target.ability();
+        Ability healed = before.withHp(before.hp() + impact.power());
+        if (healed.equals(before)) continue;
+        target.setAbility(healed);
+        if (target instanceof Player player) {
+          try {
+            persist(player);
+          } catch (RuntimeException failure) {
+            player.setAbility(before);
+            throw failure;
+          }
+        }
+        emitToObserversAndSelf(target, new WorldEvent.HealthChanged(target.snapshot()));
+      }
+    }
+  }
+
+  private void expireSkillBuffs() {
+    long now = clock.getAsLong();
+    for (Player player : players.values()) {
+      if (player.magicShieldUntil != 0 && player.magicShieldUntil <= now) {
+        player.magicShieldUntil = 0;
+        player.magicShieldLevel = 0;
+        emit(player, new WorldEvent.SystemMessage(player.id, "魔法盾效果已消失"));
+      }
+    }
   }
 
   private void applyDamage(WorldObject victim, WorldObject attacker, int damage) {
@@ -3384,7 +3673,7 @@ public final class WorldEngine implements AutoCloseable {
     WorldEvent swing = new WorldEvent.ObjectAttacked(attacker, AttackKind.HIT);
     emitToObserversAndSelf(monster, swing);
     int damage = rollDamage(monster.ability, target.ability);
-    applyDamage(target, monster, damage);
+    applyDamage(target, monster, applyMagicShield(target, damage));
   }
 
   /**
@@ -3484,6 +3773,12 @@ public final class WorldEngine implements AutoCloseable {
         }
       }
     }
+  }
+
+  private List<LearnedMagic> learnedMagics(Player player) {
+    return player.skills.values().stream()
+        .map(skill -> new LearnedMagic(skill, magicCatalog.require(skill.magicId())))
+        .toList();
   }
 
   private void persist(Player player) {
@@ -3679,7 +3974,7 @@ public final class WorldEngine implements AutoCloseable {
     }
     return modified
         ? new PlayerState(state.characterId(), state.ability(), updated, state.equipment(),
-            state.gold())
+            state.gold(), state.pkPoint(), state.bodyLuck(), state.skills())
         : state;
   }
 
@@ -3713,6 +4008,18 @@ public final class WorldEngine implements AutoCloseable {
     scheduler.shutdownNow();
     Pending<?> pending;
     while ((pending = commands.poll()) != null) pending.cancel();
+  }
+
+  private enum MagicImpactKind { DAMAGE, HEAL }
+
+  private record PendingMagicImpact(
+      long dueAt, MagicImpactKind kind, int casterId, int targetId, Position target, int power) {
+    private PendingMagicImpact {
+      Objects.requireNonNull(kind, "kind");
+      Objects.requireNonNull(target, "target");
+      if (casterId <= 0 || targetId <= 0 || power < 0)
+        throw new IllegalArgumentException("invalid pending magic impact");
+    }
   }
 
   private record Pending<T>(Supplier<T> action, CompletableFuture<T> future) {
@@ -3783,6 +4090,8 @@ public final class WorldEngine implements AutoCloseable {
     private final int gender;
     private final int job;
     private Equipment equipment;
+    /** Durable m_MagicList, kept in insertion order like Delphi's TList. */
+    private final Map<Integer, PlayerSkill> skills = new LinkedHashMap<>();
     /** {@code m_Abil}: the naked character, before any worn gear is applied. */
     private Ability baseAbility;
     private EquipmentBonus bonus = EquipmentBonus.none();
@@ -3791,6 +4100,10 @@ public final class WorldEngine implements AutoCloseable {
     /** {@code m_WAbil}: the working ability including equipment. */
     private Ability ability;
     private long lastAttackAt = Long.MIN_VALUE / 4;
+    private long lastSpellAt = Long.MIN_VALUE / 4;
+    /** Transient STATE_BUBBLEDEFENCEUP: deliberately absent from PlayerState (relog clears it). */
+    private long magicShieldUntil;
+    private int magicShieldLevel;
     private long lastSavedAt;
     /** {@code m_dwDeathTick}: 0 while alive, the death timestamp otherwise. */
     private long diedAt;
@@ -3995,6 +4308,12 @@ public final class WorldEngine implements AutoCloseable {
           Math.max(0, working.maxDc() - bonus.maxDc()),
           Math.max(0, working.minAc() - bonus.minAc()),
           Math.max(0, working.maxAc() - bonus.maxAc()),
+          Math.max(0, working.minMac() - bonus.minMac()),
+          Math.max(0, working.maxMac() - bonus.maxMac()),
+          Math.max(0, working.minMc() - bonus.minMc()),
+          Math.max(0, working.maxMc() - bonus.maxMc()),
+          Math.max(0, working.minSc() - bonus.minSc()),
+          Math.max(0, working.maxSc() - bonus.maxSc()),
           working.level(),
           working.experience(),
           working.maxExperience());
@@ -4003,7 +4322,7 @@ public final class WorldEngine implements AutoCloseable {
     private PlayerState state() {
       // Persist the naked ability: worn bonuses are re-derived by RecalcAbilitys on load.
       return new PlayerState(characterId, baseAbility, backpack, equipment, gold, pkPoint,
-          bodyLuck.value());
+          bodyLuck.value(), List.copyOf(skills.values()));
     }
 
     @Override

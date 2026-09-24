@@ -38,7 +38,7 @@ CM	CM_TAKEOFFITEM	1004	yes	gate-game	implemented	GameItemProtocolTest,WorldEquip
 CM	CM_1005	1005	yes	none	protocol-only	-	Grobal2.pas	占位编号
 CM	CM_EAT	1006	yes	gate-game	implemented	GameItemProtocolTest	Grobal2.pas	StdMode 0-3 消耗品；书(4)/解包(31) 拒用——技能切片前置
 CM	CM_BUTCH	1007	yes	none	protocol-only	-	Grobal2.pas	挖肉（Delphi 回 SM_BUTCH）
-CM	CM_MAGICKEYCHANGE	1008	yes	none	protocol-only	-	Grobal2.pas	技能快捷键持久化——技能切片前置
+CM	CM_MAGICKEYCHANGE	1008	yes	gate-game	implemented	GameMagicProtocolTest,WorldMagicTest	Grobal2.pas	技能快捷键持久化——W28 三技能最小切片已接线
 CM	CM_SOFTCLOSE	1009	yes	gate-game	implemented	GameSessionIntegrationTest	Grobal2.pas	退出到选人（2s 后客户端复用同一认证重查角色 quirk）
 CM	CM_CLICKNPC	1010	yes	none	protocol-only	-	Grobal2.pas	点击 NPC 开对话——脚本引擎前置；W21 仅做到 NPC 可见
 CM	CM_MERCHANTDLGSELECT	1011	yes	gate-game	implemented	GameRepairProtocolTest,WorldRepairTest	Grobal2.pas	仅 @repair/@s_repair 标签生效（m_sScriptLable 状态机子集）；其余标签仅记录——见 MERCHANT 区
@@ -92,7 +92,7 @@ CM	CM_RUN	3013	yes	gate-game	implemented	GameProtocolAdapterTest,WorldEngineTest
 CM	CM_HIT	3014	yes	gate-game	implemented	GameCombatProtocolTest,WorldCombatTest	Grobal2.pas	单格近战，共享普攻间隔
 CM	CM_HEAVYHIT	3015	yes	gate-game	implemented	GameCombatProtocolTest,WorldCombatTest	Grobal2.pas	重击走普攻路径
 CM	CM_BIGHIT	3016	yes	gate-game	implemented	GameCombatProtocolTest,WorldCombatTest	Grobal2.pas	攻杀动作码走普攻路径；CM_POWERHIT/LONGHIT/WIDEHIT/FIREHIT 技能砍击未接入（技能切片前置）
-CM	CM_SPELL	3017	yes	none	protocol-only	-	Grobal2.pas	施法——技能系统未实现（W27 P0 技能切片）
+CM	CM_SPELL	3017	yes	gate-game	implemented	GameMagicProtocolTest,WorldMagicTest	Grobal2.pas	施法——W28 三技能最小切片已接线
 CM	CM_POWERHIT	3018	yes	none	protocol-only	-	Grobal2.pas	攻杀剑术砍击——技能切片前置
 CM	CM_LONGHIT	3019	yes	none	protocol-only	-	Grobal2.pas	刺杀剑术砍击——技能切片前置
 CM	CM_WIDEHIT	3024	yes	none	protocol-only	-	Grobal2.pas	半月弯刀砍击——技能切片前置
@@ -120,7 +120,7 @@ SM	SM_RUN	13	yes	gate-game	implemented	GameProtocolAdapterTest,WorldEngineTest	G
 SM	SM_HIT	14	yes	gate-game	implemented	GameProtocolAdapterTest,WorldCombatTest	Grobal2.pas	普攻动作广播
 SM	SM_HEAVYHIT	15	yes	gate-game	implemented	GameCombatProtocolTest,WorldCombatTest	Grobal2.pas	重击动作广播
 SM	SM_BIGHIT	16	yes	gate-game	implemented	GameCombatProtocolTest,WorldCombatTest	Grobal2.pas	攻杀动作广播
-SM	SM_SPELL	17	yes	none	protocol-only	-	Grobal2.pas	施法动作帧——技能切片
+SM	SM_SPELL	17	yes	gate-game	implemented	GameMagicProtocolTest,WorldMagicTest	Grobal2.pas	施法动作帧——W28 三技能最小切片已接线
 SM	SM_POWERHIT	18	yes	none	protocol-only	-	Grobal2.pas	攻杀动作帧——技能切片
 SM	SM_LONGHIT	19	yes	none	protocol-only	-	Grobal2.pas	刺杀动作帧——技能切片
 SM	SM_DIGUP	20	yes	none	protocol-only	-	Grobal2.pas	挖掘动作帧（向上）
@@ -160,8 +160,8 @@ SM	SM_ADDITEM	200	yes	gate-game	needs-client-check	ClientItemCodecTest,GameItemP
 SM	SM_BAGITEMS	201	yes	gate-game	needs-client-check	ClientItemCodecTest,GameItemProtocolTest	Grobal2.pas	同上；空包静默 quirk 已复刻
 SM	SM_DELITEM	202	yes	none	protocol-only	-	Grobal2.pas	单物品删除（批量走 SM_DELITEMS）
 SM	SM_UPDATEITEM	203	yes	none	protocol-only	-	Grobal2.pas	单物品更新
-SM	SM_ADDMAGIC	210	yes	none	protocol-only	-	Grobal2.pas	技能习得下发——技能切片
-SM	SM_SENDMYMAGIC	211	yes	none	protocol-only	-	Grobal2.pas	技能列表同步——技能切片
+SM	SM_ADDMAGIC	210	yes	gate-game	implemented	GameMagicProtocolTest,WorldMagicTest	Grobal2.pas	技能习得下发——W28 三技能最小切片已接线
+SM	SM_SENDMYMAGIC	211	yes	gate-game	implemented	GameMagicProtocolTest,WorldMagicTest	Grobal2.pas	技能列表同步——W28 三技能最小切片已接线
 SM	SM_DELMAGIC	212	yes	none	protocol-only	-	Grobal2.pas	技能遗忘下发——技能切片
 SM	SM_CERTIFICATION_SUCCESS	500	yes	gate-login	implemented	GateTest,LegacyGateHandlerTest	Grobal2.pas	LOGIN 首包应答
 SM	SM_CERTIFICATION_FAIL	501	yes	gate-login	implemented	GateTest,LegacyGateHandlerTest	Grobal2.pas	LOGIN 未识别消息的统一拒绝
@@ -203,8 +203,8 @@ SM	SM_CHANGEMAP	634	yes	gate-game	implemented	WorldDoorAndTeleportTest	Grobal2.p
 SM	SM_EAT_OK	635	yes	gate-game	implemented	GameItemProtocolTest	Grobal2.pas	使用成功（含变质/增益文案路径）
 SM	SM_EAT_FAIL	636	yes	gate-game	implemented	GameItemProtocolTest	Grobal2.pas	使用失败
 SM	SM_BUTCH	637	yes	none	protocol-only	-	Grobal2.pas	挖肉应答
-SM	SM_MAGICFIRE	638	yes	none	protocol-only	-	Grobal2.pas	施法结果广播——技能切片
-SM	SM_MAGICFIRE_FAIL	639	yes	none	protocol-only	-	Grobal2.pas	施法失败——技能切片
+SM	SM_MAGICFIRE	638	yes	gate-game	implemented	GameMagicProtocolTest,WorldMagicTest	Grobal2.pas	施法结果广播——W28 三技能最小切片已接线
+SM	SM_MAGICFIRE_FAIL	639	yes	gate-game	implemented	GameMagicProtocolTest,WorldMagicTest	Grobal2.pas	施法失败——W28 三技能最小切片已接线
 SM	SM_MAGIC_LVEXP	640	yes	none	protocol-only	-	Grobal2.pas	技能熟练度——技能切片
 SM	SM_DURACHANGE	642	yes	gate-game	implemented	WorldRevivalRingTest,WorldRepairTest	Grobal2.pas	耐久变化（含千位桶 quirk）
 SM	SM_MERCHANTSAY	643	yes	none	protocol-only	-	Grobal2.pas	商人说话——脚本引擎前置
@@ -322,12 +322,12 @@ SM	SM_ACTION_MIN	65070	yes	none	protocol-only	-	Grobal2.pas	动作范围哨兵
 SM	SM_ACTION_MAX	65071	yes	none	protocol-only	-	Grobal2.pas	动作范围哨兵
 SM	SM_ACTION2_MIN	65072	yes	none	protocol-only	-	Grobal2.pas	动作范围哨兵
 SM	SM_ACTION2_MAX	65073	yes	none	protocol-only	-	Grobal2.pas	动作范围哨兵
-SKILL	SKILL_FIREBALL:warrior	1	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	火球术；GEEM2 Magic.DB 同名行 job=wizard learnable=no
-SKILL	SKILL_FIREBALL:wizard	1	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	火球术；GEEM2 Magic.DB 同名行 job=wizard learnable=yes
-SKILL	SKILL_FIREBALL:taoist	1	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	火球术；GEEM2 Magic.DB 同名行 job=wizard learnable=no
-SKILL	SKILL_HEALLING:warrior	2	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	治愈术；GEEM2 Magic.DB 同名行 job=taoist learnable=no
-SKILL	SKILL_HEALLING:wizard	2	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	治愈术；GEEM2 Magic.DB 同名行 job=taoist learnable=no
-SKILL	SKILL_HEALLING:taoist	2	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	治愈术；GEEM2 Magic.DB 同名行 job=taoist learnable=yes
+SKILL	SKILL_FIREBALL:warrior	1	n/a	gate-game	implemented	WorldMagicTest	Grobal2.pas:SKILL_*	火球术；GEEM2 Magic.DB 同名行 job=wizard learnable=no；W28 已实现职业门禁与权威效果
+SKILL	SKILL_FIREBALL:wizard	1	n/a	gate-game	implemented	WorldMagicTest	Grobal2.pas:SKILL_*	火球术；GEEM2 Magic.DB 同名行 job=wizard learnable=yes；W28 已实现职业门禁与权威效果
+SKILL	SKILL_FIREBALL:taoist	1	n/a	gate-game	implemented	WorldMagicTest	Grobal2.pas:SKILL_*	火球术；GEEM2 Magic.DB 同名行 job=wizard learnable=no；W28 已实现职业门禁与权威效果
+SKILL	SKILL_HEALLING:warrior	2	n/a	gate-game	implemented	WorldMagicTest	Grobal2.pas:SKILL_*	治愈术；GEEM2 Magic.DB 同名行 job=taoist learnable=no；W28 已实现职业门禁与权威效果
+SKILL	SKILL_HEALLING:wizard	2	n/a	gate-game	implemented	WorldMagicTest	Grobal2.pas:SKILL_*	治愈术；GEEM2 Magic.DB 同名行 job=taoist learnable=no；W28 已实现职业门禁与权威效果
+SKILL	SKILL_HEALLING:taoist	2	n/a	gate-game	implemented	WorldMagicTest	Grobal2.pas:SKILL_*	治愈术；GEEM2 Magic.DB 同名行 job=taoist learnable=yes；W28 已实现职业门禁与权威效果
 SKILL	SKILL_ONESWORD:warrior	3	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	基本剑术；GEEM2 Magic.DB 同名行 job=warrior learnable=yes
 SKILL	SKILL_ONESWORD:wizard	3	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	基本剑术；GEEM2 Magic.DB 同名行 job=warrior learnable=no
 SKILL	SKILL_ONESWORD:taoist	3	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	基本剑术；GEEM2 Magic.DB 同名行 job=warrior learnable=no
@@ -412,9 +412,9 @@ SKILL	SKILL_BIGHEALLING:taoist	29	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	�
 SKILL	SKILL_SINSU:warrior	30	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	召唤神兽；GEEM2 Magic.DB 同名行 job=taoist learnable=no
 SKILL	SKILL_SINSU:wizard	30	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	召唤神兽；GEEM2 Magic.DB 同名行 job=taoist learnable=no
 SKILL	SKILL_SINSU:taoist	30	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	召唤神兽；GEEM2 Magic.DB 同名行 job=taoist learnable=yes
-SKILL	SKILL_SHIELD:warrior	31	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	魔法盾；GEEM2 Magic.DB 同名行 job=wizard learnable=no
-SKILL	SKILL_SHIELD:wizard	31	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	魔法盾；GEEM2 Magic.DB 同名行 job=wizard learnable=yes
-SKILL	SKILL_SHIELD:taoist	31	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	魔法盾；GEEM2 Magic.DB 同名行 job=wizard learnable=no
+SKILL	SKILL_SHIELD:warrior	31	n/a	gate-game	implemented	WorldMagicTest	Grobal2.pas:SKILL_*	魔法盾；GEEM2 Magic.DB 同名行 job=wizard learnable=no；W28 已实现职业门禁与权威效果
+SKILL	SKILL_SHIELD:wizard	31	n/a	gate-game	implemented	WorldMagicTest	Grobal2.pas:SKILL_*	魔法盾；GEEM2 Magic.DB 同名行 job=wizard learnable=yes；W28 已实现职业门禁与权威效果
+SKILL	SKILL_SHIELD:taoist	31	n/a	gate-game	implemented	WorldMagicTest	Grobal2.pas:SKILL_*	魔法盾；GEEM2 Magic.DB 同名行 job=wizard learnable=no；W28 已实现职业门禁与权威效果
 SKILL	SKILL_KILLUNDEAD:warrior	32	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	圣言术；GEEM2 Magic.DB 同名行 job=wizard learnable=no
 SKILL	SKILL_KILLUNDEAD:wizard	32	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	圣言术；GEEM2 Magic.DB 同名行 job=wizard learnable=yes
 SKILL	SKILL_KILLUNDEAD:taoist	32	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	圣言术；GEEM2 Magic.DB 同名行 job=wizard learnable=no

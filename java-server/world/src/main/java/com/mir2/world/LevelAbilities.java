@@ -40,6 +40,12 @@ public final class LevelAbilities {
     int maxDc = maxDc(job, level);
     int minAc = 0;
     int maxAc = maxAc(job, level);
+    int minMac = minMac(job, level);
+    int maxMac = maxMac(job, level);
+    int minMc = minMc(job, level);
+    int maxMc = maxMc(job, level);
+    int minSc = minSc(job, level);
+    int maxSc = maxSc(job, level);
     return new Ability(
         Math.min(current.hp(), maxHp),
         maxHp,
@@ -49,8 +55,15 @@ public final class LevelAbilities {
         maxDc,
         minAc,
         maxAc,
+        minMac,
+        maxMac,
+        minMc,
+        maxMc,
+        minSc,
+        maxSc,
         level,
-        current.experience());
+        current.experience(),
+        LevelExperience.forLevel(level));
   }
 
   /** Delphi {@code _MIN(High(Word), 14 + Round(...))} per job. */
@@ -129,6 +142,36 @@ public final class LevelAbilities {
    */
   public static int maxAc(int job, int level) {
     return job == JOB_WARRIOR ? level / 7 : 0;
+  }
+
+  /** Taoists alone gain natural MAC: {@code n=Round(Level/6); MakeLong(n div 2,n+1)}. */
+  public static int minMac(int job, int level) {
+    if (job != JOB_TAOIST) return 0;
+    int n = (int) rint(level / 6.0);
+    return n / 2;
+  }
+
+  public static int maxMac(int job, int level) {
+    if (job != JOB_TAOIST) return 0;
+    return (int) rint(level / 6.0) + 1;
+  }
+
+  /** Wizards mirror the non-warrior DC curve into MC; other jobs have no natural MC. */
+  public static int minMc(int job, int level) {
+    return job == JOB_WIZARD ? Math.max(level / 7 - 1, 0) : 0;
+  }
+
+  public static int maxMc(int job, int level) {
+    return job == JOB_WIZARD ? Math.max(1, level / 7) : 0;
+  }
+
+  /** Taoists mirror the non-warrior DC curve into SC; other jobs have no natural SC. */
+  public static int minSc(int job, int level) {
+    return job == JOB_TAOIST ? Math.max(level / 7 - 1, 0) : 0;
+  }
+
+  public static int maxSc(int job, int level) {
+    return job == JOB_TAOIST ? Math.max(1, level / 7) : 0;
   }
 
   /** Delphi {@code Round} is round-half-to-even, which is what {@link Math#rint} does. */
