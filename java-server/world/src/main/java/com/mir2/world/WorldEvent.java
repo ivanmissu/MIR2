@@ -56,7 +56,16 @@ public sealed interface WorldEvent
         WorldEvent.MerchantRepairDialog,
         WorldEvent.RepairCostResolved,
         WorldEvent.ItemRepaired,
-        WorldEvent.RepairRejected {
+        WorldEvent.RepairRejected,
+        WorldEvent.GroupModeChanged,
+        WorldEvent.GroupCreated,
+        WorldEvent.GroupCreateFailed,
+        WorldEvent.GroupMemberAdded,
+        WorldEvent.GroupAddMemberFailed,
+        WorldEvent.GroupMemberDeleted,
+        WorldEvent.GroupDelMemberFailed,
+        WorldEvent.GroupMembersChanged,
+        WorldEvent.GroupCancelled {
 
   record MapEntered(
       WorldObjectSnapshot player,
@@ -585,6 +594,71 @@ public sealed interface WorldEvent
         throw new IllegalArgumentException("durability must be an unsigned word");
       }
       if (broken != (dura == 0)) throw new IllegalArgumentException("broken must match zero durability");
+    }
+  }
+
+  /** {@code CM_GROUPMODE} response -> {@code SM_GROUPMODECHANGED} (ObjBase.pas:4781). */
+  record GroupModeChanged(int playerId, boolean allowGroup) implements WorldEvent {
+    public GroupModeChanged {
+      if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
+    }
+  }
+
+  /** {@code CM_CREATEGROUP} OK -> {@code SM_CREATEGROUP_OK} (ObjBase.pas:17573). */
+  record GroupCreated(int playerId) implements WorldEvent {
+    public GroupCreated {
+      if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
+    }
+  }
+
+  /** {@code CM_CREATEGROUP} FAIL -> {@code SM_CREATEGROUP_FAIL} (ObjBase.pas:17549). */
+  record GroupCreateFailed(int playerId, int reason) implements WorldEvent {
+    public GroupCreateFailed {
+      if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
+    }
+  }
+
+  /** {@code CM_ADDGROUPMEMBER} OK -> {@code SM_GROUPADDMEM_OK} (ObjBase.pas:17614). */
+  record GroupMemberAdded(int playerId) implements WorldEvent {
+    public GroupMemberAdded {
+      if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
+    }
+  }
+
+  /** {@code CM_ADDGROUPMEMBER} FAIL -> {@code SM_GROUPADDMEM_FAIL} (ObjBase.pas:17588). */
+  record GroupAddMemberFailed(int playerId, int reason) implements WorldEvent {
+    public GroupAddMemberFailed {
+      if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
+    }
+  }
+
+  /** {@code CM_DELGROUPMEMBER} OK -> {@code SM_GROUPDELMEM_OK} (ObjBase.pas:17641). */
+  record GroupMemberDeleted(int playerId, String memberName) implements WorldEvent {
+    public GroupMemberDeleted {
+      if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
+      Objects.requireNonNull(memberName, "memberName");
+    }
+  }
+
+  /** {@code CM_DELGROUPMEMBER} FAIL -> {@code SM_GROUPDELMEM_FAIL} (ObjBase.pas:17627). */
+  record GroupDelMemberFailed(int playerId, int reason) implements WorldEvent {
+    public GroupDelMemberFailed {
+      if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
+    }
+  }
+
+  /** {@code SM_GROUPMEMBERS} (ObjBase.pas:21677) member list formatted as {@code name1/name2/.../}. */
+  record GroupMembersChanged(int playerId, List<String> members) implements WorldEvent {
+    public GroupMembersChanged {
+      if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
+      members = List.copyOf(members);
+    }
+  }
+
+  /** {@code SM_GROUPCANCEL} (ObjBase.pas:18963 / 21643) group disbanded or player left. */
+  record GroupCancelled(int playerId) implements WorldEvent {
+    public GroupCancelled {
+      if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
     }
   }
 

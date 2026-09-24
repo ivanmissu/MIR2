@@ -108,6 +108,18 @@ public final class GameProtocolAdapter implements WorldEventSink {
         case ProtocolConstants.CM_USERREPAIRITEM -> reportExceptionalFailure(
             world.repairItem(boundPlayer, unpackMakeIndex(message),
                 WireMessageCodec.decodeBody(packet.encodedBody())));
+        // CM_GROUPMODE (ObjBase.pas:4777): param!=0 enables allowGroup, param==0 disallows.
+        case ProtocolConstants.CM_GROUPMODE -> reportExceptionalFailure(
+            world.setAllowGroup(boundPlayer, message.param() != 0));
+        // CM_CREATEGROUP (ObjBase.pas:4784): body=target player name.
+        case ProtocolConstants.CM_CREATEGROUP -> reportExceptionalFailure(
+            world.createGroup(boundPlayer, WireMessageCodec.decodeBody(packet.encodedBody())));
+        // CM_ADDGROUPMEMBER (ObjBase.pas:4788): body=target player name.
+        case ProtocolConstants.CM_ADDGROUPMEMBER -> reportExceptionalFailure(
+            world.addGroupMember(boundPlayer, WireMessageCodec.decodeBody(packet.encodedBody())));
+        // CM_DELGROUPMEMBER (ObjBase.pas:4792): body=target player name.
+        case ProtocolConstants.CM_DELGROUPMEMBER -> reportExceptionalFailure(
+            world.delGroupMember(boundPlayer, WireMessageCodec.decodeBody(packet.encodedBody())));
         // Chat from client: Delphi sends no +GOOD/+FAIL acknowledgement for CM_SAY.
         case ProtocolConstants.CM_SAY -> {
           String text = WireMessageCodec.decodeBody(packet.encodedBody());
@@ -216,8 +228,73 @@ public final class GameProtocolAdapter implements WorldEventSink {
       case WorldEvent.ItemUnequipped unequipped -> sendTakeOffOk(unequipped);
       case WorldEvent.UnequipRejected rejected -> {
         if (rejected.playerId() == playerId) {
+          if (rejected.detail() == WorldEvent.UnequipRejection.CANNOT_TAKE_OFF) {
+            output.accept(new GameOutbound.Packet(
+                packet(ProtocolConstants.SM_SYSMESSAGE, 0, 0xFF, 0, 1,
+                    WireMessageCodec.encodeBody("无法取下物品"))));
+          }
           output.accept(new GameOutbound.Packet(
               packet(ProtocolConstants.SM_TAKEOFF_FAIL, rejected.reason(), 0, 0, 0, "")));
+        }
+      }
+      case WorldEvent.GroupModeChanged changed -> {
+        if (changed.playerId() == playerId) {
+          output.accept(new GameOutbound.Packet(
+              packet(ProtocolConstants.SM_GROUPMODECHANGED, 0, changed.allowGroup() ? 1 : 0, 0, 0, "")));
+        }
+      }
+      case WorldEvent.GroupCreated created -> {
+        if (created.playerId() == playerId) {
+          output.accept(new GameOutbound.Packet(
+              packet(ProtocolConstants.SM_CREATEGROUP_OK, 0, 0, 0, 0, "")));
+        }
+      }
+      case WorldEvent.GroupCreateFailed failed -> {
+        if (failed.playerId() == playerId) {
+          output.accept(new GameOutbound.Packet(
+              packet(ProtocolConstants.SM_CREATEGROUP_FAIL, failed.reason(), 0, 0, 0, "")));
+        }
+      }
+      case WorldEvent.GroupMemberAdded added -> {
+        if (added.playerId() == playerId) {
+          output.accept(new GameOutbound.Packet(
+              packet(ProtocolConstants.SM_GROUPADDMEM_OK, 0, 0, 0, 0, "")));
+        }
+      }
+      case WorldEvent.GroupAddMemberFailed failed -> {
+        if (failed.playerId() == playerId) {
+          output.accept(new GameOutbound.Packet(
+              packet(ProtocolConstants.SM_GROUPADDMEM_FAIL, failed.reason(), 0, 0, 0, "")));
+        }
+      }
+      case WorldEvent.GroupMemberDeleted deleted -> {
+        if (deleted.playerId() == playerId) {
+          output.accept(new GameOutbound.Packet(
+              packet(ProtocolConstants.SM_GROUPDELMEM_OK, 0, 0, 0, 0,
+                  WireMessageCodec.encodeBody(deleted.memberName()))));
+        }
+      }
+      case WorldEvent.GroupDelMemberFailed failed -> {
+        if (failed.playerId() == playerId) {
+          output.accept(new GameOutbound.Packet(
+              packet(ProtocolConstants.SM_GROUPDELMEM_FAIL, failed.reason(), 0, 0, 0, "")));
+        }
+      }
+      case WorldEvent.GroupMembersChanged changed -> {
+        if (changed.playerId() == playerId) {
+          StringBuilder sb = new StringBuilder();
+          for (String m : changed.members()) {
+            sb.append(m).append('/');
+          }
+          output.accept(new GameOutbound.Packet(
+              packet(ProtocolConstants.SM_GROUPMEMBERS, 0, 0, 0, 0,
+                  WireMessageCodec.encodeBody(sb.toString()))));
+        }
+      }
+      case WorldEvent.GroupCancelled cancelled -> {
+        if (cancelled.playerId() == playerId) {
+          output.accept(new GameOutbound.Packet(
+              packet(ProtocolConstants.SM_GROUPCANCEL, 0, 0, 0, 0, "")));
         }
       }
       case WorldEvent.ItemUsed used -> {
@@ -330,6 +407,10 @@ public final class GameProtocolAdapter implements WorldEventSink {
         || ident == ProtocolConstants.CM_MERCHANTDLGSELECT
         || ident == ProtocolConstants.CM_MERCHANTQUERYREPAIRCOST
         || ident == ProtocolConstants.CM_USERREPAIRITEM
+        || ident == ProtocolConstants.CM_GROUPMODE
+        || ident == ProtocolConstants.CM_CREATEGROUP
+        || ident == ProtocolConstants.CM_ADDGROUPMEMBER
+        || ident == ProtocolConstants.CM_DELGROUPMEMBER
         || ident == ProtocolConstants.CM_SOFTCLOSE;
   }
 
