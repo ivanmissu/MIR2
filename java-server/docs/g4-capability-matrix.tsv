@@ -1,0 +1,559 @@
+# G4 能力缺口矩阵（W27 P0 · 本文件为唯一权威版本，G4CapabilityMatrixTest 机械校验）
+#
+# 生成口径（auditable，全部由本仓源码机械导出）：
+#   CM/SM 行：GameOfMir/Common/Grobal2.pas 常量全集；wire=gate-game ⇔ 该数值在
+#             GameProtocolAdapter.isSupported（CM）/适配器出站引用（SM）中，
+#             wire=gate-login ⇔ LegacyGateHandler 实际分发/出站；code 必须与 Delphi 同值。
+#   SKILL 行：Grobal2.pas SKILL_* 常量 1..59 × {warrior,wizard,taoist}。
+#             job 归属仅在 GEEM2 Magic.DB 存在 (MagID,名称) 双匹配时采纳（cjlaaa/Mir2-GeeM2
+#             @9981a8d7，引擎重编号段一律不映射）。
+#   MERCHANT/GUILD/SIEGE 标签行：M2Share.pas 1032..1079 特殊标签块（sSL_SENDMSG..sHIREGUARDOK）。
+#   DEAL/GUILD 其余行：能力级分组，code 引用对应 CM 码（交叉引用由测试校验）。
+#
+# 状态枚举（plan 五态）：
+#   implemented         线上行为已复刻且有自动化证据（evidence 列必填）
+#   needs-client-check  已复刻且有本地证据，但字节级 golden/真实客户端对拍仍挂账（evidence 必填）
+#   protocol-only       仅协议占位：Java 有常量、线上无处理/无出站
+#   logic-only          仅服务端逻辑：无 Java 常量但线上已处理（预留，当前 0 行）
+#   unimplemented       无常量无处理
+#
+# 列：section / key / code / java_constant / wire / status / evidence / delphi_ref / notes
+# evidence 逗号分隔，必须是仓库内真实存在的 *Test 类名或既有文档路径（测试校验）。
+section	key	code	java_constant	wire	status	evidence	delphi_ref	notes
+CM	CM_POWERBLOCK	0	yes	none	protocol-only	-	Grobal2.pas	0 号占位；Delphi 仅常量
+CM	CM_42HIT	42	yes	none	protocol-only	-	Grobal2.pas	占位编号，泄露源无处理分支
+CM	CM_QUERYUSERNAME	80	yes	gate-game	implemented	GameProtocolAdapterTest	Grobal2.pas	3×3 内 SM_USERNAME，否则 SM_GHOST
+CM	CM_QUERYBAGITEMS	81	yes	gate-game	implemented	GameItemProtocolTest,ClientItemCodecTest	Grobal2.pas	SM_BAGITEMS 全量背包；空包静默 quirk
+CM	CM_QUERYUSERSTATE	82	yes	none	protocol-only	-	Grobal2.pas	查询玩家详情（Delphi 回 SM_SENDUSERSTATE 详情窗）
+CM	CM_QUERYCHR	100	yes	gate-login	implemented	LegacyGateHandlerTest,CharacterServiceTest	Grobal2.pas	角色列表（≤2）
+CM	CM_NEWCHR	101	yes	gate-login	implemented	LegacyGateHandlerTest,CharacterServiceTest	Grobal2.pas	建号
+CM	CM_DELCHR	102	yes	gate-login	implemented	LegacyGateHandlerTest,CharacterServiceTest	Grobal2.pas	删号；失败应答当前复用 SM_NEWCHR_FAIL（Delphi 有独立 SM_DELCHR_FAIL）
+CM	CM_SELCHR	103	yes	gate-login	implemented	LegacyGateHandlerTest,GateAdmissionIntegrationTest	Grobal2.pas	选人 → SM_STARTPLAY 派发 GAME 端口
+CM	CM_SELECTSERVER	104	yes	gate-login	implemented	LegacyGateHandlerTest,GateAdmissionIntegrationTest	Grobal2.pas	选服 → SM_SELECTSERVER_OK 派发 SELECT 端口+认证码
+CM	CM_DROPITEM	1000	yes	gate-game	implemented	GameItemProtocolTest	Grobal2.pas	安全区与 boNOTHROWITEM 门禁；名称截断 quirk
+CM	CM_PICKUP	1001	yes	gate-game	implemented	GameItemProtocolTest,WorldGoldDropTest	Grobal2.pas	捡拾；金币堆直接入钱包
+CM	CM_OPENDOOR	1002	yes	gate-game	implemented	GameProtocolAdapterTest,WorldDoorAndTeleportTest	Grobal2.pas	静默开门，SM_OPENDOOR_OK ±12 广播
+CM	CM_TAKEONITEM	1003	yes	gate-game	implemented	GameItemProtocolTest,WorldEquipmentTest	Grobal2.pas	穿戴：性别/负重/Need 门槛 + 槽位对调 + 外观联动
+CM	CM_TAKEOFFITEM	1004	yes	gate-game	implemented	GameItemProtocolTest,WorldEquipmentTest,WorldDisableTakeOffTest	Grobal2.pas	脱下：n10/-1..-4 + 成功尾随 SM_TAKEOFF_FAIL(0) quirk；Reserved 锁与 DisableTakeOffList
+CM	CM_1005	1005	yes	none	protocol-only	-	Grobal2.pas	占位编号
+CM	CM_EAT	1006	yes	gate-game	implemented	GameItemProtocolTest	Grobal2.pas	StdMode 0-3 消耗品；书(4)/解包(31) 拒用——技能切片前置
+CM	CM_BUTCH	1007	yes	none	protocol-only	-	Grobal2.pas	挖肉（Delphi 回 SM_BUTCH）
+CM	CM_MAGICKEYCHANGE	1008	yes	none	protocol-only	-	Grobal2.pas	技能快捷键持久化——技能切片前置
+CM	CM_SOFTCLOSE	1009	yes	gate-game	implemented	GameSessionIntegrationTest	Grobal2.pas	退出到选人（2s 后客户端复用同一认证重查角色 quirk）
+CM	CM_CLICKNPC	1010	yes	none	protocol-only	-	Grobal2.pas	点击 NPC 开对话——脚本引擎前置；W21 仅做到 NPC 可见
+CM	CM_MERCHANTDLGSELECT	1011	yes	gate-game	implemented	GameRepairProtocolTest,WorldRepairTest	Grobal2.pas	仅 @repair/@s_repair 标签生效（m_sScriptLable 状态机子集）；其余标签仅记录——见 MERCHANT 区
+CM	CM_MERCHANTQUERYSELLPRICE	1012	yes	none	protocol-only	-	Grobal2.pas	出售询价——买卖待库存/金币事务测试（W27 P1）
+CM	CM_USERSELLITEM	1013	yes	none	protocol-only	-	Grobal2.pas	出售物品——同上
+CM	CM_USERBUYITEM	1014	yes	none	protocol-only	-	Grobal2.pas	购买物品——同上
+CM	CM_USERGETDETAILITEM	1015	yes	none	protocol-only	-	Grobal2.pas	详细货品查询——同上
+CM	CM_DROPGOLD	1016	yes	none	protocol-only	-	Grobal2.pas	丢弃金币
+CM	CM_1017	1017	yes	none	protocol-only	-	Grobal2.pas	占位编号
+CM	CM_LOGINNOTICEOK	1018	yes	none	protocol-only	-	Grobal2.pas	登录公告确认（SM_SENDNOTICE 配套）
+CM	CM_GROUPMODE	1019	yes	gate-game	implemented	GameGroupProtocolTest,WorldGroupTest	Grobal2.pas	允许组队开关
+CM	CM_CREATEGROUP	1020	yes	gate-game	implemented	GameGroupProtocolTest,WorldGroupTest	Grobal2.pas	建组
+CM	CM_ADDGROUPMEMBER	1021	yes	gate-game	implemented	GameGroupProtocolTest,WorldGroupTest	Grobal2.pas	拉人入组
+CM	CM_DELGROUPMEMBER	1022	yes	gate-game	implemented	GameGroupProtocolTest,WorldGroupTest	Grobal2.pas	踢出组员
+CM	CM_USERREPAIRITEM	1023	yes	gate-game	implemented	GameRepairProtocolTest,WorldRepairTest	Grobal2.pas	普通/特修两套计价 quirk 均已复刻
+CM	CM_MERCHANTQUERYREPAIRCOST	1024	yes	gate-game	implemented	GameRepairProtocolTest,WorldRepairTest	Grobal2.pas	修理报价；无此物品静默 Exit quirk
+CM	CM_DEALTRY	1025	yes	none	protocol-only	-	Grobal2.pas	交易发起——交易红线内，见 DEAL 区
+CM	CM_DEALADDITEM	1026	yes	none	protocol-only	-	Grobal2.pas	交易放物——见 DEAL 区
+CM	CM_DEALDELITEM	1027	yes	none	protocol-only	-	Grobal2.pas	交易取回——见 DEAL 区
+CM	CM_DEALCANCEL	1028	yes	none	protocol-only	-	Grobal2.pas	交易取消——见 DEAL 区
+CM	CM_DEALCHGGOLD	1029	yes	none	protocol-only	-	Grobal2.pas	交易改金币——见 DEAL 区
+CM	CM_DEALEND	1030	yes	none	protocol-only	-	Grobal2.pas	交易确认——见 DEAL 区
+CM	CM_USERSTORAGEITEM	1031	yes	none	protocol-only	-	Grobal2.pas	存入仓库——@storage 前置
+CM	CM_USERTAKEBACKSTORAGEITEM	1032	yes	none	protocol-only	-	Grobal2.pas	取回仓库物品
+CM	CM_WANTMINIMAP	1033	yes	none	protocol-only	-	Grobal2.pas	小地图请求
+CM	CM_USERMAKEDRUGITEM	1034	yes	none	protocol-only	-	Grobal2.pas	制药——@makedrug 前置
+CM	CM_OPENGUILDDLG	1035	yes	none	protocol-only	-	Grobal2.pas	行会窗口——行会红线内，见 GUILD 区
+CM	CM_GUILDHOME	1036	yes	none	protocol-only	-	Grobal2.pas	行会主页——见 GUILD 区
+CM	CM_GUILDMEMBERLIST	1037	yes	none	protocol-only	-	Grobal2.pas	行会成员列表——见 GUILD 区
+CM	CM_GUILDADDMEMBER	1038	yes	none	protocol-only	-	Grobal2.pas	行会拉人——见 GUILD 区
+CM	CM_GUILDDELMEMBER	1039	yes	none	protocol-only	-	Grobal2.pas	行会踢人——见 GUILD 区
+CM	CM_GUILDUPDATENOTICE	1040	yes	none	protocol-only	-	Grobal2.pas	行会公告——见 GUILD 区
+CM	CM_GUILDUPDATERANKINFO	1041	yes	none	protocol-only	-	Grobal2.pas	行会封号/排位——见 GUILD 区
+CM	CM_1042	1042	yes	none	protocol-only	-	Grobal2.pas	占位编号
+CM	CM_ADJUST_BONUS	1043	yes	none	protocol-only	-	Grobal2.pas	升级加点
+CM	CM_GUILDALLY	1044	yes	none	protocol-only	-	Grobal2.pas	行会结盟——见 GUILD 区
+CM	CM_GUILDBREAKALLY	1045	yes	none	protocol-only	-	Grobal2.pas	行会解盟——见 GUILD 区
+CM	CM_PROTOCOL	2000	yes	gate-login	implemented	GateTest,LegacyGateHandlerTest	Grobal2.pas	LOGIN 首包 → SM_CERTIFICATION_SUCCESS
+CM	CM_IDPASSWORD	2001	yes	gate-login	implemented	LegacyGateHandlerTest,GateAdmissionIntegrationTest	Grobal2.pas	账密登录 → SM_PASSOK_SELECTSERVER
+CM	CM_PASSWORD	2001	yes	gate-login	implemented	LegacyGateHandlerTest	Grobal2.pas	alias → CM_IDPASSWORD（同值 2001，同码处理）；按账密登录处理
+CM	CM_ADDNEWUSER	2002	yes	none	protocol-only	-	Grobal2.pas	注册账号——LoginSrv 族；本服务 LOGIN 口回 SM_CERTIFICATION_FAIL
+CM	CM_CHGPASSWORD	2002	yes	none	protocol-only	-	Grobal2.pas	改密；与 CM_ADDNEWUSER 同值 2002——LoginSrv 族不处理
+CM	CM_CHANGEPASSWORD	2003	yes	none	protocol-only	-	Grobal2.pas	改密——LoginSrv 族
+CM	CM_SETPASSWORD	2004	yes	none	protocol-only	-	Grobal2.pas	密码设置；与 CM_UPDATEUSER 同值 2004——LoginSrv 族不处理
+CM	CM_UPDATEUSER	2004	yes	none	protocol-only	-	Grobal2.pas	账号更新——LoginSrv 族
+CM	CM_THROW	3005	yes	none	protocol-only	-	Grobal2.pas	投掷（飞斧类技能动作）
+CM	CM_TURN	3010	yes	gate-game	implemented	GameProtocolAdapterTest,WorldEngineTest	Grobal2.pas	八向转身；+GOOD/+FAIL 状态帧应答
+CM	CM_WALK	3011	yes	gate-game	implemented	GameProtocolAdapterTest,WorldEngineTest,WorldDoorAndTeleportTest	Grobal2.pas	行走校验；落格联动门/传送路线
+CM	CM_SITDOWN	3012	yes	none	protocol-only	-	Grobal2.pas	坐下/挖掘动作
+CM	CM_RUN	3013	yes	gate-game	implemented	GameProtocolAdapterTest,WorldEngineTest	Grobal2.pas	跑步（单步两格）
+CM	CM_HIT	3014	yes	gate-game	implemented	GameCombatProtocolTest,WorldCombatTest	Grobal2.pas	单格近战，共享普攻间隔
+CM	CM_HEAVYHIT	3015	yes	gate-game	implemented	GameCombatProtocolTest,WorldCombatTest	Grobal2.pas	重击走普攻路径
+CM	CM_BIGHIT	3016	yes	gate-game	implemented	GameCombatProtocolTest,WorldCombatTest	Grobal2.pas	攻杀动作码走普攻路径；CM_POWERHIT/LONGHIT/WIDEHIT/FIREHIT 技能砍击未接入（技能切片前置）
+CM	CM_SPELL	3017	yes	none	protocol-only	-	Grobal2.pas	施法——技能系统未实现（W27 P0 技能切片）
+CM	CM_POWERHIT	3018	yes	none	protocol-only	-	Grobal2.pas	攻杀剑术砍击——技能切片前置
+CM	CM_LONGHIT	3019	yes	none	protocol-only	-	Grobal2.pas	刺杀剑术砍击——技能切片前置
+CM	CM_WIDEHIT	3024	yes	none	protocol-only	-	Grobal2.pas	半月弯刀砍击——技能切片前置
+CM	CM_FIREHIT	3025	yes	none	protocol-only	-	Grobal2.pas	烈火剑法砍击——技能切片前置
+CM	CM_SAY	3030	yes	gate-game	implemented	WorldChatAndDayCycleTest,GameProtocolAdapterTest	Grobal2.pas	本地聊天/私聊/喊话/系统命令分发
+CM	CM_HORSERUN	3035	yes	none	protocol-only	-	Grobal2.pas	骑马（泄露源注释即标未知消息码）
+CM	CM_CRSHIT	3036	yes	none	protocol-only	-	Grobal2.pas	未知消息码
+CM	CM_3037	3037	yes	none	protocol-only	-	Grobal2.pas	占位编号
+CM	CM_TWINHIT	3038	yes	none	protocol-only	-	Grobal2.pas	狂风斩技能码（SKILL_TWINBLADE）
+CM	CM_QUERYUSERSET	3040	yes	none	protocol-only	-	Grobal2.pas	客户端设置查询
+CM	CM_GETGAMELIST	5001	yes	none	protocol-only	-	Grobal2.pas	游戏列表——LoginSrv/私服族
+CM	CM_GETBACKPASSWORD	5003	yes	none	protocol-only	-	Grobal2.pas	找回密码——LoginSrv 族
+CM	CM_SPEEDHACKUSER	10430	yes	none	protocol-only	-	Grobal2.pas	加速举报（反外挂）
+CM	CM_SERVERREGINFO	65074	yes	none	protocol-only	-	Grobal2.pas	服务器注册信息——私服族
+SM	SM_41	4	yes	none	protocol-only	-	Grobal2.pas	占位编号
+SM	SM_THROW	5	yes	none	protocol-only	-	Grobal2.pas	投掷动作帧（技能）
+SM	SM_RUSH	6	yes	none	protocol-only	-	Grobal2.pas	野蛮冲撞动作帧——SKILL_MOOTEBO 技能切片
+SM	SM_RUSHKUNG	7	yes	none	protocol-only	-	Grobal2.pas	冲撞延续动作帧
+SM	SM_FIREHIT	8	yes	none	protocol-only	-	Grobal2.pas	烈火动作帧——技能切片
+SM	SM_BACKSTEP	9	yes	none	protocol-only	-	Grobal2.pas	移动失败动作帧（泄露源服务端未见发送）
+SM	SM_TURN	10	yes	gate-game	implemented	GameProtocolAdapterTest,WorldEngineTest	Grobal2.pas	转身广播
+SM	SM_WALK	11	yes	gate-game	implemented	GameProtocolAdapterTest,WorldEngineTest	Grobal2.pas	行走广播
+SM	SM_SITDOWN	12	yes	none	protocol-only	-	Grobal2.pas	坐下动作帧
+SM	SM_RUN	13	yes	gate-game	implemented	GameProtocolAdapterTest,WorldEngineTest	Grobal2.pas	跑步广播
+SM	SM_HIT	14	yes	gate-game	implemented	GameProtocolAdapterTest,WorldCombatTest	Grobal2.pas	普攻动作广播
+SM	SM_HEAVYHIT	15	yes	gate-game	implemented	GameCombatProtocolTest,WorldCombatTest	Grobal2.pas	重击动作广播
+SM	SM_BIGHIT	16	yes	gate-game	implemented	GameCombatProtocolTest,WorldCombatTest	Grobal2.pas	攻杀动作广播
+SM	SM_SPELL	17	yes	none	protocol-only	-	Grobal2.pas	施法动作帧——技能切片
+SM	SM_POWERHIT	18	yes	none	protocol-only	-	Grobal2.pas	攻杀动作帧——技能切片
+SM	SM_LONGHIT	19	yes	none	protocol-only	-	Grobal2.pas	刺杀动作帧——技能切片
+SM	SM_DIGUP	20	yes	none	protocol-only	-	Grobal2.pas	挖掘动作帧（向上）
+SM	SM_DIGDOWN	21	yes	none	protocol-only	-	Grobal2.pas	挖掘动作帧（向下）
+SM	SM_FLYAXE	22	yes	none	protocol-only	-	Grobal2.pas	掷斧动作帧
+SM	SM_LIGHTING	23	yes	none	protocol-only	-	Grobal2.pas	亮灯/天亮动作帧
+SM	SM_WIDEHIT	24	yes	none	protocol-only	-	Grobal2.pas	半月动作帧——技能切片
+SM	SM_CRSHIT	25	yes	none	protocol-only	-	Grobal2.pas	未知动作帧
+SM	SM_TWINHIT	26	yes	none	protocol-only	-	Grobal2.pas	狂风斩动作帧
+SM	SM_ALIVE	27	yes	gate-game	implemented	GameLevelAndRevivalProtocolTest,WorldLevelAndDeathTest	Grobal2.pas	复活；param/tag 传格位而非 HP（Delphi 源语义，客户端注释与实际用法分歧按源复刻）
+SM	SM_MOVEFAIL	28	yes	none	protocol-only	-	Grobal2.pas	移动失败帧（Java 以 +FAIL 应答，与 Delphi 常规路径一致）
+SM	SM_HIDE	29	yes	none	protocol-only	-	Grobal2.pas	隐身动作帧——隐身术技能切片
+SM	SM_DISAPPEAR	30	yes	gate-game	implemented	GameProtocolAdapterTest	Grobal2.pas	对象离场
+SM	SM_STRUCK	31	yes	gate-game	implemented	GameProtocolAdapterTest,WorldCombatTest	Grobal2.pas	受击（含伤害值）
+SM	SM_DEATH	32	yes	gate-game	implemented	GameProtocolAdapterTest,WorldLevelAndDeathTest	Grobal2.pas	死亡广播
+SM	SM_SKELETON	33	yes	none	protocol-only	-	Grobal2.pas	尸骨帧
+SM	SM_NOWDEATH	34	yes	none	protocol-only	-	Grobal2.pas	即死帧
+SM	SM_HEAR	40	yes	gate-game	implemented	WorldChatAndDayCycleTest,GameProtocolAdapterTest	Grobal2.pas	本地聊天/喊话
+SM	SM_FEATURECHANGED	41	yes	gate-game	implemented	GameProtocolAdapterTest,WorldEquipmentTest	Grobal2.pas	外观变化
+SM	SM_USERNAME	42	yes	gate-game	implemented	GameProtocolAdapterTest	Grobal2.pas	查询姓名应答
+SM	SM_43	43	yes	none	protocol-only	-	Grobal2.pas	占位编号
+SM	SM_WINEXP	44	yes	gate-game	implemented	WorldCombatTest,WorldGroupExpTest	Grobal2.pas	经验获取（含组队分摊）
+SM	SM_LEVELUP	45	yes	gate-game	implemented	GameLevelAndRevivalProtocolTest,WorldLevelAndDeathTest	Grobal2.pas	升级；随后跟 SM_ABILITY
+SM	SM_DAYCHANGING	46	yes	gate-game	implemented	WorldChatAndDayCycleTest	Grobal2.pas	昼夜切换
+SM	SM_LOGON	50	yes	gate-game	implemented	GameProtocolAdapterTest,GameSessionIntegrationTest	Grobal2.pas	进图注册，TMessageBodyWL 体
+SM	SM_NEWMAP	51	yes	gate-game	implemented	GameProtocolAdapterTest,WorldDoorAndTeleportTest	Grobal2.pas	新图通知
+SM	SM_ABILITY	52	yes	gate-game	implemented	GameProtocolAdapterTest,WorldLevelAndDeathTest	Grobal2.pas	50B TAbility；头 recog=金币，param=MakeWord(job,99)
+SM	SM_HEALTHSPELLCHANGED	53	yes	gate-game	implemented	GameProtocolAdapterTest,WorldCombatTest	Grobal2.pas	HP/MP 变化
+SM	SM_MAPDESCRIPTION	54	yes	gate-game	implemented	WorldDoorAndTeleportTest	Grobal2.pas	地图描述
+SM	SM_SYSMESSAGE	100	yes	gate-game	implemented	GameProtocolAdapterTest,WorldRepairTest	Grobal2.pas	系统提示
+SM	SM_GROUPMESSAGE	101	yes	none	protocol-only	-	Grobal2.pas	组队频道聊天（组队管理已实现，频道未通）
+SM	SM_CRY	102	yes	none	protocol-only	-	Grobal2.pas	挖掘/哭动作帧
+SM	SM_WHISPER	103	yes	gate-game	implemented	WorldChatAndDayCycleTest,GameProtocolAdapterTest	Grobal2.pas	私聊
+SM	SM_GUILDMESSAGE	104	yes	none	protocol-only	-	Grobal2.pas	行会聊天——见 GUILD 区
+SM	SM_SPELL2	117	yes	none	protocol-only	-	Grobal2.pas	施法扩展帧——技能切片
+SM	SM_ADDITEM	200	yes	gate-game	needs-client-check	ClientItemCodecTest,GameItemProtocolTest	Grobal2.pas	76B TClientItem 体逐位单测已过；Delphi 字节级 golden 需真实客户端对拍（translation-map 挂账）
+SM	SM_BAGITEMS	201	yes	gate-game	needs-client-check	ClientItemCodecTest,GameItemProtocolTest	Grobal2.pas	同上；空包静默 quirk 已复刻
+SM	SM_DELITEM	202	yes	none	protocol-only	-	Grobal2.pas	单物品删除（批量走 SM_DELITEMS）
+SM	SM_UPDATEITEM	203	yes	none	protocol-only	-	Grobal2.pas	单物品更新
+SM	SM_ADDMAGIC	210	yes	none	protocol-only	-	Grobal2.pas	技能习得下发——技能切片
+SM	SM_SENDMYMAGIC	211	yes	none	protocol-only	-	Grobal2.pas	技能列表同步——技能切片
+SM	SM_DELMAGIC	212	yes	none	protocol-only	-	Grobal2.pas	技能遗忘下发——技能切片
+SM	SM_CERTIFICATION_SUCCESS	500	yes	gate-login	implemented	GateTest,LegacyGateHandlerTest	Grobal2.pas	LOGIN 首包应答
+SM	SM_CERTIFICATION_FAIL	501	yes	gate-login	implemented	GateTest,LegacyGateHandlerTest	Grobal2.pas	LOGIN 未识别消息的统一拒绝
+SM	SM_ID_NOTFOUND	502	yes	none	protocol-only	-	Grobal2.pas	账号不存在（Java 并入 SM_PASSWD_FAIL）
+SM	SM_PASSWD_FAIL	503	yes	gate-login	implemented	LegacyGateHandlerTest	Grobal2.pas	登录失败（Delphi 的 SM_ID_NOTFOUND 并入此应答）
+SM	SM_NEWID_SUCCESS	504	yes	none	protocol-only	-	Grobal2.pas	注册成功——LoginSrv 族
+SM	SM_NEWID_FAIL	505	yes	none	protocol-only	-	Grobal2.pas	注册失败——LoginSrv 族
+SM	SM_CHGPASSWD_SUCCESS	506	yes	none	protocol-only	-	Grobal2.pas	改密成功——LoginSrv 族
+SM	SM_CHGPASSWD_FAIL	507	yes	none	protocol-only	-	Grobal2.pas	改密失败——LoginSrv 族
+SM	SM_QUERYCHR	520	yes	gate-login	implemented	LegacyGateHandlerTest,CharacterServiceTest	Grobal2.pas	角色列表应答
+SM	SM_NEWCHR_SUCCESS	521	yes	gate-login	implemented	LegacyGateHandlerTest,CharacterServiceTest	Grobal2.pas	建号成功
+SM	SM_NEWCHR_FAIL	522	yes	gate-login	implemented	LegacyGateHandlerTest	Grobal2.pas	建号失败；当前兼作删号失败应答
+SM	SM_DELCHR_SUCCESS	523	yes	gate-login	implemented	LegacyGateHandlerTest	Grobal2.pas	删号成功
+SM	SM_DELCHR_FAIL	524	yes	none	protocol-only	-	Grobal2.pas	删号失败（Java 当前复用 SM_NEWCHR_FAIL——见 CM_DELCHR）
+SM	SM_STARTPLAY	525	yes	gate-login	implemented	LegacyGateHandlerTest,GateAdmissionIntegrationTest	Grobal2.pas	选人通过，派 GAME 地址
+SM	SM_STARTFAIL	526	yes	gate-login	implemented	GateSessionRegistryTest,GameSessionIntegrationTest	Grobal2.pas	GAME 认证/进图失败
+SM	SM_QUERYCHR_FAIL	527	yes	gate-login	implemented	LegacyGateHandlerTest	Grobal2.pas	SELECT 未识别消息的统一拒绝
+SM	SM_OUTOFCONNECTION	528	yes	gate-login	implemented	LegacyGateHandlerTest	Grobal2.pas	认证失效
+SM	SM_PASSOK_SELECTSERVER	529	yes	gate-login	implemented	LegacyGateHandlerTest,GateAdmissionIntegrationTest	Grobal2.pas	账密通过，下发选服信息
+SM	SM_SELECTSERVER_OK	530	yes	gate-login	implemented	GateAdmissionIntegrationTest,LegacyGateHandlerTest	Grobal2.pas	派 SELECT 端口+认证码
+SM	SM_NEEDUPDATE_ACCOUNT	531	yes	none	protocol-only	-	Grobal2.pas	账号需更新——LoginSrv 族
+SM	SM_UPDATEID_SUCCESS	532	yes	none	protocol-only	-	Grobal2.pas	账号更新成功——LoginSrv 族
+SM	SM_UPDATEID_FAIL	533	yes	none	protocol-only	-	Grobal2.pas	账号更新失败——LoginSrv 族
+SM	SM_DROPITEM_SUCCESS	600	yes	gate-game	implemented	GameItemProtocolTest	Grobal2.pas	丢弃成功
+SM	SM_DROPITEM_FAIL	601	yes	gate-game	implemented	GameItemProtocolTest	Grobal2.pas	丢弃失败
+SM	SM_ITEMSHOW	610	yes	gate-game	implemented	GameItemProtocolTest,WorldGoldDropTest	Grobal2.pas	地面物品显示
+SM	SM_ITEMHIDE	611	yes	gate-game	implemented	GameItemProtocolTest,WorldGoldDropTest	Grobal2.pas	地面物品消失
+SM	SM_OPENDOOR_OK	612	yes	gate-game	implemented	WorldDoorAndTeleportTest,GameProtocolAdapterTest	Grobal2.pas	开门
+SM	SM_OPENDOOR_LOCK	613	yes	none	protocol-only	-	Grobal2.pas	门已锁（城堡门差异分支，W10 挂账）
+SM	SM_CLOSEDOOR	614	yes	gate-game	implemented	WorldDoorAndTeleportTest	Grobal2.pas	关门（5s 自动关）
+SM	SM_TAKEON_OK	615	yes	gate-game	implemented	GameItemProtocolTest,WorldEquipmentTest	Grobal2.pas	穿戴成功（feature/featureEx）
+SM	SM_TAKEON_FAIL	616	yes	gate-game	implemented	GameItemProtocolTest,WorldEquipmentTest	Grobal2.pas	穿戴失败 n18 码
+SM	SM_TAKEOFF_OK	619	yes	gate-game	implemented	GameItemProtocolTest,WorldEquipmentTest	Grobal2.pas	脱下成功——按 quirk 后随 FAIL(0)
+SM	SM_TAKEOFF_FAIL	620	yes	gate-game	implemented	GameItemProtocolTest,WorldEquipmentTest	Grobal2.pas	脱下失败；成功路径也尾随 recog=0 quirk
+SM	SM_SENDUSEITEMS	621	yes	gate-game	needs-client-check	ClientItemCodecTest,WorldEquipmentTest	Grobal2.pas	同上（穿戴集合编码）
+SM	SM_WEIGHTCHANGED	622	yes	gate-game	implemented	GameItemProtocolTest	Grobal2.pas	三桶负重刷新
+SM	SM_CLEAROBJECTS	633	yes	gate-game	implemented	WorldDoorAndTeleportTest	Grobal2.pas	换图清屏
+SM	SM_CHANGEMAP	634	yes	gate-game	implemented	WorldDoorAndTeleportTest	Grobal2.pas	换图
+SM	SM_EAT_OK	635	yes	gate-game	implemented	GameItemProtocolTest	Grobal2.pas	使用成功（含变质/增益文案路径）
+SM	SM_EAT_FAIL	636	yes	gate-game	implemented	GameItemProtocolTest	Grobal2.pas	使用失败
+SM	SM_BUTCH	637	yes	none	protocol-only	-	Grobal2.pas	挖肉应答
+SM	SM_MAGICFIRE	638	yes	none	protocol-only	-	Grobal2.pas	施法结果广播——技能切片
+SM	SM_MAGICFIRE_FAIL	639	yes	none	protocol-only	-	Grobal2.pas	施法失败——技能切片
+SM	SM_MAGIC_LVEXP	640	yes	none	protocol-only	-	Grobal2.pas	技能熟练度——技能切片
+SM	SM_DURACHANGE	642	yes	gate-game	implemented	WorldRevivalRingTest,WorldRepairTest	Grobal2.pas	耐久变化（含千位桶 quirk）
+SM	SM_MERCHANTSAY	643	yes	none	protocol-only	-	Grobal2.pas	商人说话——脚本引擎前置
+SM	SM_MERCHANTDLGCLOSE	644	yes	none	protocol-only	-	Grobal2.pas	关商人窗口——见 MERCHANT 区
+SM	SM_SENDGOODSLIST	645	yes	none	protocol-only	-	Grobal2.pas	货物列表——买卖未开放（W27 P1），见 MERCHANT 区
+SM	SM_SENDUSERSELL	646	yes	none	protocol-only	-	Grobal2.pas	开出售窗——见 MERCHANT 区
+SM	SM_SENDBUYPRICE	647	yes	none	protocol-only	-	Grobal2.pas	售价报价——见 MERCHANT 区
+SM	SM_USERSELLITEM_OK	648	yes	none	protocol-only	-	Grobal2.pas	出售成功——见 MERCHANT 区
+SM	SM_USERSELLITEM_FAIL	649	yes	none	protocol-only	-	Grobal2.pas	出售失败——见 MERCHANT 区
+SM	SM_BUYITEM_SUCCESS	650	yes	none	protocol-only	-	Grobal2.pas	购买成功——见 MERCHANT 区
+SM	SM_BUYITEM_FAIL	651	yes	none	protocol-only	-	Grobal2.pas	购买失败——见 MERCHANT 区
+SM	SM_SENDDETAILGOODSLIST	652	yes	none	protocol-only	-	Grobal2.pas	详细货品——见 MERCHANT 区
+SM	SM_GOLDCHANGED	653	yes	gate-game	implemented	WorldGoldDropTest,GameItemProtocolTest	Grobal2.pas	金币变化
+SM	SM_CHANGELIGHT	654	yes	gate-game	implemented	WorldChatAndDayCycleTest	Grobal2.pas	亮度变化
+SM	SM_LAMPCHANGEDURA	655	yes	none	protocol-only	-	Grobal2.pas	火把耐久
+SM	SM_CHANGENAMECOLOR	656	yes	gate-game	implemented	WorldPkAndEquipmentDropTest	Grobal2.pas	名字颜色（PK 模型）
+SM	SM_CHARSTATUSCHANGED	657	yes	none	protocol-only	-	Grobal2.pas	状态字变化（中毒/石化等）
+SM	SM_SENDNOTICE	658	yes	none	protocol-only	-	Grobal2.pas	登录公告
+SM	SM_GROUPMODECHANGED	659	yes	gate-game	implemented	GameGroupProtocolTest	Grobal2.pas	组队模式
+SM	SM_CREATEGROUP_OK	660	yes	gate-game	implemented	GameGroupProtocolTest	Grobal2.pas	建组成功
+SM	SM_CREATEGROUP_FAIL	661	yes	gate-game	implemented	GameGroupProtocolTest	Grobal2.pas	建组失败
+SM	SM_GROUPADDMEM_OK	662	yes	gate-game	implemented	GameGroupProtocolTest	Grobal2.pas	拉人成功
+SM	SM_GROUPDELMEM_OK	663	yes	gate-game	implemented	GameGroupProtocolTest	Grobal2.pas	踢人成功，body=成员名
+SM	SM_GROUPADDMEM_FAIL	664	yes	gate-game	implemented	GameGroupProtocolTest	Grobal2.pas	拉人失败
+SM	SM_GROUPDELMEM_FAIL	665	yes	gate-game	implemented	GameGroupProtocolTest	Grobal2.pas	踢人失败
+SM	SM_GROUPCANCEL	666	yes	gate-game	implemented	GameGroupProtocolTest	Grobal2.pas	队伍解散/被移出
+SM	SM_GROUPMEMBERS	667	yes	gate-game	implemented	GameGroupProtocolTest	Grobal2.pas	成员名单
+SM	SM_SENDUSERREPAIR	668	yes	gate-game	implemented	GameRepairProtocolTest,WorldRepairTest	Grobal2.pas	开修理对话框
+SM	SM_USERREPAIRITEM_OK	669	yes	gate-game	implemented	GameRepairProtocolTest,WorldRepairTest	Grobal2.pas	修理成功 recog=金币 param/tag=耐久
+SM	SM_USERREPAIRITEM_FAIL	670	yes	gate-game	implemented	GameRepairProtocolTest,WorldRepairTest	Grobal2.pas	修理失败
+SM	SM_SENDREPAIRCOST	671	yes	gate-game	implemented	GameRepairProtocolTest,WorldRepairTest	Grobal2.pas	修理报价（-1=不可修）
+SM	SM_DEALMENU	673	yes	none	protocol-only	-	Grobal2.pas	交易窗——见 DEAL 区
+SM	SM_DEALTRY_FAIL	674	yes	none	protocol-only	-	Grobal2.pas	交易拒绝——见 DEAL 区
+SM	SM_DEALADDITEM_OK	675	yes	none	protocol-only	-	Grobal2.pas	交易放物确认——见 DEAL 区
+SM	SM_DEALADDITEM_FAIL	676	yes	none	protocol-only	-	Grobal2.pas	交易放物失败——见 DEAL 区
+SM	SM_DEALDELITEM_OK	677	yes	none	protocol-only	-	Grobal2.pas	交易取回确认——见 DEAL 区
+SM	SM_DEALDELITEM_FAIL	678	yes	none	protocol-only	-	Grobal2.pas	交易取回失败——见 DEAL 区
+SM	SM_DEALCANCEL	681	yes	none	protocol-only	-	Grobal2.pas	交易取消——见 DEAL 区
+SM	SM_DEALREMOTEADDITEM	682	yes	none	protocol-only	-	Grobal2.pas	对方放物——见 DEAL 区
+SM	SM_DEALREMOTEDELITEM	683	yes	none	protocol-only	-	Grobal2.pas	对方取回——见 DEAL 区
+SM	SM_DEALCHGGOLD_OK	684	yes	none	protocol-only	-	Grobal2.pas	交易金币确认——见 DEAL 区
+SM	SM_DEALCHGGOLD_FAIL	685	yes	none	protocol-only	-	Grobal2.pas	交易金币失败——见 DEAL 区
+SM	SM_DEALREMOTECHGGOLD	686	yes	none	protocol-only	-	Grobal2.pas	对方改金币——见 DEAL 区
+SM	SM_DEALSUCCESS	687	yes	none	protocol-only	-	Grobal2.pas	交易完成——见 DEAL 区
+SM	SM_SENDUSERSTORAGEITEM	700	yes	none	protocol-only	-	Grobal2.pas	仓库窗——@storage 前置
+SM	SM_STORAGE_OK	701	yes	none	protocol-only	-	Grobal2.pas	存仓成功
+SM	SM_STORAGE_FULL	702	yes	none	protocol-only	-	Grobal2.pas	仓库满
+SM	SM_STORAGE_FAIL	703	yes	none	protocol-only	-	Grobal2.pas	存仓失败
+SM	SM_SAVEITEMLIST	704	yes	none	protocol-only	-	Grobal2.pas	存档物品列表
+SM	SM_TAKEBACKSTORAGEITEM_OK	705	yes	none	protocol-only	-	Grobal2.pas	取仓成功
+SM	SM_TAKEBACKSTORAGEITEM_FAIL	706	yes	none	protocol-only	-	Grobal2.pas	取仓失败
+SM	SM_TAKEBACKSTORAGEITEM_FULLBAG	707	yes	none	protocol-only	-	Grobal2.pas	取仓背包满
+SM	SM_MYSTATUS	708	yes	none	protocol-only	-	Grobal2.pas	自身状态字
+SM	SM_DELITEMS	709	yes	gate-game	implemented	WorldPkAndEquipmentDropTest,WorldEquipmentTest	Grobal2.pas	批量删物回推（死亡散物）
+SM	SM_READMINIMAP_OK	710	yes	none	protocol-only	-	Grobal2.pas	小地图数据
+SM	SM_READMINIMAP_FAIL	711	yes	none	protocol-only	-	Grobal2.pas	小地图失败
+SM	SM_SENDUSERMAKEDRUGITEMLIST	712	yes	none	protocol-only	-	Grobal2.pas	制药清单——@makedrug 前置
+SM	SM_MAKEDRUG_SUCCESS	713	yes	none	protocol-only	-	Grobal2.pas	制药成功
+SM	SM_MAKEDRUG_FAIL	714	yes	none	protocol-only	-	Grobal2.pas	制药失败
+SM	SM_716	716	yes	none	protocol-only	-	Grobal2.pas	占位编号
+SM	SM_CHANGEGUILDNAME	750	yes	none	protocol-only	-	Grobal2.pas	行会改名——见 GUILD 区
+SM	SM_SENDUSERSTATE	751	yes	none	protocol-only	-	Grobal2.pas	玩家详情窗（CM_QUERYUSERSTATE 应答）
+SM	SM_SUBABILITY	752	yes	none	protocol-only	-	Grobal2.pas	附加属性（加点/状态）
+SM	SM_OPENGUILDDLG	753	yes	none	protocol-only	-	Grobal2.pas	开行会窗——见 GUILD 区
+SM	SM_OPENGUILDDLG_FAIL	754	yes	none	protocol-only	-	Grobal2.pas	开行会窗失败——见 GUILD 区
+SM	SM_SENDGUILDMEMBERLIST	756	yes	none	protocol-only	-	Grobal2.pas	行会成员列表——见 GUILD 区
+SM	SM_GUILDADDMEMBER_OK	757	yes	none	protocol-only	-	Grobal2.pas	行会拉人成功——见 GUILD 区
+SM	SM_GUILDADDMEMBER_FAIL	758	yes	none	protocol-only	-	Grobal2.pas	行会拉人失败——见 GUILD 区
+SM	SM_GUILDDELMEMBER_OK	759	yes	none	protocol-only	-	Grobal2.pas	行会踢人成功——见 GUILD 区
+SM	SM_GUILDDELMEMBER_FAIL	760	yes	none	protocol-only	-	Grobal2.pas	行会踢人失败——见 GUILD 区
+SM	SM_GUILDRANKUPDATE_FAIL	761	yes	none	protocol-only	-	Grobal2.pas	行会封号失败——见 GUILD 区
+SM	SM_BUILDGUILD_OK	762	yes	none	protocol-only	-	Grobal2.pas	建行会成功——见 GUILD 区
+SM	SM_BUILDGUILD_FAIL	763	yes	none	protocol-only	-	Grobal2.pas	建行会失败——见 GUILD 区
+SM	SM_DONATE_OK	764	yes	none	protocol-only	-	Grobal2.pas	捐献成功——见 GUILD 区
+SM	SM_DONATE_FAIL	765	yes	none	protocol-only	-	Grobal2.pas	捐献失败——见 GUILD 区
+SM	SM_AREASTATE	766	yes	none	protocol-only	-	Grobal2.pas	区域状态（攻城/安全区）——见 SIEGE 区
+SM	SM_MENU_OK	767	yes	none	protocol-only	-	Grobal2.pas	NPC 菜单确认——脚本引擎前置
+SM	SM_GUILDMAKEALLY_OK	768	yes	none	protocol-only	-	Grobal2.pas	结盟成功——见 GUILD 区
+SM	SM_GUILDMAKEALLY_FAIL	769	yes	none	protocol-only	-	Grobal2.pas	结盟失败——见 GUILD 区
+SM	SM_GUILDBREAKALLY_OK	770	yes	none	protocol-only	-	Grobal2.pas	解盟成功——见 GUILD 区
+SM	SM_GUILDBREAKALLY_FAIL	771	yes	none	protocol-only	-	Grobal2.pas	解盟失败——见 GUILD 区
+SM	SM_DLGMSG	772	yes	none	protocol-only	-	Grobal2.pas	弹窗消息——脚本引擎前置
+SM	SM_SPACEMOVE_HIDE	800	yes	none	protocol-only	-	Grobal2.pas	瞬息移动离场帧——技能切片
+SM	SM_SPACEMOVE_SHOW	801	yes	none	protocol-only	-	Grobal2.pas	瞬息移动入场帧——技能切片
+SM	SM_RECONNECT	802	yes	none	protocol-only	-	Grobal2.pas	重连提示（跨服/换服流程）
+SM	SM_GHOST	803	yes	gate-game	implemented	GameProtocolAdapterTest	Grobal2.pas	目标离场/不可见应答
+SM	SM_SHOWEVENT	804	yes	none	protocol-only	-	Grobal2.pas	事件对象显示（攻城/活动）
+SM	SM_HIDEEVENT	805	yes	none	protocol-only	-	Grobal2.pas	事件对象隐藏
+SM	SM_SPACEMOVE_HIDE2	806	yes	none	protocol-only	-	Grobal2.pas	瞬息移动扩展帧
+SM	SM_SPACEMOVE_SHOW2	807	yes	none	protocol-only	-	Grobal2.pas	瞬息移动扩展帧
+SM	SM_TIMECHECK_MSG	810	yes	none	protocol-only	-	Grobal2.pas	计时校验（反外挂）
+SM	SM_ADJUST_BONUS	811	yes	none	protocol-only	-	Grobal2.pas	加点应答（CM_ADJUST_BONUS）
+SM	SM_OPENHEALTH	1100	yes	none	protocol-only	-	Grobal2.pas	显血订阅（心灵启示）
+SM	SM_CLOSEHEALTH	1101	yes	none	protocol-only	-	Grobal2.pas	关闭显血
+SM	SM_BREAKWEAPON	1102	yes	none	protocol-only	-	Grobal2.pas	武器破碎提示
+SM	SM_INSTANCEHEALGUAGE	1103	yes	none	protocol-only	-	Grobal2.pas	即时血条（私服扩展）
+SM	SM_CHANGEFACE	1104	yes	none	protocol-only	-	Grobal2.pas	变身/换外观
+SM	SM_VERSION_FAIL	1106	yes	none	protocol-only	-	Grobal2.pas	版本校验失败
+SM	SM_ITEMUPDATE	1500	yes	none	protocol-only	-	Grobal2.pas	物品更新广播
+SM	SM_MONSTERSAY	1501	yes	none	protocol-only	-	Grobal2.pas	怪物喊话
+SM	SM_SENDGAMELIST	5002	yes	none	protocol-only	-	Grobal2.pas	游戏列表——LoginSrv/私服族
+SM	SM_GETBACKPASSWD_SUCCESS	5005	yes	none	protocol-only	-	Grobal2.pas	找回密码成功——LoginSrv 族
+SM	SM_GETBACKPASSWD_FAIL	5006	yes	none	protocol-only	-	Grobal2.pas	找回密码失败——LoginSrv 族
+SM	SM_SERVERCONFIG	5007	yes	none	protocol-only	-	Grobal2.pas	服务器配置下发——私服族
+SM	SM_GAMEGOLDNAME	5008	yes	none	protocol-only	-	Grobal2.pas	游戏币名称——私服族
+SM	SM_PASSWORD	5009	yes	none	protocol-only	-	Grobal2.pas	密码框——私服族
+SM	SM_HORSERUN	5010	yes	none	protocol-only	-	Grobal2.pas	骑马动作帧
+SM	SM_PASSWORDSTATUS	8002	yes	none	protocol-only	-	Grobal2.pas	密码状态——私服族
+SM	SM_NEEDPASSWORD	8003	yes	none	protocol-only	-	Grobal2.pas	需要密码——私服族
+SM	SM_GETREGINFO	8004	yes	none	protocol-only	-	Grobal2.pas	注册信息——私服族
+SM	SM_EXCHGTAKEON_OK	65023	yes	none	protocol-only	-	Grobal2.pas	跨服装备交换成功——私服族
+SM	SM_EXCHGTAKEON_FAIL	65024	yes	none	protocol-only	-	Grobal2.pas	跨服装备交换失败——私服族
+SM	SM_TEST	65037	yes	none	protocol-only	-	Grobal2.pas	测试码
+SM	SM_ACTION_MIN	65070	yes	none	protocol-only	-	Grobal2.pas	动作范围哨兵
+SM	SM_ACTION_MAX	65071	yes	none	protocol-only	-	Grobal2.pas	动作范围哨兵
+SM	SM_ACTION2_MIN	65072	yes	none	protocol-only	-	Grobal2.pas	动作范围哨兵
+SM	SM_ACTION2_MAX	65073	yes	none	protocol-only	-	Grobal2.pas	动作范围哨兵
+SKILL	SKILL_FIREBALL:warrior	1	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	火球术；GEEM2 Magic.DB 同名行 job=wizard learnable=no
+SKILL	SKILL_FIREBALL:wizard	1	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	火球术；GEEM2 Magic.DB 同名行 job=wizard learnable=yes
+SKILL	SKILL_FIREBALL:taoist	1	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	火球术；GEEM2 Magic.DB 同名行 job=wizard learnable=no
+SKILL	SKILL_HEALLING:warrior	2	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	治愈术；GEEM2 Magic.DB 同名行 job=taoist learnable=no
+SKILL	SKILL_HEALLING:wizard	2	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	治愈术；GEEM2 Magic.DB 同名行 job=taoist learnable=no
+SKILL	SKILL_HEALLING:taoist	2	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	治愈术；GEEM2 Magic.DB 同名行 job=taoist learnable=yes
+SKILL	SKILL_ONESWORD:warrior	3	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	基本剑术；GEEM2 Magic.DB 同名行 job=warrior learnable=yes
+SKILL	SKILL_ONESWORD:wizard	3	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	基本剑术；GEEM2 Magic.DB 同名行 job=warrior learnable=no
+SKILL	SKILL_ONESWORD:taoist	3	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	基本剑术；GEEM2 Magic.DB 同名行 job=warrior learnable=no
+SKILL	SKILL_ILKWANG:warrior	4	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	精神力战法；GEEM2 Magic.DB 同名行 job=taoist learnable=no
+SKILL	SKILL_ILKWANG:wizard	4	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	精神力战法；GEEM2 Magic.DB 同名行 job=taoist learnable=no
+SKILL	SKILL_ILKWANG:taoist	4	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	精神力战法；GEEM2 Magic.DB 同名行 job=taoist learnable=yes
+SKILL	SKILL_FIREBALL2:warrior	5	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	大火球；GEEM2 Magic.DB 同名行 job=wizard learnable=no
+SKILL	SKILL_FIREBALL2:wizard	5	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	大火球；GEEM2 Magic.DB 同名行 job=wizard learnable=yes
+SKILL	SKILL_FIREBALL2:taoist	5	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	大火球；GEEM2 Magic.DB 同名行 job=wizard learnable=no
+SKILL	SKILL_AMYOUNSUL:warrior	6	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	施毒术；GEEM2 Magic.DB 同名行 job=taoist learnable=no
+SKILL	SKILL_AMYOUNSUL:wizard	6	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	施毒术；GEEM2 Magic.DB 同名行 job=taoist learnable=no
+SKILL	SKILL_AMYOUNSUL:taoist	6	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	施毒术；GEEM2 Magic.DB 同名行 job=taoist learnable=yes
+SKILL	SKILL_YEDO:warrior	7	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	攻杀剑术；GEEM2 Magic.DB 同名行 job=warrior learnable=yes
+SKILL	SKILL_YEDO:wizard	7	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	攻杀剑术；GEEM2 Magic.DB 同名行 job=warrior learnable=no
+SKILL	SKILL_YEDO:taoist	7	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	攻杀剑术；GEEM2 Magic.DB 同名行 job=warrior learnable=no
+SKILL	SKILL_FIREWIND:warrior	8	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	抗拒火环；GEEM2 Magic.DB 同名行 job=wizard learnable=no
+SKILL	SKILL_FIREWIND:wizard	8	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	抗拒火环；GEEM2 Magic.DB 同名行 job=wizard learnable=yes
+SKILL	SKILL_FIREWIND:taoist	8	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	抗拒火环；GEEM2 Magic.DB 同名行 job=wizard learnable=no
+SKILL	SKILL_FIRE:warrior	9	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	地狱火；GEEM2 Magic.DB 同名行 job=wizard learnable=no
+SKILL	SKILL_FIRE:wizard	9	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	地狱火；GEEM2 Magic.DB 同名行 job=wizard learnable=yes
+SKILL	SKILL_FIRE:taoist	9	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	地狱火；GEEM2 Magic.DB 同名行 job=wizard learnable=no
+SKILL	SKILL_SHOOTLIGHTEN:warrior	10	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	疾光电影；GEEM2 Magic.DB 同名行 job=wizard learnable=no
+SKILL	SKILL_SHOOTLIGHTEN:wizard	10	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	疾光电影；GEEM2 Magic.DB 同名行 job=wizard learnable=yes
+SKILL	SKILL_SHOOTLIGHTEN:taoist	10	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	疾光电影；GEEM2 Magic.DB 同名行 job=wizard learnable=no
+SKILL	SKILL_LIGHTENING:warrior	11	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	雷电术；GEEM2 Magic.DB 同名行 job=wizard learnable=no
+SKILL	SKILL_LIGHTENING:wizard	11	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	雷电术；GEEM2 Magic.DB 同名行 job=wizard learnable=yes
+SKILL	SKILL_LIGHTENING:taoist	11	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	雷电术；GEEM2 Magic.DB 同名行 job=wizard learnable=no
+SKILL	SKILL_ERGUM:warrior	12	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	刺杀剑术；GEEM2 Magic.DB 同名行 job=warrior learnable=yes
+SKILL	SKILL_ERGUM:wizard	12	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	刺杀剑术；GEEM2 Magic.DB 同名行 job=warrior learnable=no
+SKILL	SKILL_ERGUM:taoist	12	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	刺杀剑术；GEEM2 Magic.DB 同名行 job=warrior learnable=no
+SKILL	SKILL_FIRECHARM:warrior	13	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	灵魂火符；GEEM2 Magic.DB 同名行 job=taoist learnable=no
+SKILL	SKILL_FIRECHARM:wizard	13	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	灵魂火符；GEEM2 Magic.DB 同名行 job=taoist learnable=no
+SKILL	SKILL_FIRECHARM:taoist	13	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	灵魂火符；GEEM2 Magic.DB 同名行 job=taoist learnable=yes
+SKILL	SKILL_HANGMAJINBUB:warrior	14	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	幽灵盾；GEEM2 Magic.DB 同名行 job=taoist learnable=no
+SKILL	SKILL_HANGMAJINBUB:wizard	14	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	幽灵盾；GEEM2 Magic.DB 同名行 job=taoist learnable=no
+SKILL	SKILL_HANGMAJINBUB:taoist	14	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	幽灵盾；GEEM2 Magic.DB 同名行 job=taoist learnable=yes
+SKILL	SKILL_DEJIWONHO:warrior	15	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	神圣战甲术；GEEM2 Magic.DB 同名行 job=taoist learnable=no
+SKILL	SKILL_DEJIWONHO:wizard	15	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	神圣战甲术；GEEM2 Magic.DB 同名行 job=taoist learnable=no
+SKILL	SKILL_DEJIWONHO:taoist	15	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	神圣战甲术；GEEM2 Magic.DB 同名行 job=taoist learnable=yes
+SKILL	SKILL_HOLYSHIELD:warrior	16	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	困魔咒；GEEM2 Magic.DB 同名行 job=taoist learnable=no
+SKILL	SKILL_HOLYSHIELD:wizard	16	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	困魔咒；GEEM2 Magic.DB 同名行 job=taoist learnable=no
+SKILL	SKILL_HOLYSHIELD:taoist	16	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	困魔咒；GEEM2 Magic.DB 同名行 job=taoist learnable=yes
+SKILL	SKILL_SKELLETON:warrior	17	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	召唤骷髅；GEEM2 Magic.DB 同名行 job=taoist learnable=no
+SKILL	SKILL_SKELLETON:wizard	17	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	召唤骷髅；GEEM2 Magic.DB 同名行 job=taoist learnable=no
+SKILL	SKILL_SKELLETON:taoist	17	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	召唤骷髅；GEEM2 Magic.DB 同名行 job=taoist learnable=yes
+SKILL	SKILL_CLOAK:warrior	18	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	隐身术；GEEM2 Magic.DB 同名行 job=taoist learnable=no
+SKILL	SKILL_CLOAK:wizard	18	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	隐身术；GEEM2 Magic.DB 同名行 job=taoist learnable=no
+SKILL	SKILL_CLOAK:taoist	18	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	隐身术；GEEM2 Magic.DB 同名行 job=taoist learnable=yes
+SKILL	SKILL_BIGCLOAK:warrior	19	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	集体隐身术；GEEM2 Magic.DB 同名行 job=taoist learnable=no
+SKILL	SKILL_BIGCLOAK:wizard	19	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	集体隐身术；GEEM2 Magic.DB 同名行 job=taoist learnable=no
+SKILL	SKILL_BIGCLOAK:taoist	19	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	集体隐身术；GEEM2 Magic.DB 同名行 job=taoist learnable=yes
+SKILL	SKILL_TAMMING:warrior	20	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	诱惑之光；GEEM2 Magic.DB 同名行 job=wizard learnable=no
+SKILL	SKILL_TAMMING:wizard	20	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	诱惑之光；GEEM2 Magic.DB 同名行 job=wizard learnable=yes
+SKILL	SKILL_TAMMING:taoist	20	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	诱惑之光；GEEM2 Magic.DB 同名行 job=wizard learnable=no
+SKILL	SKILL_SPACEMOVE:warrior	21	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	瞬息移动；GEEM2 Magic.DB 同名行 job=wizard learnable=no
+SKILL	SKILL_SPACEMOVE:wizard	21	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	瞬息移动；GEEM2 Magic.DB 同名行 job=wizard learnable=yes
+SKILL	SKILL_SPACEMOVE:taoist	21	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	瞬息移动；GEEM2 Magic.DB 同名行 job=wizard learnable=no
+SKILL	SKILL_EARTHFIRE:warrior	22	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	火墙；GEEM2 Magic.DB 同名行 job=wizard learnable=no
+SKILL	SKILL_EARTHFIRE:wizard	22	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	火墙；GEEM2 Magic.DB 同名行 job=wizard learnable=yes
+SKILL	SKILL_EARTHFIRE:taoist	22	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	火墙；GEEM2 Magic.DB 同名行 job=wizard learnable=no
+SKILL	SKILL_FIREBOOM:warrior	23	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	爆裂火焰；GEEM2 Magic.DB 同名行 job=wizard learnable=no
+SKILL	SKILL_FIREBOOM:wizard	23	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	爆裂火焰；GEEM2 Magic.DB 同名行 job=wizard learnable=yes
+SKILL	SKILL_FIREBOOM:taoist	23	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	爆裂火焰；GEEM2 Magic.DB 同名行 job=wizard learnable=no
+SKILL	SKILL_LIGHTFLOWER:warrior	24	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	地狱雷光；GEEM2 Magic.DB 同名行 job=wizard learnable=no
+SKILL	SKILL_LIGHTFLOWER:wizard	24	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	地狱雷光；GEEM2 Magic.DB 同名行 job=wizard learnable=yes
+SKILL	SKILL_LIGHTFLOWER:taoist	24	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	地狱雷光；GEEM2 Magic.DB 同名行 job=wizard learnable=no
+SKILL	SKILL_BANWOL:warrior	25	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	半月弯刀；GEEM2 Magic.DB 同名行 job=warrior learnable=yes
+SKILL	SKILL_BANWOL:wizard	25	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	半月弯刀；GEEM2 Magic.DB 同名行 job=warrior learnable=no
+SKILL	SKILL_BANWOL:taoist	25	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	半月弯刀；GEEM2 Magic.DB 同名行 job=warrior learnable=no
+SKILL	SKILL_FIRESWORD:warrior	26	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	烈火剑法；GEEM2 Magic.DB 同名行 job=warrior learnable=yes
+SKILL	SKILL_FIRESWORD:wizard	26	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	烈火剑法；GEEM2 Magic.DB 同名行 job=warrior learnable=no
+SKILL	SKILL_FIRESWORD:taoist	26	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	烈火剑法；GEEM2 Magic.DB 同名行 job=warrior learnable=no
+SKILL	SKILL_MOOTEBO:warrior	27	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	野蛮冲撞；GEEM2 Magic.DB 同名行 job=warrior learnable=yes
+SKILL	SKILL_MOOTEBO:wizard	27	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	野蛮冲撞；GEEM2 Magic.DB 同名行 job=warrior learnable=no
+SKILL	SKILL_MOOTEBO:taoist	27	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	野蛮冲撞；GEEM2 Magic.DB 同名行 job=warrior learnable=no
+SKILL	SKILL_SHOWHP:warrior	28	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	心灵启示；GEEM2 Magic.DB 同名行 job=taoist learnable=no
+SKILL	SKILL_SHOWHP:wizard	28	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	心灵启示；GEEM2 Magic.DB 同名行 job=taoist learnable=no
+SKILL	SKILL_SHOWHP:taoist	28	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	心灵启示；GEEM2 Magic.DB 同名行 job=taoist learnable=yes
+SKILL	SKILL_BIGHEALLING:warrior	29	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	群体治愈术；GEEM2 Magic.DB 同名行 job=taoist learnable=no
+SKILL	SKILL_BIGHEALLING:wizard	29	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	群体治愈术；GEEM2 Magic.DB 同名行 job=taoist learnable=no
+SKILL	SKILL_BIGHEALLING:taoist	29	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	群体治愈术；GEEM2 Magic.DB 同名行 job=taoist learnable=yes
+SKILL	SKILL_SINSU:warrior	30	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	召唤神兽；GEEM2 Magic.DB 同名行 job=taoist learnable=no
+SKILL	SKILL_SINSU:wizard	30	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	召唤神兽；GEEM2 Magic.DB 同名行 job=taoist learnable=no
+SKILL	SKILL_SINSU:taoist	30	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	召唤神兽；GEEM2 Magic.DB 同名行 job=taoist learnable=yes
+SKILL	SKILL_SHIELD:warrior	31	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	魔法盾；GEEM2 Magic.DB 同名行 job=wizard learnable=no
+SKILL	SKILL_SHIELD:wizard	31	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	魔法盾；GEEM2 Magic.DB 同名行 job=wizard learnable=yes
+SKILL	SKILL_SHIELD:taoist	31	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	魔法盾；GEEM2 Magic.DB 同名行 job=wizard learnable=no
+SKILL	SKILL_KILLUNDEAD:warrior	32	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	圣言术；GEEM2 Magic.DB 同名行 job=wizard learnable=no
+SKILL	SKILL_KILLUNDEAD:wizard	32	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	圣言术；GEEM2 Magic.DB 同名行 job=wizard learnable=yes
+SKILL	SKILL_KILLUNDEAD:taoist	32	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	圣言术；GEEM2 Magic.DB 同名行 job=wizard learnable=no
+SKILL	SKILL_SNOWWIND:warrior	33	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	冰咆哮；GEEM2 Magic.DB 同名行 job=wizard learnable=no
+SKILL	SKILL_SNOWWIND:wizard	33	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	冰咆哮；GEEM2 Magic.DB 同名行 job=wizard learnable=yes
+SKILL	SKILL_SNOWWIND:taoist	33	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	冰咆哮；GEEM2 Magic.DB 同名行 job=wizard learnable=no
+SKILL	SKILL_CROSSMOON:warrior	34	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	双龙斩；GEEM2 基线无同编号行，Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_CROSSMOON:wizard	34	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	双龙斩；GEEM2 基线无同编号行，Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_CROSSMOON:taoist	34	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	双龙斩；GEEM2 基线无同编号行，Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_WINDTEBO:warrior	35	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	什么魔法；GEEM2 基线无同编号行，Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_WINDTEBO:wizard	35	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	什么魔法；GEEM2 基线无同编号行，Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_WINDTEBO:taoist	35	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	什么魔法；GEEM2 基线无同编号行，Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_UENHANCER:warrior	36	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	无极真气；GEEM2 基线无同编号行，Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_UENHANCER:wizard	36	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	无极真气；GEEM2 基线无同编号行，Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_UENHANCER:taoist	36	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	无极真气；GEEM2 基线无同编号行，Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_ENERGYREPULSOR:warrior	37	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	气功波；GEEM2 基线无同编号行，Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_ENERGYREPULSOR:wizard	37	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	气功波；GEEM2 基线无同编号行，Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_ENERGYREPULSOR:taoist	37	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	气功波；GEEM2 基线无同编号行，Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_TWINBLADE:warrior	38	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	狂风斩；GEEM2 基线无同编号行，Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_TWINBLADE:wizard	38	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	狂风斩；GEEM2 基线无同编号行，Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_TWINBLADE:taoist	38	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	狂风斩；GEEM2 基线无同编号行，Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_GROUPDEDING:warrior	39	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	地钉；GEEM2 基线无同编号行，Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_GROUPDEDING:wizard	39	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	地钉；GEEM2 基线无同编号行，Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_GROUPDEDING:taoist	39	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	地钉；GEEM2 基线无同编号行，Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_UNAMYOUNSUL:warrior	40	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	解毒术；GEEM2 基线同编号行为「双龙斩」（引擎重编号，不作依据），Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_UNAMYOUNSUL:wizard	40	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	解毒术；GEEM2 基线同编号行为「双龙斩」（引擎重编号，不作依据），Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_UNAMYOUNSUL:taoist	40	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	解毒术；GEEM2 基线同编号行为「双龙斩」（引擎重编号，不作依据），Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_ANGEL:warrior	41	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	什么魔法；GEEM2 基线同编号行为「狮子吼」（引擎重编号，不作依据），Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_ANGEL:wizard	41	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	什么魔法；GEEM2 基线同编号行为「狮子吼」（引擎重编号，不作依据），Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_ANGEL:taoist	41	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	什么魔法；GEEM2 基线同编号行为「狮子吼」（引擎重编号，不作依据），Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_GROUPLIGHTENING:warrior	42	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	群体雷电术；GEEM2 基线同编号行为「龙影剑法」（引擎重编号，不作依据），Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_GROUPLIGHTENING:wizard	42	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	群体雷电术；GEEM2 基线同编号行为「龙影剑法」（引擎重编号，不作依据），Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_GROUPLIGHTENING:taoist	42	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	群体雷电术；GEEM2 基线同编号行为「龙影剑法」（引擎重编号，不作依据），Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_43:warrior	43	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	破空剑；GEEM2 基线同编号行为「雷霆剑法」（引擎重编号，不作依据），Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_43:wizard	43	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	破空剑；GEEM2 基线同编号行为「雷霆剑法」（引擎重编号，不作依据），Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_43:taoist	43	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	破空剑；GEEM2 基线同编号行为「雷霆剑法」（引擎重编号，不作依据），Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_44:warrior	44	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	FrostCrunch；GEEM2 基线同编号行为「寒冰掌」（引擎重编号，不作依据），Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_44:wizard	44	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	FrostCrunch；GEEM2 基线同编号行为「寒冰掌」（引擎重编号，不作依据），Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_44:taoist	44	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	FrostCrunch；GEEM2 基线同编号行为「寒冰掌」（引擎重编号，不作依据），Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_45:warrior	45	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	FlameDisruptor；GEEM2 基线同编号行为「灭天火」（引擎重编号，不作依据），Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_45:wizard	45	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	FlameDisruptor；GEEM2 基线同编号行为「灭天火」（引擎重编号，不作依据），Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_45:taoist	45	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	FlameDisruptor；GEEM2 基线同编号行为「灭天火」（引擎重编号，不作依据），Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_46:warrior	46	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	Mirroring；GEEM2 基线无同编号行，Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_46:wizard	46	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	Mirroring；GEEM2 基线无同编号行，Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_46:taoist	46	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	Mirroring；GEEM2 基线无同编号行，Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_47:warrior	47	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	占位编号；GEEM2 基线无同编号行，Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_47:wizard	47	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	占位编号；GEEM2 基线无同编号行，Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_47:taoist	47	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	占位编号；GEEM2 基线无同编号行，Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_GROUPAMYOUNSUL:warrior	48	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	群体施毒术；GEEM2 基线同编号行为「气功波」（引擎重编号，不作依据），Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_GROUPAMYOUNSUL:wizard	48	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	群体施毒术；GEEM2 基线同编号行为「气功波」（引擎重编号，不作依据），Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_GROUPAMYOUNSUL:taoist	48	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	群体施毒术；GEEM2 基线同编号行为「气功波」（引擎重编号，不作依据），Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_49:warrior	49	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	占位编号；GEEM2 基线同编号行为「净化术」（引擎重编号，不作依据），Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_49:wizard	49	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	占位编号；GEEM2 基线同编号行为「净化术」（引擎重编号，不作依据），Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_49:taoist	49	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	占位编号；GEEM2 基线同编号行为「净化术」（引擎重编号，不作依据），Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_MABE:warrior	50	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	冰焰；GEEM2 基线同编号行为「无极真气」（引擎重编号，不作依据），Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_MABE:wizard	50	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	冰焰；GEEM2 基线同编号行为「无极真气」（引擎重编号，不作依据），Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_MABE:taoist	50	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	冰焰；GEEM2 基线同编号行为「无极真气」（引擎重编号，不作依据），Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_51:warrior	51	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	占位编号；GEEM2 基线无同编号行，Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_51:wizard	51	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	占位编号；GEEM2 基线无同编号行，Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_51:taoist	51	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	占位编号；GEEM2 基线无同编号行，Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_52:warrior	52	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	占位编号；GEEM2 基线无同编号行，Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_52:wizard	52	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	占位编号；GEEM2 基线无同编号行，Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_52:taoist	52	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	占位编号；GEEM2 基线无同编号行，Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_53:warrior	53	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	占位编号；GEEM2 基线无同编号行，Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_53:wizard	53	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	占位编号；GEEM2 基线无同编号行，Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_53:taoist	53	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	占位编号；GEEM2 基线无同编号行，Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_54:warrior	54	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	占位编号；GEEM2 基线无同编号行，Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_54:wizard	54	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	占位编号；GEEM2 基线无同编号行，Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_54:taoist	54	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	占位编号；GEEM2 基线无同编号行，Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_55:warrior	55	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	占位编号；GEEM2 基线同编号行为「召唤月灵」（引擎重编号，不作依据），Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_55:wizard	55	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	占位编号；GEEM2 基线同编号行为「召唤月灵」（引擎重编号，不作依据），Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_55:taoist	55	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	占位编号；GEEM2 基线同编号行为「召唤月灵」（引擎重编号，不作依据），Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_REDBANWOL:warrior	56	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	什么刀法；GEEM2 基线同编号行为「逐日剑法」（引擎重编号，不作依据），Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_REDBANWOL:wizard	56	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	什么刀法；GEEM2 基线同编号行为「逐日剑法」（引擎重编号，不作依据），Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_REDBANWOL:taoist	56	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	什么刀法；GEEM2 基线同编号行为「逐日剑法」（引擎重编号，不作依据），Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_57:warrior	57	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	占位编号；GEEM2 基线无同编号行，Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_57:wizard	57	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	占位编号；GEEM2 基线无同编号行，Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_57:taoist	57	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	占位编号；GEEM2 基线无同编号行，Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_58:warrior	58	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	占位编号；GEEM2 基线同编号行为「流星火雨」（引擎重编号，不作依据），Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_58:wizard	58	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	占位编号；GEEM2 基线同编号行为「流星火雨」（引擎重编号，不作依据），Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_58:taoist	58	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	占位编号；GEEM2 基线同编号行为「流星火雨」（引擎重编号，不作依据），Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_59:warrior	59	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	占位编号；GEEM2 基线无同编号行，Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_59:wizard	59	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	占位编号；GEEM2 基线无同编号行，Job 归属待 Magic.DB 导入校准
+SKILL	SKILL_59:taoist	59	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	占位编号；GEEM2 基线无同编号行，Job 归属待 Magic.DB 导入校准
+MERCHANT	@buy	-	n/a	none	unimplemented	-	M2Share.pas 特殊标签	货物列表（RM_SENDGOODSLIST）；买卖待库存/金币事务测试（W27 P1）
+MERCHANT	@sell	-	n/a	none	unimplemented	-	M2Share.pas 特殊标签	开出售窗（RM_SENDUSERSELL）；同上
+MERCHANT	@repair	-	n/a	gate-game	implemented	WorldRepairTest,GameRepairProtocolTest	ObjNpc.pas:TMerchant.UserSelect	m_sScriptLable 状态机子集（W15）；普通修理 Dec(DuraMax,磨损 div 30)
+MERCHANT	~@repair	-	n/a	none	unimplemented	-	M2Share.pas 特殊标签	修理完成回跳标签——脚本引擎前置
+MERCHANT	@s_repair	-	n/a	gate-game	implemented	WorldRepairTest,GameRepairProtocolTest	ObjNpc.pas:TMerchant.UserSelect	m_sScriptLable 状态机子集（W15）；特殊修理报价 3×截断基数 quirk 已复刻
+MERCHANT	~@s_repair	-	n/a	none	unimplemented	-	M2Share.pas 特殊标签	特修完成回跳标签——脚本引擎前置
+MERCHANT	@fail_s_repair	-	n/a	none	unimplemented	-	M2Share.pas 特殊标签	特修失败回跳标签——脚本引擎前置
+MERCHANT	@makedrug	-	n/a	none	unimplemented	-	M2Share.pas 特殊标签	制药（RefillGoods/RM_USERMAKEDRUGITEMLIST）
+MERCHANT	@prices	-	n/a	none	unimplemented	-	M2Share.pas 特殊标签	价格表（Delphi ItemPrices 即空桩）
+MERCHANT	@storage	-	n/a	none	unimplemented	-	M2Share.pas 特殊标签	仓库开（RM_USERSTORAGEITEM）
+MERCHANT	@getback	-	n/a	none	unimplemented	-	M2Share.pas 特殊标签	取回物品（RM_USERGETBACKITEM）
+MERCHANT	@upgradenow	-	n/a	none	unimplemented	-	M2Share.pas 特殊标签	武器升级
+MERCHANT	~@upgradenow_ing	-	n/a	none	unimplemented	-	M2Share.pas 特殊标签	升级中——脚本引擎前置
+MERCHANT	~@upgradenow_ok	-	n/a	none	unimplemented	-	M2Share.pas 特殊标签	升级成功——脚本引擎前置
+MERCHANT	~@upgradenow_fail	-	n/a	none	unimplemented	-	M2Share.pas 特殊标签	升级失败——脚本引擎前置
+MERCHANT	@getbackupgnow	-	n/a	none	unimplemented	-	M2Share.pas 特殊标签	取回升级武器
+MERCHANT	~@getbackupgnow_ok	-	n/a	none	unimplemented	-	M2Share.pas 特殊标签	取回成功——脚本引擎前置
+MERCHANT	~@getbackupgnow_fail	-	n/a	none	unimplemented	-	M2Share.pas 特殊标签	取回失败——脚本引擎前置
+MERCHANT	~@getbackupgnow_bagfull	-	n/a	none	unimplemented	-	M2Share.pas 特殊标签	取回背包满——脚本引擎前置
+MERCHANT	~@getbackupgnow_ing	-	n/a	none	unimplemented	-	M2Share.pas 特殊标签	取回中——脚本引擎前置
+MERCHANT	@@useitemname	-	n/a	none	unimplemented	-	M2Share.pas 特殊标签	物品冠名（前缀匹配 CompareLStr）
+MERCHANT	@@sendmsg	-	n/a	none	unimplemented	-	M2Share.pas 特殊标签	脚本内发消息
+MERCHANT	@exit	-	n/a	none	unimplemented	-	M2Share.pas 特殊标签	RM_MERCHANTDLGCLOSE 关窗
+MERCHANT	@back	-	n/a	none	unimplemented	-	M2Share.pas 特殊标签	m_sScriptGoBackLable 回跳——脚本引擎前置
+MERCHANT	@main	-	n/a	none	unimplemented	-	M2Share.pas 特殊标签	主菜单标签——脚本引擎前置
+MERCHANT	~@main	-	n/a	none	unimplemented	-	M2Share.pas 特殊标签	主菜单失败回跳——脚本引擎前置
+GUILD	@@buildguildnow	-	n/a	none	unimplemented	-	ObjNpc/城堡脚本	创建行会（行会红线内）
+GUILD	@@guildwar	-	n/a	none	unimplemented	-	ObjNpc/城堡脚本	行会战宣战
+GUILD	@@donate	-	n/a	none	unimplemented	-	ObjNpc/城堡脚本	行会捐献
+GUILD	guild-open-dialog	1035	n/a	none	unimplemented	-	UsrEngn/ObjBase 行会分支	打开行会窗——行会红线内（W27 显式不做）
+GUILD	guild-home	1036	n/a	none	unimplemented	-	UsrEngn/ObjBase 行会分支	行会主页——行会红线内（W27 显式不做）
+GUILD	guild-member-list	1037	n/a	none	unimplemented	-	UsrEngn/ObjBase 行会分支	成员列表——行会红线内（W27 显式不做）
+GUILD	guild-add-member	1038	n/a	none	unimplemented	-	UsrEngn/ObjBase 行会分支	拉人——行会红线内（W27 显式不做）
+GUILD	guild-del-member	1039	n/a	none	unimplemented	-	UsrEngn/ObjBase 行会分支	踢人——行会红线内（W27 显式不做）
+GUILD	guild-update-notice	1040	n/a	none	unimplemented	-	UsrEngn/ObjBase 行会分支	公告——行会红线内（W27 显式不做）
+GUILD	guild-update-rank	1041	n/a	none	unimplemented	-	UsrEngn/ObjBase 行会分支	封号/排位——行会红线内（W27 显式不做）
+GUILD	guild-ally	1044	n/a	none	unimplemented	-	UsrEngn/ObjBase 行会分支	结盟——行会红线内（W27 显式不做）
+GUILD	guild-break-ally	1045	n/a	none	unimplemented	-	UsrEngn/ObjBase 行会分支	解盟——行会红线内（W27 显式不做）
+SIEGE	@requestcastlewarnow	-	n/a	none	unimplemented	-	ObjNpc.pas:TCastleOfficial/Castle.pas	申请攻城战——攻城红线内
+SIEGE	@@castlename	-	n/a	none	unimplemented	-	ObjNpc.pas:TCastleOfficial/Castle.pas	城堡更名——攻城红线内
+SIEGE	@@withdrawal	-	n/a	none	unimplemented	-	ObjNpc.pas:TCastleOfficial/Castle.pas	城金提取——攻城红线内
+SIEGE	@@receipts	-	n/a	none	unimplemented	-	ObjNpc.pas:TCastleOfficial/Castle.pas	城金入账——攻城红线内
+SIEGE	@openmaindoor	-	n/a	none	unimplemented	-	ObjNpc.pas:TCastleOfficial/Castle.pas	开城门——攻城红线内
+SIEGE	@closemaindoor	-	n/a	none	unimplemented	-	ObjNpc.pas:TCastleOfficial/Castle.pas	关城门——攻城红线内
+SIEGE	@repairdoornow	-	n/a	none	unimplemented	-	ObjNpc.pas:TCastleOfficial/Castle.pas	修门——攻城红线内
+SIEGE	@repairwallnow1	-	n/a	none	unimplemented	-	ObjNpc.pas:TCastleOfficial/Castle.pas	修城墙 1——攻城红线内
+SIEGE	@repairwallnow2	-	n/a	none	unimplemented	-	ObjNpc.pas:TCastleOfficial/Castle.pas	修城墙 2——攻城红线内
+SIEGE	@repairwallnow3	-	n/a	none	unimplemented	-	ObjNpc.pas:TCastleOfficial/Castle.pas	修城墙 3——攻城红线内
+SIEGE	@hirearchernow	-	n/a	none	unimplemented	-	ObjNpc.pas:TCastleOfficial/Castle.pas	雇佣弓箭手——攻城红线内
+SIEGE	@hireguardnow	-	n/a	none	unimplemented	-	ObjNpc.pas:TCastleOfficial/Castle.pas	雇佣守卫——攻城红线内
+SIEGE	@hireguardok	-	n/a	none	unimplemented	-	ObjNpc.pas:TCastleOfficial/Castle.pas	雇佣守卫确认——攻城红线内
+SIEGE	siege-war-cycle	-	n/a	none	unimplemented	-	Castle.pas:TUserCastle	宣战/守城/城门卫兵 AI 周期
+DEAL	deal-try	1025	n/a	none	unimplemented	-	ObjBase.pas 交易分支	发起交易（SM_DEALMENU/DEALTRY_FAIL）——交易红线内（W27 显式不做）
+DEAL	deal-add-item	1026	n/a	none	unimplemented	-	ObjBase.pas 交易分支	放入物品——交易红线内（W27 显式不做）
+DEAL	deal-del-item	1027	n/a	none	unimplemented	-	ObjBase.pas 交易分支	取回物品——交易红线内（W27 显式不做）
+DEAL	deal-cancel	1028	n/a	none	unimplemented	-	ObjBase.pas 交易分支	取消——交易红线内（W27 显式不做）
+DEAL	deal-chg-gold	1029	n/a	none	unimplemented	-	ObjBase.pas 交易分支	改金币——交易红线内（W27 显式不做）
+DEAL	deal-end	1030	n/a	none	unimplemented	-	ObjBase.pas 交易分支	确认成交（双确认+物品/金币事务）——交易红线内（W27 显式不做）
