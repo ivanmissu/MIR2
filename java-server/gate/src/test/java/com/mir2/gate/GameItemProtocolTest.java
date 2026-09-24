@@ -155,6 +155,23 @@ class GameItemProtocolTest {
   }
 
   @Test
+  void cannotTakeOffRejectionEmitsRedSysMessageAndTakeOffFail() {
+    List<GameOutbound> output = new ArrayList<>();
+    GameProtocolAdapter adapter = adapterFor(output);
+
+    adapter.send(new WorldEvent.UnequipRejected(1, -4, WorldEvent.UnequipRejection.CANNOT_TAKE_OFF));
+    assertEquals(2, output.size());
+
+    WirePacket sysMsg = ((GameOutbound.Packet) output.removeFirst()).packet();
+    assertEquals(ProtocolConstants.SM_SYSMESSAGE, sysMsg.message().ident());
+    assertEquals("无法取下物品", WireMessageCodec.decodeBody(sysMsg.encodedBody()));
+
+    WirePacket failMsg = ((GameOutbound.Packet) output.removeFirst()).packet();
+    assertEquals(ProtocolConstants.SM_TAKEOFF_FAIL, failMsg.message().ident());
+    assertEquals(-4, failMsg.message().recog());
+  }
+
+  @Test
   void unsupportedItemIdentsAreStillRejected() {
     List<GameOutbound> output = new ArrayList<>();
     GameProtocolAdapter adapter = adapterFor(output);

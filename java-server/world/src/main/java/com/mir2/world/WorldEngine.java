@@ -1044,6 +1044,55 @@ public final class WorldEngine implements AutoCloseable {
     });
   }
 
+  /** {@code CM_GROUPMODE} (ObjBase.pas:4777). */
+  public CompletableFuture<Boolean> setAllowGroup(int playerId, boolean allow) {
+    return submit(() -> changeGroupMode(playerId, allow));
+  }
+
+  /** {@code CM_CREATEGROUP} (ObjBase.pas:17542). */
+  public CompletableFuture<Boolean> createGroup(int playerId, String targetName) {
+    Objects.requireNonNull(targetName, "targetName");
+    return submit(() -> createPlayerGroup(playerId, targetName));
+  }
+
+  /** {@code CM_ADDGROUPMEMBER} (ObjBase.pas:17579). */
+  public CompletableFuture<Boolean> addGroupMember(int playerId, String targetName) {
+    Objects.requireNonNull(targetName, "targetName");
+    return submit(() -> addPlayerGroupMember(playerId, targetName));
+  }
+
+  /** {@code CM_DELGROUPMEMBER} (ObjBase.pas:17620). */
+  public CompletableFuture<Boolean> delGroupMember(int playerId, String targetName) {
+    Objects.requireNonNull(targetName, "targetName");
+    return submit(() -> delPlayerGroupMember(playerId, targetName));
+  }
+
+  public CompletableFuture<List<String>> groupMembers(int playerId) {
+    return submit(() -> {
+      Player p = players.get(playerId);
+      if (p == null || p.group == null) return List.of();
+      return p.group.memberIds().stream()
+          .map(players::get)
+          .filter(Objects::nonNull)
+          .map(m -> m.name)
+          .toList();
+    });
+  }
+
+  public CompletableFuture<Boolean> isGroupLeader(int playerId) {
+    return submit(() -> {
+      Player p = players.get(playerId);
+      return p != null && p.group != null && p.group.isLeader(playerId);
+    });
+  }
+
+  public CompletableFuture<Boolean> allowGroup(int playerId) {
+    return submit(() -> {
+      Player p = players.get(playerId);
+      return p != null && p.allowGroup;
+    });
+  }
+
   /**
    * Result of a {@code CM_QUERYUSERNAME}: either the actor's show name plus its
    * {@code GetCharColor} palette byte, or a ghost marker when the client asked about a
@@ -2114,6 +2163,7 @@ public final class WorldEngine implements AutoCloseable {
 
   private void leave(int playerId) {
     Player player = requirePlayer(playerId);
+    leaveGroup(player);
     persist(player);
     List<Integer> visibleIds = visibleIds(player.map, player.position, player.id);
     player.map.remove(player.id, player.position);
@@ -2365,6 +2415,7 @@ public final class WorldEngine implements AutoCloseable {
 
   private void handleDeath(WorldObject victim, WorldObject killer) {
     if (victim instanceof Player player) {
+      leaveGroup(player);
       // TBaseObject.Die marks the object dead and stamps m_dwDeathTick before anything else,
       // because ScatterBagItems and the RM_DEATH broadcast both observe that state.
       player.diedAt = clock.getAsLong();
@@ -2386,7 +2437,7 @@ public final class WorldEngine implements AutoCloseable {
       monster.targetId = 0;
       dropLoot(monster);
       if (killer instanceof Player player) {
-        awardExperience(player, monster.template.experience());
+        distributeMonsterExperience(player, monster.template.experience());
       }
     }
   }
@@ -2786,6 +2837,250 @@ public final class WorldEngine implements AutoCloseable {
         LOG.log(Level.WARNING, "ghosting failed for " + player.name, error);
       }
     }
+  }
+
+  private static final double[] GROUP_EXP_BONUS = {
+      1.0, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0, 2.1, 2.2
+  };
+
+  /**
+   * {@code TPlayObject.ClientGroupClose} / {@code CM_GROUPMODE} (ObjBase.pas:4777, 17522).
+   */
+  private boolean changeGroupMode(int playerId, boolean allow) {
+    Player player = requirePlayer(playerId);
+    player.allowGroup = allow;
+    emit(player, new WorldEvent.GroupModeChanged(player.id, allow));
+    if (!allow && player.group != null) {
+      if (player.group.isLeader(player.id)) {
+        // Delphi leader: SysMsg('If you want to withdraw from group, use function of (del member).', c_Red, t_Hint);
+        emit(player, new WorldEvent.SystemMessage(player.id, "无法直接关闭队伍，请使用删除成员功能退出小组"));
+      } else {
+        leaveGroup(player);
+      }
+    }
+    return true;
+  }
+
+  /**
+   * {@code TPlayObject.ClientCreateGroup} (ObjBase.pas:17542).
+   */
+  private boolean createPlayerGroup(int playerId, String targetName) {
+    Player leader = requirePlayer(playerId);
+    if (leader.group != null) {
+      emit(leader, new WorldEvent.GroupCreateFailed(playerId, -1));
+      return false;
+    }
+    Player target = findPlayerByName(targetName);
+    if (target == null || target.id == playerId || !target.ability.alive() || target.diedAt != 0) {
+      emit(leader, new WorldEvent.GroupCreateFailed(playerId, -2));
+      return false;
+    }
+    if (target.group != null) {
+      emit(leader, new WorldEvent.GroupCreateFailed(playerId, -3));
+      return false;
+    }
+    if (!target.allowGroup) {
+      emit(leader, new WorldEvent.GroupCreateFailed(playerId, -4));
+      return false;
+    }
+
+    PlayerGroup group = new PlayerGroup(leader.id);
+    group.add(target.id);
+    leader.group = group;
+    target.group = group;
+    leader.allowGroup = true;
+
+    emit(leader, new WorldEvent.GroupCreated(leader.id));
+    sendGroupText(group, String.format("%s 已加入小组", leader.name));
+    sendGroupText(group, String.format("%s 已加入小组", target.name));
+    broadcastGroupMembers(group);
+    return true;
+  }
+
+  /**
+   * {@code TPlayObject.ClientAddGroupMember} (ObjBase.pas:17579).
+   */
+  private boolean addPlayerGroupMember(int playerId, String targetName) {
+    Player leader = requirePlayer(playerId);
+    if (leader.group == null || !leader.group.isLeader(playerId)) {
+      emit(leader, new WorldEvent.GroupAddMemberFailed(playerId, -1));
+      return false;
+    }
+    PlayerGroup group = leader.group;
+    if (group.size() >= PlayerGroup.MAX_MEMBERS) {
+      emit(leader, new WorldEvent.GroupAddMemberFailed(playerId, -5));
+      return false;
+    }
+    Player target = findPlayerByName(targetName);
+    if (target == null || target.id == playerId || !target.ability.alive() || target.diedAt != 0) {
+      emit(leader, new WorldEvent.GroupAddMemberFailed(playerId, -2));
+      return false;
+    }
+    if (target.group != null) {
+      emit(leader, new WorldEvent.GroupAddMemberFailed(playerId, -3));
+      return false;
+    }
+    if (!target.allowGroup) {
+      emit(leader, new WorldEvent.GroupAddMemberFailed(playerId, -4));
+      return false;
+    }
+
+    group.add(target.id);
+    target.group = group;
+    emit(leader, new WorldEvent.GroupMemberAdded(leader.id));
+    sendGroupText(group, String.format("%s 已加入小组", target.name));
+    broadcastGroupMembers(group);
+    return true;
+  }
+
+  /**
+   * {@code TPlayObject.ClientDelGroupMember} (ObjBase.pas:17620).
+   */
+  private boolean delPlayerGroupMember(int playerId, String targetName) {
+    Player actor = requirePlayer(playerId);
+    if (actor.group == null || !actor.group.isLeader(playerId)) {
+      emit(actor, new WorldEvent.GroupDelMemberFailed(playerId, -1));
+      return false;
+    }
+    PlayerGroup group = actor.group;
+    Player target = findPlayerByName(targetName);
+    if (target == null) {
+      emit(actor, new WorldEvent.GroupDelMemberFailed(playerId, -2));
+      return false;
+    }
+    if (!group.contains(target.id)) {
+      emit(actor, new WorldEvent.GroupDelMemberFailed(playerId, -3));
+      return false;
+    }
+
+    if (target.id == actor.id) {
+      // Leader deletes self -> disbands the party
+      disbandGroup(group);
+      return true;
+    }
+
+    group.remove(target.id);
+    target.group = null;
+    emit(target, new WorldEvent.GroupCancelled(target.id));
+    emit(target, new WorldEvent.SystemMessage(target.id, String.format("%s 已退出小组", target.name)));
+    emit(actor, new WorldEvent.GroupMemberDeleted(actor.id, target.name));
+
+    if (group.size() <= 1) {
+      disbandGroup(group);
+    } else {
+      sendGroupText(group, String.format("%s 已退出小组", target.name));
+      broadcastGroupMembers(group);
+    }
+    return true;
+  }
+
+  /**
+   * Member leaves group (ObjBase.pas:18947, 21636 {@code LeaveGroup}).
+   */
+  private void leaveGroup(Player member) {
+    if (member.group == null) return;
+    PlayerGroup group = member.group;
+    member.group = null;
+    group.remove(member.id);
+    emit(member, new WorldEvent.GroupCancelled(member.id));
+    emit(member, new WorldEvent.SystemMessage(member.id, String.format("%s 已退出小组", member.name)));
+
+    if (group.isLeader(member.id) || group.size() <= 1) {
+      disbandGroup(group);
+    } else {
+      sendGroupText(group, String.format("%s 已退出小组", member.name));
+      broadcastGroupMembers(group);
+    }
+  }
+
+  /**
+   * Disbands the party (ObjBase.pas:21647 {@code CancelGroup}).
+   */
+  private void disbandGroup(PlayerGroup group) {
+    List<Integer> members = List.copyOf(group.memberIds());
+    for (int memberId : members) {
+      Player p = players.get(memberId);
+      if (p != null) {
+        p.group = null;
+        emit(p, new WorldEvent.GroupCancelled(p.id));
+        emit(p, new WorldEvent.SystemMessage(p.id, "你的小组已解散"));
+      }
+    }
+  }
+
+  private void broadcastGroupMembers(PlayerGroup group) {
+    List<String> names = new ArrayList<>();
+    for (int memberId : group.memberIds()) {
+      Player p = players.get(memberId);
+      if (p != null) names.add(p.name);
+    }
+    for (int memberId : group.memberIds()) {
+      Player p = players.get(memberId);
+      if (p != null) {
+        emit(p, new WorldEvent.GroupMembersChanged(p.id, names));
+      }
+    }
+  }
+
+  private void sendGroupText(PlayerGroup group, String text) {
+    for (int memberId : group.memberIds()) {
+      Player p = players.get(memberId);
+      if (p != null) {
+        emit(p, new WorldEvent.SystemMessage(p.id, text));
+      }
+    }
+  }
+
+  /**
+   * {@code TPlayObject.GainExp} (ObjBase.pas:15557): If the player is in a party, find all
+   * living members on the same map within 12 tiles. If more than one member qualifies, apply
+   * the party size bonus and distribute experience proportional to level. Otherwise, award
+   * full base experience directly to the killer.
+   */
+  private void distributeMonsterExperience(Player killer, long baseExp) {
+    if (baseExp <= 0) return;
+    if (killer.group == null) {
+      awardExperience(killer, baseExp);
+      return;
+    }
+    List<Player> eligible = new ArrayList<>();
+    for (int memberId : killer.group.memberIds()) {
+      Player member = players.get(memberId);
+      if (member != null && member.ability.alive() && member.diedAt == 0
+          && member.map == killer.map
+          && Math.abs(member.position.x() - killer.position.x()) <= 12
+          && Math.abs(member.position.y() - killer.position.y()) <= 12) {
+        eligible.add(member);
+      }
+    }
+    if (eligible.size() <= 1) {
+      awardExperience(killer, baseExp);
+      return;
+    }
+    int n = eligible.size();
+    double bonusFactor = GROUP_EXP_BONUS[Math.min(n, GROUP_EXP_BONUS.length - 1)];
+    long totalExp = Math.round(baseExp * bonusFactor);
+    int sumLevel = 0;
+    for (Player p : eligible) {
+      sumLevel += p.ability.level();
+    }
+    for (Player p : eligible) {
+      long share = sumLevel > 0
+          ? Math.round((double) totalExp / sumLevel * p.ability.level())
+          : Math.round((double) totalExp / n);
+      awardExperience(p, share);
+    }
+  }
+
+  private Player findPlayerByName(String name) {
+    if (name == null || name.isBlank()) return null;
+    String trimmed = name.trim();
+    Integer id = playersByName.get(trimmed);
+    if (id != null) return players.get(id);
+    for (Player p : players.values()) {
+      if (p.name.equalsIgnoreCase(trimmed)) return p;
+    }
+    return null;
   }
 
   /**
@@ -3542,6 +3837,10 @@ public final class WorldEngine implements AutoCloseable {
     /** {@code m_nHealthTick} / {@code m_nSpellTick}. */
     private long healthTicks;
     private long spellTicks;
+    /** {@code m_boAllowGroup}: whether the player permits party invitations (ObjBase.pas:4780). */
+    private boolean allowGroup = true;
+    /** {@code m_GroupOwner} / {@code m_GroupMembers}: active party container. */
+    private PlayerGroup group;
 
     private Player(
         int id,
