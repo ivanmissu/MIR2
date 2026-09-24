@@ -4188,8 +4188,16 @@ public final class WorldEngine implements AutoCloseable {
     /** {@code m_nHealthTick} / {@code m_nSpellTick}. */
     private long healthTicks;
     private long spellTicks;
-    /** {@code m_boAllowGroup}: whether the player permits party invitations (ObjBase.pas:4780). */
-    private boolean allowGroup = true;
+    /**
+     * {@code m_boAllowGroup}: whether the player permits party invitations. Delphi seeds it
+     * to {@code False} in {@code TPlayObject.Initialize} (ObjBase.pas:1270) — a fresh
+     * character refuses invitations until the client sends {@code CM_GROUPMODE} with
+     * param=1 (ObjBase.pas:4777-4782). The W26 port wrongly defaulted this to true, which
+     * the W30 duo regression caught: the scripted "invite before the target opened group
+     * mode" step was silently succeeding instead of answering {@code SM_CREATEGROUP_FAIL}
+     * with reason -4.
+     */
+    private boolean allowGroup = false;
     /** {@code m_GroupOwner} / {@code m_GroupMembers}: active party container. */
     private PlayerGroup group;
 

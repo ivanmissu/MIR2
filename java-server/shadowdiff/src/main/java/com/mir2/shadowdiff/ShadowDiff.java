@@ -127,6 +127,15 @@ public final class ShadowDiff {
     if (!a.wornItems().equals(b.wornItems())) {
       out.add("worn: " + a.wornItems() + " vs " + b.wornItems());
     }
+    if (!a.groupMembers().equals(b.groupMembers())) {
+      out.add("group: " + a.groupMembers() + " vs " + b.groupMembers());
+    }
+    if (a.nameColor() != b.nameColor()) {
+      out.add("nameColor: " + a.nameColor() + " vs " + b.nameColor());
+    }
+    if (!a.groundItems().equals(b.groundItems())) {
+      out.add("ground: " + a.groundItems() + " vs " + b.groundItems());
+    }
   }
 
   private static List<String> sortedCopy(List<String> values) {

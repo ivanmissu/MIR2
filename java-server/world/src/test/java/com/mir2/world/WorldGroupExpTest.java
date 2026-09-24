@@ -25,6 +25,7 @@ class WorldGroupExpTest {
           world.enterPlayer("WarriorA", "0", new Position(5, 5), Direction.RIGHT, eventsA::add));
       WorldObjectSnapshot b = run(world,
           world.enterPlayer("WarriorB", "0", new Position(5, 6), Direction.RIGHT, eventsB::add));
+      run(world, world.setAllowGroup(b.id(), true));
       run(world, world.createGroup(a.id(), "WarriorB"));
 
       WorldObjectSnapshot chicken = run(world,
@@ -65,6 +66,7 @@ class WorldGroupExpTest {
       // WarriorB is at (25, 25), distance > 12 tiles away
       WorldObjectSnapshot b = run(world,
           world.enterPlayer("WarriorB", "0", new Position(25, 25), Direction.RIGHT, eventsB::add));
+      run(world, world.setAllowGroup(b.id(), true));
       run(world, world.createGroup(a.id(), "WarriorB"));
 
       run(world,

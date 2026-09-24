@@ -83,6 +83,26 @@ final class ShadowSession implements AutoCloseable {
   private long worldTime = -1;
   private final Map<Integer, BackpackItem> bag = new LinkedHashMap<>();
   private final Map<Integer, BackpackItem> worn = new LinkedHashMap<>();
+  /**
+   * The party roster exactly as the last {@code SM_GROUPMEMBERS} spelled it (W30): server
+   * order, names verbatim. Cleared on every {@code SM_NEWMAP} — a fresh map load forgets the
+   * party, and the server dissolves it on relog anyway.
+   */
+  private final List<String> groupMembers = new ArrayList<>();
+  /**
+   * The last {@code SM_CHANGENAMECOLOR} seen for the session's own actor, or -1 before any
+   * repaint. This is the wire-visible trace of the PK level model (W30): the aggressor's
+   * 交手 tint on the first blow between players, the murder penalty's yellow at 100 points.
+   */
+  private int nameColor = -1;
+  /**
+   * Ground items the client believes are lying around (W30): {@code SM_ITEMSHOW} adds
+   * (recog = server-local item id, cell + name verbatim), {@code SM_ITEMHIDE} removes —
+   * exactly the {@code g_DropedItemList} bookkeeping ClMain.pas does. The snapshot renders
+   * name+cell only, so server-local ids never leak into the comparison; a divergent drop
+   * position or name is a STATE failure a real player would have noticed too.
+   */
+  private final Map<Integer, String> groundItems = new LinkedHashMap<>();
 
   // --- pending equipment bookkeeping (applied on SM_TAKEON_OK / SM_TAKEOFF_OK) ---
   private Integer pendingTakeOnMakeIndex;
@@ -168,6 +188,16 @@ final class ShadowSession implements AutoCloseable {
           0, position.x(), position.y(), 0));
       case BAG -> sendAction(message(ProtocolConstants.CM_QUERYBAGITEMS, 0, 0, 0, 0));
       case SAY -> game.sendPacket(message(ProtocolConstants.CM_SAY, 0, 0, 0, 0), op.text());
+      // The W26 group protocol: param carries the CM_GROUPMODE switch, the other three put
+      // the target player's name in the body exactly like ObjBase.pas does.
+      case GROUPMODE -> game.sendPacket(message(ProtocolConstants.CM_GROUPMODE,
+          0, "1".equals(op.text()) ? 1 : 0, 0, 0), "");
+      case GROUPCREATE -> game.sendPacket(message(ProtocolConstants.CM_CREATEGROUP,
+          0, 0, 0, 0), op.text());
+      case GROUPADD -> game.sendPacket(message(ProtocolConstants.CM_ADDGROUPMEMBER,
+          0, 0, 0, 0), op.text());
+      case GROUPDEL -> game.sendPacket(message(ProtocolConstants.CM_DELGROUPMEMBER,
+          0, 0, 0, 0), op.text());
       case DROP -> {
         BackpackItem item = findInBag(op.text());
         if (item == null) {
@@ -208,7 +238,20 @@ final class ShadowSession implements AutoCloseable {
   StateSnapshot snapshot() {
     return new StateSnapshot(mapId, position.x(), position.y(), direction.code(),
         hp, maxHp, mp, maxMp, level, experience, gold, itemLines(bag), itemLines(worn),
-        List.copyOf(combat), neighbourLines(), worldTime);
+        List.copyOf(combat), neighbourLines(), worldTime, List.copyOf(groupMembers),
+        nameColor, groundItems.values().stream().sorted().toList());
+  }
+
+  /**
+   * A passive observation bucket (W30 duo mode): drains whatever the server pushed during
+   * the <em>other</em> session's op — interest broadcasts, group texts, the partner's
+   * combat — without sending anything. Called with the acting op's description so the two
+   * per-player streams stay index-aligned for {@link ShadowDiff#compare}.
+   */
+  OpObservation observe(String label) throws IOException {
+    combat.clear();
+    Drained drained = drain();
+    return new OpObservation(label, drained.acks(), drained.messages(), snapshot());
   }
 
   /**
@@ -424,6 +467,12 @@ final class ShadowSession implements AutoCloseable {
         // A fresh map wipes the client's actor list (ClMain.pas clears the scene), so the
         // census starts empty and is rebuilt from the SM_TURN storm that follows.
         neighbours.clear();
+        // The client also forgets its party and its name tint on a fresh map load; the world
+        // dissolves the group on relog anyway, so an empty roster is the honest post-relog
+        // state until a new SM_GROUPMEMBERS / SM_CHANGENAMECOLOR arrives.
+        groupMembers.clear();
+        nameColor = -1;
+        groundItems.clear();
       }
       // The appearance/movement family (ObjBase.pas:5296/5316/5446): recog=actor,
       // param/tag=cell, series=MakeWord(direction, light). Everything except the player's
@@ -496,6 +545,31 @@ final class ShadowSession implements AutoCloseable {
       case ProtocolConstants.SM_DEATH -> combat.add("death "
           + (message.recog() == selfId ? "self" : "other")
           + " at=(" + message.param() + "," + message.tag() + ")");
+      // SM_GROUPMEMBERS (W26): body is name/name/… in server roster order. Tracked verbatim
+      // so a party that formed (or disbanded) differently on one server is a STATE failure.
+      case ProtocolConstants.SM_GROUPMEMBERS -> {
+        String body = WireMessageCodec.decodeBody(packet.encodedBody());
+        groupMembers.clear();
+        for (String name : body.split("/", -1)) {
+          if (!name.isEmpty()) groupMembers.add(name);
+        }
+      }
+      // SM_GROUPCANCEL: the client tears its party list down on disband/kick/leave
+      // (ClMain.pas's SM_GROUPCANCEL branch clears the group window), so the roster must
+      // not linger after the last SM_GROUPMEMBERS — otherwise a group that only disbanded
+      // on one server would look identical to a still-intact one two ops later.
+      case ProtocolConstants.SM_GROUPCANCEL -> groupMembers.clear();
+      // SM_CHANGENAMECOLOR: recog=actor, param=GetCharColor. Only the session's own tint is
+      // tracked — the partner's colour is a broadcast the client renders, not player state.
+      case ProtocolConstants.SM_CHANGENAMECOLOR -> {
+        if (message.recog() == selfId) nameColor = message.param();
+      }
+      // SM_ITEMSHOW/SM_ITEMHIDE: recog = server-local ground-item id, param/tag = cell.
+      // The client maintains its drop list from exactly these two (g_DropedItemList).
+      case ProtocolConstants.SM_ITEMSHOW -> groundItems.put(message.recog(),
+          WireMessageCodec.decodeBody(packet.encodedBody())
+              + " at=(" + message.param() + "," + message.tag() + ")");
+      case ProtocolConstants.SM_ITEMHIDE -> groundItems.remove(message.recog());
       // SM_WINEXP: recog=total experience, param/tag=low/high word of the gained amount.
       case ProtocolConstants.SM_WINEXP -> {
         experience = Integer.toUnsignedLong(message.recog());
