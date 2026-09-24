@@ -22,9 +22,11 @@ import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 import java.util.function.LongSupplier;
+import java.util.logging.Logger;
 
 /** Converts the movement, melee combat, chat, doors, day/night and map-entry between legacy packets and the world. */
 public final class GameProtocolAdapter implements WorldEventSink {
+  private static final Logger LOG = Logger.getLogger(GameProtocolAdapter.class.getName());
   private final WorldEngine world;
   private final Consumer<GameOutbound> output;
   private final LongSupplier serverTick;
@@ -393,6 +395,22 @@ public final class GameProtocolAdapter implements WorldEventSink {
         if (opened.playerId() == playerId) {
           output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_SENDUSERREPAIR,
               opened.merchantId(), 0, 0, 0, "")));
+        }
+      }
+      // RM_MERCHANTDLGCLOSE (ObjBase.pas:5846): recog=merchant, rest zero. The @exit label.
+      case WorldEvent.MerchantDialogClosed closed -> {
+        if (closed.playerId() == playerId) {
+          output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_MERCHANTDLGCLOSE,
+              closed.merchantId(), 0, 0, 0, "")));
+        }
+      }
+      // A deferred/unknown merchant label. Delphi is silent on the wire (the arm is guarded by an
+      // unset m_boXXX flag), so we send no packet — but we log it, keeping the refusal observable
+      // instead of a silent no-op (W29). The WorldEvent itself is the auditable rejection record.
+      case WorldEvent.MerchantActionRejected rejected -> {
+        if (rejected.playerId() == playerId) {
+          LOG.fine(() -> "merchant label refused: '" + rejected.label() + "' ("
+              + (rejected.unknown() ? "unknown" : rejected.status()) + ") — " + rejected.reason());
         }
       }
       case WorldEvent.RepairCostResolved resolved -> {

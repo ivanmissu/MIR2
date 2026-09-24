@@ -25,12 +25,16 @@ W28 已按经典 `Magic.DB` 1–33 交集建立基础框架，并实现三类基
 
 要求：所有技能都经过能力/职业/等级/MP 校验；技能失败必须有确定的 `SM_SYSMESSAGE`；技能状态不直接修改 Socket，只通过 `WorldEvent` 出站。完成基础框架后，再按 Delphi `Magic.pas` 的技能表逐项接入。
 
-### 3. NPC 脚本安全边界（P1）
+### 3. NPC 脚本安全边界（P1）— 已完成（W29）
 
-- 保持现有修理 NPC 状态机兼容。
-- 新增 Market_Def 指令清单与拒绝未知指令的测试。
-- 先覆盖查询/对话/传送三类只读或低风险指令；买卖与任务脚本必须有库存、金币和事务测试后再开放。
-- 未实现脚本不得静默成功，统一记录可观测的拒绝事件。
+W29 已建立 `MerchantCommand` 目录（`M2Share.pas` 26 个商人标签全量分类），并交付安全边界：
+
+- 保持现有修理 NPC 状态机兼容（`@repair`/`@s_repair` 行为不变，返回类型收敛为语义化 `MerchantSelectOutcome`）。
+- 新增 Market_Def 指令清单与拒绝未知指令的测试（`MerchantCommandTest`、`WorldMerchantCommandTest`、`GameMerchantCommandProtocolTest`）。
+- 低风险指令 `@exit`（关窗 `SM_MERCHANTDLGCLOSE`）已开放；买卖/仓库/制药/升级/冠名保持 `DEFERRED_TRANSACTION`，回跳/主菜单/消息保持 `DEFERRED_SCRIPT`，事务测试前不接线。
+- 未实现脚本不再静默成功：非实现标签一律 `WorldEvent.MerchantActionRejected`（含 label/category/status/reason）+ 日志，线上仍与 Delphi 一样不发包。
+
+证据见 `docs/g0-evidence/2026-09-24-w29-merchant-command-boundary.md`。
 
 ### 4. 交互与持久化回归（P1）
 
@@ -52,4 +56,4 @@ W28 已按经典 `Magic.DB` 1–33 交集建立基础框架，并实现三类基
 
 ## 当前进度与下一项
 
-G4 能力矩阵和三技能基础框架已完成；下一项按顺序推进 **NPC 指令清单与安全拒绝边界**，随后做交互回归。每个切片继续独立测试、独立证据、独立对拍。
+G4 能力矩阵、三技能基础框架（W28）与 NPC/Market_Def 指令清单及安全拒绝边界（W29）已完成；下一项按顺序推进 **交互与持久化回归**（§4：组队+击杀经验+掉落、死亡自动退队、重登金币/装备/背包一致、PK 与组队经验边界、装备锁定提示，用 shadowdiff 固定脚本同时验证状态快照与关键消息集合）。每个切片继续独立测试、独立证据、独立对拍。

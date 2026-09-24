@@ -101,6 +101,16 @@ Java 服务端。
   `TNpcActor` 渲染），占格、入视野广播、可查名（`CM_QUERYUSERNAME →
   SM_USERNAME/SM_GHOST` 复刻 `CretInNearXY` 3×3 窗口），不可攻击；默认出生点旁
   3 个，`MIR2_NPC_LIST` 可自定义，Market_Def 商人功能仍在红线外。
+- **Market_Def 商人指令清单 + 未知指令安全拒绝边界（W29）**：`MerchantCommand` 目录把
+  `M2Share.pas` 26 个商人标签按「分类 × 完成度」全量归档（这不是脚本引擎，只做机械查表，不解析
+  NPC 脚本、不做标签跳转）。`CM_MERCHANTDLGSELECT` 分派忠实于 `TMerchant.UserSelect`
+  （ObjNpc.pas:1419）：`@repair`/`@s_repair` 沿用 W15 修理闭环，新增低风险 `@exit` 关窗
+  （`RM_MERCHANTDLGCLOSE → SM_MERCHANTDLGCLOSE`，recog=商人 id）；买卖/仓库/制药/升级/冠名
+  标记 `DEFERRED_TRANSACTION`、回跳/主菜单/消息标记 `DEFERRED_SCRIPT`，事务测试前一律不接线。
+  关键红线：**未实现标签不再静默存下冒充成功**——一律发 `WorldEvent.MerchantActionRejected`
+  （含 label/category/status/reason）+ 日志，让拒绝在测试/shadowdiff/日志中可观测，但线上仍与
+  Delphi 一样不向真实客户端发包（原版这些分支由未设置的 `m_boXXX` 旗守卫，等价于「该商人不支持
+  此功能」）。`@@useitemname` 复刻 `CompareLStr` 前缀匹配，其余标签 `CompareText` 大小写不敏感。
 - **战斗/背包存档**：HP、MP、等级、经验与 46 格背包通过 SQLite 事务保存，在角色进图前恢复；支持从旧 W02 schema 原位升级
 - **物品目录与背包同步（W04）**：最小标准物品库（`StdItem` 完整 `TStdItem` 字段 + SQLite `std_items` 表）、
   复刻 `GetItemNumber` 的稳定 `MakeIndex`、耐久字段、76 字节 `TClientItem` 小端编解码，
@@ -419,8 +429,11 @@ docker compose -f java-server/compose.yml up --build
   （复活戒指 AC/MAC 0-1、Looks 175、等级 16、价 20000）；套装效果（Shape/AniCount
   111-217 表未收录行为）、技能/魔法、远程攻击与剩余 47 种怪物仍未实现——**Monster.DB 全 378 行
   虽已入库，但红线内 47 种怪不接线行为，仅数据待命**；修理目前是
-  协议级最小闭环（`m_sScriptLable` 状态机 + 修理三消息），**NPC 对象、商家距离校验
-  与 Market_Def 脚本引擎未实现**（受「NPC 脚本对拍前不得扩展」红线约束）；
+  协议级最小闭环（`m_sScriptLable` 状态机 + 修理三消息）。W29 起商人标签走
+  `MerchantCommand` 指令清单：`@repair`/`@s_repair`/`@exit` 已实现，其余 23 个标签
+  按 `DEFERRED_TRANSACTION`/`DEFERRED_SCRIPT` 归档并在运行期**可观测拒绝**（不再静默），
+  但 **NPC 对象、商家距离校验（`FindMerchant`）与 Market_Def 脚本引擎仍未实现**
+  （买卖/仓库/制药/升级等待库存·金币·事务测试后再开放，受「NPC 脚本对拍前不得扩展」红线约束）；
 - 等级提升与死亡/复活闭环（W14）已实现；死亡掉落自 W20 起**背包与已穿装备都覆盖**
   （`DropUseItems` + 删除列表空名 quirk + 红名 `boDieRedScatterBagAll` 全掉 + PK 等级模型）。
   仍未迁移的相关小项：`InDisableTakeOffList`（服务器配置文本清单，非目录列）、

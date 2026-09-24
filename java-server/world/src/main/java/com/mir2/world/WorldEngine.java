@@ -771,33 +771,71 @@ public final class WorldEngine implements AutoCloseable {
   }
 
   /**
-   * {@code CM_MERCHANTDLGSELECT -> TMerchant.UserSelect} (ObjNpc.pas:1516), reduced to the one
-   * label family this engine can honour without the Market_Def script engine: the label is
-   * remembered as {@code m_sScriptLable} (which is how Delphi later picks the repair mode) and
-   * {@code @repair} / {@code @s_repair} answer with {@code SM_SENDUSERREPAIR} so the client
-   * opens its repair dialog. Every other label is stored silently — the script response it
-   * would generate does not exist here yet. The merchant proximity check ({@code FindMerchant},
-   * same map, |Δ|<15) needs NPC objects and is deferred to the NPC slice.
+   * {@code CM_MERCHANTDLGSELECT -> TMerchant.UserSelect} (ObjNpc.pas:1419), dispatched through the
+   * {@link MerchantCommand} catalog. As in Delphi, {@code m_sScriptLable} is set to the raw label
+   * for every {@code @}-prefixed selection (which is how the repair path later picks normal vs.
+   * special mode), and the dispatch honours the labels this engine actually implements:
    *
-   * @return true when the label opened the repair dialog
+   * <ul>
+   *   <li>{@code @repair} / {@code @s_repair} answer {@code SM_SENDUSERREPAIR} so the client opens
+   *       its repair dialog ({@link MerchantSelectOutcome#REPAIR_DIALOG}).</li>
+   *   <li>{@code @exit} answers {@code SM_MERCHANTDLGCLOSE} to close the window
+   *       ({@link MerchantSelectOutcome#DIALOG_CLOSED}).</li>
+   * </ul>
+   *
+   * <p>Every other label — a deferred transaction/script label or one absent from the catalog —
+   * is <b>rejected observably</b> ({@link WorldEvent.MerchantActionRejected} + a log line) rather
+   * than silently stored, so an unimplemented script can never masquerade as success (W29 red
+   * line). No spurious wire packet is sent on rejection: the real client would hear nothing from
+   * Delphi either, since those arms are guarded behind merchant {@code m_boXXX} flags that no
+   * loaded Market_Def script sets here.
+   *
+   * <p>The merchant proximity check ({@code FindMerchant}, same map, |Δ|&lt;15) needs full NPC
+   * objects and is deferred to the NPC slice.
+   *
+   * @return the observable outcome of the selection
    */
-  public CompletableFuture<Boolean> selectMerchantLabel(
+  public CompletableFuture<MerchantSelectOutcome> selectMerchantLabel(
       int playerId, int merchantId, String label) {
     Objects.requireNonNull(label, "label");
     return submit(() -> {
       Player player = requirePlayer(playerId);
-      if (!player.ability.alive()) return false;
+      if (!player.ability.alive()) return MerchantSelectOutcome.IGNORED;
       // UserSelect only reacts to labels that start with '@'; GetValidStr3 splits the input
       // at CR for the @@-input labels.
       String trimmed = label.strip();
-      if (trimmed.isEmpty() || trimmed.charAt(0) != '@') return false;
+      if (trimmed.isEmpty() || trimmed.charAt(0) != '@') return MerchantSelectOutcome.IGNORED;
       String firstToken = trimmed.split("\r", 2)[0];
+      // Delphi always assigns m_sScriptLable := sData at the top, so re-selecting a non-repair
+      // label correctly drops back to normal-repair mode on any later @repair.
       player.merchantLabel = trimmed;
-      if ("@repair".equalsIgnoreCase(firstToken) || "@s_repair".equalsIgnoreCase(firstToken)) {
-        emit(player, new WorldEvent.MerchantRepairDialog(player.id, merchantId));
-        return true;
+
+      MerchantCommand command = MerchantCommand.resolve(firstToken).orElse(null);
+      if (command != null && command.status() == MerchantCommand.Status.IMPLEMENTED) {
+        switch (command.category()) {
+          case REPAIR -> {
+            emit(player, new WorldEvent.MerchantRepairDialog(player.id, merchantId));
+            return MerchantSelectOutcome.REPAIR_DIALOG;
+          }
+          case DIALOG_NAVIGATION -> {
+            // The only implemented navigation label is @exit.
+            emit(player, new WorldEvent.MerchantDialogClosed(player.id, merchantId));
+            return MerchantSelectOutcome.DIALOG_CLOSED;
+          }
+          default -> { /* fall through to rejection for any other implemented category */ }
+        }
       }
-      return false;
+
+      MerchantCommand.Category category = command == null ? null : command.category();
+      MerchantCommand.Status status = command == null ? null : command.status();
+      String reason = command == null
+          ? "未知商人标签（不在 Market_Def 指令清单内）"
+          : command.note();
+      LOG.fine(() -> "rejecting merchant label '" + firstToken + "' for player " + player.id
+          + " (" + (command == null ? "unknown" : status) + "): " + reason);
+      emit(player, new WorldEvent.MerchantActionRejected(
+          player.id, merchantId, firstToken, category, status, reason));
+      return MerchantSelectOutcome.REJECTED;
     });
   }
 
