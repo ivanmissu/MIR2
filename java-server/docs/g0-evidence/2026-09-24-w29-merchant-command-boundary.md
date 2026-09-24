@@ -25,6 +25,7 @@
   - 每条 `@` 前缀选择都先 `m_sScriptLable := sData`（Java 侧 `player.merchantLabel = trimmed`），因此在 `@s_repair` 之后选任意非修理标签，再选 `@repair` 会正确回落到普通修理模式——由 `WorldMerchantCommandTest#reSelectingANonRepairLabelDropsBackToNormalRepairMode` 钉死。
   - `@exit` 复刻 `PlayObject.SendMsg(Self, RM_MERCHANTDLGCLOSE, ...)`（ObjNpc.pas:1593 → ObjBase.pas:5846），`SM_MERCHANTDLGCLOSE` 的 `recog` = 客户端点击的商人 id，其余字段 0。
   - `@@useitemname` 用 `CompareLStr` 语义的**前缀匹配**（`@@useitemname屠龙` 命中），其余标签 `CompareText` 大小写不敏感精确匹配。
+  - **`sData[1] = '@'` 守卫**：`UserSelect` 只对首字符为 `@` 的标签作出反应。`~@*` 结果标签是脚本内部 `GotoLable` 的跳转目标、客户端从不主动选择，因此收到 `~@repair` 这类选择时是**纯 no-op（IGNORED）而非拒绝**——`WorldMerchantCommandTest#tildePrefixedCallbackLabelsAreIgnoredLikeDelphisAtGuard` 钉死；`MerchantCommand.resolve` 仍照常收录这些标签用于清单/矩阵归档。
 - **拒绝为何在线上静默**：Delphi 中这些分支都由商人自身的 `m_boBuy`/`m_boSell`/… 旗守卫；此处没有任何 Market_Def 脚本设置这些旗，等价于「该商人不支持此功能」，原版对客户端**不发包**。因此 W29 的拒绝**不向真实客户端发送任何 SM**（避免与 Delphi 线上字节分叉），改为发 `WorldEvent.MerchantActionRejected` + `LOG.fine`，让拒绝在测试 / shadowdiff / 日志中**可观测**，杜绝「静默存下标签冒充成功」。
 
 ## 3. 指令清单快照（`MerchantCommand` 目录，26 条）

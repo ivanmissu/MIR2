@@ -93,12 +93,32 @@ class WorldMerchantCommandTest {
       WorldObjectSnapshot player = enter(world, characterId, events::add);
       events.clear();
 
+      // @fail_s_repair is a script result label that still begins with '@', so it reaches the
+      // catalog dispatch (unlike the ~@ callbacks, see below) and is rejected as deferred script.
       assertEquals(MerchantSelectOutcome.REJECTED,
-          run(world, world.selectMerchantLabel(player.id(), 9001, "~@repair")));
+          run(world, world.selectMerchantLabel(player.id(), 9001, "@fail_s_repair")));
       WorldEvent.MerchantActionRejected rejected =
           single(events, WorldEvent.MerchantActionRejected.class);
       assertEquals(MerchantCommand.Category.SCRIPT_CALLBACK, rejected.category());
       assertEquals(MerchantCommand.Status.DEFERRED_SCRIPT, rejected.status());
+    }
+  }
+
+  @Test
+  void tildePrefixedCallbackLabelsAreIgnoredLikeDelphisAtGuard() {
+    List<WorldEvent> events = new ArrayList<>();
+    UUID characterId = UUID.randomUUID();
+    PreparedStore store = newStore(characterId);
+    try (WorldEngine world = engine(store)) {
+      WorldObjectSnapshot player = enter(world, characterId, events::add);
+      events.clear();
+
+      // Delphi UserSelect only reacts to labels whose first char is '@' (sData[1] = '@'). The
+      // ~@ result labels are internal GotoLable jump targets a client never selects, so a raw
+      // ~@repair selection is a no-op — not even a rejection. (resolve() still catalogs it.)
+      assertEquals(MerchantSelectOutcome.IGNORED,
+          run(world, world.selectMerchantLabel(player.id(), 9001, "~@repair")));
+      assertTrue(events.isEmpty(), "a ~@ selection emits nothing at all");
     }
   }
 
