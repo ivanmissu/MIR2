@@ -41,7 +41,7 @@ CM	CM_BUTCH	1007	yes	none	protocol-only	-	Grobal2.pas	挖肉（Delphi 回 SM_BUT
 CM	CM_MAGICKEYCHANGE	1008	yes	gate-game	implemented	GameMagicProtocolTest,WorldMagicTest	Grobal2.pas	技能快捷键持久化——W28 三技能最小切片已接线
 CM	CM_SOFTCLOSE	1009	yes	gate-game	implemented	GameSessionIntegrationTest	Grobal2.pas	退出到选人（2s 后客户端复用同一认证重查角色 quirk）
 CM	CM_CLICKNPC	1010	yes	none	protocol-only	-	Grobal2.pas	点击 NPC 开对话——脚本引擎前置；W21 仅做到 NPC 可见
-CM	CM_MERCHANTDLGSELECT	1011	yes	gate-game	implemented	GameRepairProtocolTest,WorldRepairTest	Grobal2.pas	仅 @repair/@s_repair 标签生效（m_sScriptLable 状态机子集）；其余标签仅记录——见 MERCHANT 区
+CM	CM_MERCHANTDLGSELECT	1011	yes	gate-game	implemented	GameRepairProtocolTest,WorldRepairTest,WorldMerchantCommandTest,GameMerchantCommandProtocolTest	Grobal2.pas	@repair/@s_repair 开修理、@exit 关窗；其余标签经 Market_Def 指令清单可观测拒绝（W29）——见 MERCHANT 区
 CM	CM_MERCHANTQUERYSELLPRICE	1012	yes	none	protocol-only	-	Grobal2.pas	出售询价——买卖待库存/金币事务测试（W27 P1）
 CM	CM_USERSELLITEM	1013	yes	none	protocol-only	-	Grobal2.pas	出售物品——同上
 CM	CM_USERBUYITEM	1014	yes	none	protocol-only	-	Grobal2.pas	购买物品——同上
@@ -208,7 +208,7 @@ SM	SM_MAGICFIRE_FAIL	639	yes	gate-game	implemented	GameMagicProtocolTest,WorldMa
 SM	SM_MAGIC_LVEXP	640	yes	none	protocol-only	-	Grobal2.pas	技能熟练度——技能切片
 SM	SM_DURACHANGE	642	yes	gate-game	implemented	WorldRevivalRingTest,WorldRepairTest	Grobal2.pas	耐久变化（含千位桶 quirk）
 SM	SM_MERCHANTSAY	643	yes	none	protocol-only	-	Grobal2.pas	商人说话——脚本引擎前置
-SM	SM_MERCHANTDLGCLOSE	644	yes	none	protocol-only	-	Grobal2.pas	关商人窗口——见 MERCHANT 区
+SM	SM_MERCHANTDLGCLOSE	644	yes	gate-game	implemented	GameMerchantCommandProtocolTest	Grobal2.pas	@exit 关商人窗口（RM_MERCHANTDLGCLOSE, ObjBase.pas:5846）W29
 SM	SM_SENDGOODSLIST	645	yes	none	protocol-only	-	Grobal2.pas	货物列表——买卖未开放（W27 P1），见 MERCHANT 区
 SM	SM_SENDUSERSELL	646	yes	none	protocol-only	-	Grobal2.pas	开出售窗——见 MERCHANT 区
 SM	SM_SENDBUYPRICE	647	yes	none	protocol-only	-	Grobal2.pas	售价报价——见 MERCHANT 区
@@ -521,7 +521,7 @@ MERCHANT	~@getbackupgnow_bagfull	-	n/a	none	unimplemented	-	M2Share.pas 特殊�
 MERCHANT	~@getbackupgnow_ing	-	n/a	none	unimplemented	-	M2Share.pas 特殊标签	取回中——脚本引擎前置
 MERCHANT	@@useitemname	-	n/a	none	unimplemented	-	M2Share.pas 特殊标签	物品冠名（前缀匹配 CompareLStr）
 MERCHANT	@@sendmsg	-	n/a	none	unimplemented	-	M2Share.pas 特殊标签	脚本内发消息
-MERCHANT	@exit	-	n/a	none	unimplemented	-	M2Share.pas 特殊标签	RM_MERCHANTDLGCLOSE 关窗
+MERCHANT	@exit	-	n/a	gate-game	implemented	WorldMerchantCommandTest,GameMerchantCommandProtocolTest	ObjNpc.pas:TMerchant.UserSelect	RM_MERCHANTDLGCLOSE 关窗（W29 低风险导航指令）
 MERCHANT	@back	-	n/a	none	unimplemented	-	M2Share.pas 特殊标签	m_sScriptGoBackLable 回跳——脚本引擎前置
 MERCHANT	@main	-	n/a	none	unimplemented	-	M2Share.pas 特殊标签	主菜单标签——脚本引擎前置
 MERCHANT	~@main	-	n/a	none	unimplemented	-	M2Share.pas 特殊标签	主菜单失败回跳——脚本引擎前置

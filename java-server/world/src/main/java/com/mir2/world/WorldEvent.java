@@ -60,6 +60,8 @@ public sealed interface WorldEvent
         WorldEvent.ItemDurabilityChanged,
         WorldEvent.GoldChanged,
         WorldEvent.MerchantRepairDialog,
+        WorldEvent.MerchantDialogClosed,
+        WorldEvent.MerchantActionRejected,
         WorldEvent.RepairCostResolved,
         WorldEvent.ItemRepaired,
         WorldEvent.RepairRejected,
@@ -608,6 +610,40 @@ public sealed interface WorldEvent
   record MerchantRepairDialog(int playerId, int merchantId) implements WorldEvent {
     public MerchantRepairDialog {
       if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
+    }
+  }
+
+  /**
+   * {@code RM_MERCHANTDLGCLOSE -> SM_MERCHANTDLGCLOSE}: the {@code @exit} label told the client to
+   * close the merchant window (ObjNpc.pas:1593, ObjBase.pas:5846). {@code merchantId} is the id the
+   * client clicked (Delphi ships {@code Integer(Self)}); the rest of the packet is zero.
+   */
+  record MerchantDialogClosed(int playerId, int merchantId) implements WorldEvent {
+    public MerchantDialogClosed {
+      if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
+    }
+  }
+
+  /**
+   * The observable rejection of a merchant label the engine does not implement — a deferred
+   * transaction/script label or an entirely unknown one. Delphi silently guards these behind the
+   * merchant's {@code m_boXXX} flags; W29 makes the refusal observable instead of silent so an
+   * unimplemented script can never masquerade as success. This event carries no wire packet (the
+   * client would hear nothing from Delphi either), it is only logged and surfaced to tests.
+   */
+  record MerchantActionRejected(int playerId, int merchantId, String label,
+      MerchantCommand.Category category, MerchantCommand.Status status, String reason)
+      implements WorldEvent {
+    public MerchantActionRejected {
+      if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
+      Objects.requireNonNull(label, "label");
+      Objects.requireNonNull(reason, "reason");
+      // category/status may be null when the label is unknown (not in the catalog at all).
+    }
+
+    /** True when the label is not in the Market_Def catalog at all (as opposed to deferred). */
+    public boolean unknown() {
+      return category == null || status == null;
     }
   }
 

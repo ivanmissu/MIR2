@@ -72,7 +72,8 @@ class WorldRepairTest {
 
       // CM_MERCHANTDLGSELECT with '@repair': TMerchant.UserSelect stores the label and
       // answers SM_SENDUSERREPAIR so the client opens its repair dialog.
-      assertTrue(run(world, world.selectMerchantLabel(player.id(), 9001, "@repair")));
+      assertEquals(MerchantSelectOutcome.REPAIR_DIALOG,
+          run(world, world.selectMerchantLabel(player.id(), 9001, "@repair")));
       WorldEvent.MerchantRepairDialog dialog =
           single(events, WorldEvent.MerchantRepairDialog.class);
       assertEquals(9001, dialog.merchantId());
@@ -112,7 +113,8 @@ class WorldRepairTest {
         Equipment.empty(), 500));
     try (WorldEngine world = engine(store, 0)) {
       WorldObjectSnapshot player = enter(world, characterId, events::add);
-      assertTrue(run(world, world.selectMerchantLabel(player.id(), 9001, "@s_repair")));
+      assertEquals(MerchantSelectOutcome.REPAIR_DIALOG,
+          run(world, world.selectMerchantLabel(player.id(), 9001, "@s_repair")));
 
       // The quote triples the truncated base: 3 * 20 = 60...
       assertEquals(60, run(world, world.queryRepairCost(player.id(), 3, "测试剑")));
@@ -144,7 +146,8 @@ class WorldRepairTest {
       WorldObjectSnapshot player = enter(world, characterId, events::add);
 
       // CompareText dispatch opens the repair dialog even in upper case...
-      assertTrue(run(world, world.selectMerchantLabel(player.id(), 9001, "@S_REPAIR")));
+      assertEquals(MerchantSelectOutcome.REPAIR_DIALOG,
+          run(world, world.selectMerchantLabel(player.id(), 9001, "@S_REPAIR")));
       assertEquals(1, events.stream()
           .filter(WorldEvent.MerchantRepairDialog.class::isInstance).count());
       // ...but the mode check is Delphi's '=' on m_sScriptLable, which is case-sensitive:
@@ -216,8 +219,10 @@ class WorldRepairTest {
       assertTrue(events.isEmpty(), "silent paths must not emit anything");
 
       // Labels that do not start with '@' are ignored entirely.
-      assertFalse(run(world, world.selectMerchantLabel(player.id(), 9001, "repair")));
-      assertFalse(run(world, world.selectMerchantLabel(player.id(), 9001, "")));
+      assertEquals(MerchantSelectOutcome.IGNORED,
+          run(world, world.selectMerchantLabel(player.id(), 9001, "repair")));
+      assertEquals(MerchantSelectOutcome.IGNORED,
+          run(world, world.selectMerchantLabel(player.id(), 9001, "")));
     }
   }
 
