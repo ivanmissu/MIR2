@@ -9,6 +9,7 @@
 | ① | **MIR2 项目分析报告** | [mir2-analysis-report.md](mir2-analysis-report.md) | 代码库全景：系统架构、模块解析、协议剖析、技术债务 —— **认知基线** |
 | ② | **Java 迁移可行性评估报告** | [mir2-java-migration-feasibility.md](mir2-java-migration-feasibility.md) | Delphi→Java 迁移的代码取证与 12 章 GO/NO-GO 评估 —— **决策基线** |
 | ③ | **Java 迁移开发计划书** | [mir2-java-development-plan.md](mir2-java-development-plan.md) | 30 周 / 6 决策门 / 240 人日执行蓝图：阶段任务、工程规范、CI/CD、预算 —— **执行基线** |
+| ④ | **W27 / G4 下一步计划** | [java-server/docs/w27-next-plan.md](../../java-server/docs/w27-next-plan.md) | 以能力矩阵、基础技能切片、NPC 指令清单和 shadowdiff 回归收口 P3；明确本轮红线 |
 
 > 三份文档均为 Markdown 格式，在 GitHub 上可直接阅读（含 Mermaid 架构图、表格与目录锚点），建议按 ① → ② → ③ 顺序阅读。
 
