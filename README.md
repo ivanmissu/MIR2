@@ -156,6 +156,12 @@ Java 服务端。
   RunLogin 识别且认证码打码）。Delphi 实捕 golden 后即成为协议回归的基线工具
 - **接入层加固其二（W08）**：三网关共享 `AccessPolicy`——按 IP 的活跃连接上限、滑动窗口新连接频率
   限制、可配置读空闲超时；超限连接在认证前拒绝，默认值兼容 50 bot 压测
+- **接入层尾项（W25）**：补齐 Delphi 网关剩余三项能力——① `BlockIPList.txt` 黑名单（永久表**前缀
+  匹配**可封整个网段、临时表全等匹配，复刻 `CompareLStr` 的「条目长于待测地址则永不匹配」）；
+  ② `BlockMethod` 三态处置（`disconnect` / `block` / `block-list`，后两者连带踢掉该 IP 的全部在线
+  连接）；③ RunGate 独有的单次读取突发守卫（`>7000` 字节或 `>15` 帧即处置，`≤150` 字节不检查）。
+  突发窗口改为复刻原版 1 秒 / 3 秒双 tumbling 窗（20 / 40）。两处原版 quirk 原样保留并在
+  Javadoc 标注：突发窗滚动时计数置 0 导致每窗实放 N+1 条；新 IP 首连不查限额
 - **怪物 AI 框架 + 首批 10 种怪、MonGen 自动刷新、在线周期存档（W09）**：`AGGRESSIVE` / `PASSIVE_FLEE`
   双行为模板（鸡/鹿/稻草人/多钩猫/钉耙猫/洞蛆/蝎子/半兽人/半兽勇士/半兽战士，鹿复刻 `TChickenDeer`
   逃跑 AI）；`addSpawner` 复刻 `RegenMonsters`——200ms 轮转、`CertList` 存活统计、按行内刷新间隔补足；
@@ -329,10 +335,16 @@ java -jar .../mir2-shadowdiff.jar --embedded --ai --right-seed 99999
 | `MIR2_MONSTER_KIND` | `chicken` | 怪物种类：`chicken`（鸡）或 `orc`（半兽人） |
 | `MIR2_NPC_LIST` | 内置三人 | 可见 NPC 摆设（W21 最小切片）：`名字:外观:dx:dy` 逗号分隔，`外观`为 `Npc.wil` 精灵索引，`dx/dy` 相对出生点偏移；`none` 关闭。仅站立可见/占格/查名，不含 Market_Def 商人功能 |
 | `MIR2_MONGEN_FILE` | 未设置 | 可选：经典 `MonGen.txt` 刷怪配置；支持 `loadgen`、地图/坐标/范围/数量/分钟/刷新率字段（当前启动时生成首批） |
-| `MIR2_MAX_CONNECTIONS_PER_IP` | `128` | 三个网关合计的单 IP 活跃连接上限 |
-| `MIR2_CONNECTION_ATTEMPTS_PER_WINDOW` | `300` | 单 IP 滑动窗口内的新连接尝试上限 |
-| `MIR2_CONNECTION_ATTEMPT_WINDOW_SECONDS` | `60` | 新连接频率窗口（秒） |
+| `MIR2_MAX_CONNECTIONS_PER_IP` | `50` | 三个网关合计的单 IP 活跃连接上限（RunGate `nMaxConnOfIPaddr`） |
+| `MIR2_CONNECTION_BURST_LIMIT_1S` | `20` | 单 IP 每 1 秒新连接上限（`nIPCountLimit1`） |
+| `MIR2_CONNECTION_BURST_LIMIT_3S` | `40` | 单 IP 每 3 秒新连接上限（`nIPCountLimit2`） |
 | `MIR2_IDLE_TIMEOUT_SECONDS` | `900` | 已建立连接无数据时的读超时（秒） |
+| `MIR2_BLOCK_IP_FILE` | 未设置 | 可选：`BlockIPList.txt` 路径。每行一条，**前缀匹配**（`203.0.113.` 可封整段）；文件缺失只告警不中断启动 |
+| `MIR2_BLOCK_METHOD` | `disconnect` | 触发限额后的处置：`disconnect` 仅断开；`block` 加临时黑名单并踢掉该 IP 全部连接；`block-list` 同前但写入永久黑名单 |
+| `MIR2_MAX_CLIENT_PACKET_SIZE` | `7000` | GAME 网关单次读取的字节上限，超出即按 `MIR2_BLOCK_METHOD` 处置 |
+| `MIR2_NORMAL_CLIENT_PACKET_SIZE` | `150` | 低于该长度的读取不做突发检查（原版 `nNomClientPacketSize`） |
+| `MIR2_MAX_CLIENT_MESSAGES_PER_READ` | `15` | GAME 网关单次读取内的最大消息帧数（`nMaxClientMsgCount`） |
+| `MIR2_KICK_ON_OVERSIZE_PACKET` | `true` | `true` 踢人；`false` 只丢弃该次读取的数据并保持连接 |
 | `MIR2_BOOTSTRAP_USER` | 未设置 | 可选：初始测试账号名 |
 | `MIR2_BOOTSTRAP_PASSWORD` | 未设置 | 与初始账号配套的密码 |
 
