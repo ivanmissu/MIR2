@@ -182,6 +182,23 @@ public record ServerConfig(
   }
 
   /**
+   * Returns a copy pointed at a different {@code DisableTakeOffList.txt} (W22). The
+   * equipment-lock shadow scenario uses this to boot embedded worlds whose list names the
+   * very sword the seeded character wears, so {@code ClientTakeOffItems}'s refusal — and the
+   * W26 「无法取下物品」 hint — can be scripted over the wire without touching a live
+   * server's files. A null path keeps whatever the config already had.
+   */
+  public ServerConfig withDisableTakeOffFile(Path newDisableTakeOffFile) {
+    return new ServerConfig(database, ports, advertisedHost, serverName, mapFile, mapInfoFile,
+        mapId, spawnX, spawnY, worldTickMillis, monsterCount, monsterKind, monGenFile,
+        bootstrapUser, bootstrapPassword, maxConnectionsPerIp, connectionBurstLimit1s,
+        connectionBurstLimit3s, idleTimeoutSeconds, saveIntervalSeconds, testGold,
+        worldSeed, safeZoneSize, spawnConfigured, npcPlacements, newDisableTakeOffFile,
+        worldClockMode, blockIpFile, blockMethod, maxClientPacketSize, normalClientPacketSize,
+        maxClientMessagesPerRead, kickOnOversizePacket);
+  }
+
+  /**
    * The time source for the world engine. {@code MIR2_WORLD_CLOCK=virtual} derives every
    * cadence (monster walk/attack intervals, respawns, regeneration, PK decay, door sweeps,
    * day/night) from the tick counter instead of the host clock, which is what lets two

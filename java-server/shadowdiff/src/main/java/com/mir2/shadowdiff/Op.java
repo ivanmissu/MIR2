@@ -9,13 +9,20 @@ import java.util.Locale;
  * One step of a deterministic shadow-comparison operation stream.
  *
  * <p>The op set deliberately mirrors what the real {@code mir2.exe} client can emit over the
- * wire — turn/walk/run/attack/pickup/bag/say/drop/eat/takeon/takeoff/opendoor — plus the two
- * harness-level controls {@code sleep} (fixed pacing so action-interval checks resolve the
- * same way on both servers) and {@code relog} (exercises the persistence round trip). One
- * text line is one op, so the same script file can later be pointed at a Delphi server
- * without recompiling anything.
+ * wire — turn/walk/run/attack/pickup/bag/say/drop/eat/takeon/takeoff/opendoor plus the W26
+ * group protocol — and the two harness-level controls {@code sleep} (fixed pacing so
+ * action-interval checks resolve the same way on both servers) and {@code relog} (exercises
+ * the persistence round trip). One text line is one op, so the same script file can later be
+ * pointed at a Delphi server without recompiling anything.
+ *
+ * <p>W30 adds the duo prefixes: a line may start with {@code p1 } or {@code p2 } to name the
+ * acting session ({@link DuoHarness} boots one session per account). Unprefixed lines keep
+ * the solo meaning — the primary session — so every pre-existing script parses unchanged.
+ * Duo scripts also support the {@code {p1}} / {@code {p2}} name placeholders that
+ * {@code ShadowDiffMain} substitutes with the configured account names, so a fixed script
+ * stays valid when the accounts are renamed.
  */
-public record Op(Kind kind, Direction direction, String text, long millis) {
+public record Op(Kind kind, Direction direction, String text, long millis, String actor) {
 
   public enum Kind {
     /** {@code CM_TURN}. */
@@ -44,6 +51,17 @@ public record Op(Kind kind, Direction direction, String text, long millis) {
     TAKEON,
     /** {@code CM_TAKEOFFITEM} by item name. */
     TAKEOFF,
+    /**
+     * {@code CM_GROUPMODE} (658): param 1 allows group invitations, param 0 refuses them
+     * (and leaves the current party). W26.
+     */
+    GROUPMODE,
+    /** {@code CM_CREATEGROUP} (659): body carries the invited player's name. W26. */
+    GROUPCREATE,
+    /** {@code CM_ADDGROUPMEMBER} (660): body carries the invited player's name. W26. */
+    GROUPADD,
+    /** {@code CM_DELGROUPMEMBER} (661): body carries the member to remove. W26. */
+    GROUPDEL,
     /** Harness pause; keeps action intervals deterministic across both servers. */
     SLEEP,
     /**
@@ -57,35 +75,51 @@ public record Op(Kind kind, Direction direction, String text, long millis) {
     RELOG
   }
 
+  /** The two sessions a duo script can drive, in script-prefix form. */
+  public static final String PRIMARY_ACTOR = "p1";
+  public static final String PARTNER_ACTOR = "p2";
+
   public Op {
     if (kind == null) throw new IllegalArgumentException("op kind is required");
   }
 
+  /** Compatibility constructor for callers predating the duo prefix (solo scripts). */
+  public Op(Kind kind, Direction direction, String text, long millis) {
+    this(kind, direction, text, millis, null);
+  }
+
   static Op of(Kind kind) {
-    return new Op(kind, null, null, 0);
+    return new Op(kind, null, null, 0, null);
   }
 
   static Op directional(Kind kind, Direction direction) {
-    return new Op(kind, direction, null, 0);
+    return new Op(kind, direction, null, 0, null);
   }
 
   static Op withText(Kind kind, String text) {
-    return new Op(kind, null, text, 0);
+    return new Op(kind, null, text, 0, null);
   }
 
   static Op sleep(long millis) {
-    return new Op(Kind.SLEEP, null, null, millis);
+    return new Op(Kind.SLEEP, null, null, millis, null);
   }
 
   /** {@code tick N}: advance a manual world clock by N ticks. */
   static Op tick(long ticks) {
     if (ticks < 0) throw new IllegalArgumentException("tick count must not be negative");
-    return new Op(Kind.TICK, null, null, ticks);
+    return new Op(Kind.TICK, null, null, ticks, null);
+  }
+
+  /** True when this op names the partner session ({@code p2}); unprefixed ops are primary. */
+  public boolean isPartnerOp() {
+    return PARTNER_ACTOR.equals(actor);
   }
 
   /** Renders the op back to its one-line script form. */
   public String describe() {
-    StringBuilder line = new StringBuilder(kind.name().toLowerCase(Locale.ROOT));
+    StringBuilder line = new StringBuilder();
+    if (actor != null) line.append(actor).append(' ');
+    line.append(kind.name().toLowerCase(Locale.ROOT));
     if (direction != null) line.append(' ').append(direction.code());
     if (text != null) line.append(' ').append(text);
     if (kind == Kind.SLEEP || kind == Kind.TICK) line.append(' ').append(millis);
@@ -96,7 +130,8 @@ public record Op(Kind kind, Direction direction, String text, long millis) {
 
   /**
    * Parses a script: one op per line, {@code #} starts a comment, blank lines ignored.
-   * Directions are the Delphi {@code DR_*} codes 0..7.
+   * Directions are the Delphi {@code DR_*} codes 0..7. A line may carry a {@code p1}/{@code p2}
+   * actor prefix (W30 duo scripts); the prefix is optional for the primary session.
    */
   public static List<Op> parseScript(String script) {
     List<Op> ops = new ArrayList<>();
@@ -118,6 +153,20 @@ public record Op(Kind kind, Direction direction, String text, long millis) {
   }
 
   private static Op parseLine(String line) {
+    String actor = null;
+    String lower = line.toLowerCase(Locale.ROOT);
+    if (lower.startsWith(PRIMARY_ACTOR + " ")) {
+      actor = PRIMARY_ACTOR;
+      line = line.substring(3).strip();
+    } else if (lower.startsWith(PARTNER_ACTOR + " ")) {
+      actor = PARTNER_ACTOR;
+      line = line.substring(3).strip();
+    }
+    Op op = parseAction(line);
+    return actor == null ? op : new Op(op.kind(), op.direction(), op.text(), op.millis(), actor);
+  }
+
+  private static Op parseAction(String line) {
     String[] parts = line.split("\\s+", 2);
     String keyword = parts[0].toLowerCase(Locale.ROOT);
     String argument = parts.length > 1 ? parts[1].strip() : null;
@@ -135,11 +184,22 @@ public record Op(Kind kind, Direction direction, String text, long millis) {
       case "eat" -> withText(Kind.EAT, requireText(argument, "eat"));
       case "takeon" -> withText(Kind.TAKEON, requireText(argument, "takeon"));
       case "takeoff" -> withText(Kind.TAKEOFF, requireText(argument, "takeoff"));
+      case "groupmode" -> withText(Kind.GROUPMODE, requireGroupMode(argument));
+      case "groupcreate" -> withText(Kind.GROUPCREATE, requireText(argument, "groupcreate"));
+      case "groupadd" -> withText(Kind.GROUPADD, requireText(argument, "groupadd"));
+      case "groupdel" -> withText(Kind.GROUPDEL, requireText(argument, "groupdel"));
       case "sleep" -> sleep(Long.parseLong(requireText(argument, "sleep")));
       case "tick" -> tick(Long.parseLong(requireText(argument, "tick")));
       case "relog" -> of(Kind.RELOG);
       default -> throw new IllegalArgumentException("unknown op: " + keyword);
     };
+  }
+
+  private static String requireGroupMode(String argument) {
+    String value = requireText(argument, "groupmode");
+    if (!value.equals("0") && !value.equals("1"))
+      throw new IllegalArgumentException("groupmode requires 0 or 1");
+    return value;
   }
 
   private static Direction parseDirection(String argument) {
@@ -281,6 +341,243 @@ public record Op(Kind kind, Direction direction, String text, long millis) {
         relog
         bag
         tick 20
+        """);
+  }
+
+  /**
+   * The W30 interaction regression script: the whole party loop over the real wire with two
+   * sessions. Requires {@link DuoHarness} worlds booted with a MANUAL clock and live
+   * chickens ({@code --duo party} configures both), because the kills that drive the
+   * experience split need a monster that drops meat.
+   *
+   * <p>Coverage, in order (W27 plan §4):
+   * <ol>
+   *   <li>the four CM group messages including the {@code -4} refusal when the invitee has
+   *       not opened group mode yet (a fresh character refuses invitations —
+   *       {@code m_boAllowGroup := False}, ObjBase.pas:1270);</li>
+   *   <li>a party kill of chicken #1 next to both members — the 1.2× pool split by level
+   *       ({@code SM_WINEXP} to both) and the guaranteed 鸡肉 drop, which p2 walks over and
+   *       picks up ({@code SM_ADDITEM});</li>
+   *   <li>the share-range boundary: p2 walks east beyond the 12-cell square, so chicken
+   *       #2's experience goes to p1 alone at full value;</li>
+   *   <li>the leader kicking p2 ({@code SM_GROUPCANCEL} to p2, roster loss on both sides);</li>
+   *   <li>a relog per player proving gold/bag/worn/experience all restore identically.</li>
+   * </ol>
+   *
+   * <p>World geometry the script relies on (all deterministic at the default seed): with
+   * safe-zone 0 the two chickens take ring cells (19,19) and (21,21) around the spawn
+   * (20,20); p2's {@code enterPlayerNear} lands on (19,20). Chicken #1 stays at (19,19)
+   * pecking p2 until p1's UP_LEFT (7) swings finish it, and its 鸡肉 drops on that same
+   * cell. Chicken #2 chases, follows p2 north when p2 steps onto the drop, and parks at
+   * (19,20) when p2 goes east; p1 finishes it with LEFT (6) swings. The 鸡肉 pickup waits
+   * out the 5 s (100-tick) corpse timer first, because a corpse keeps blocking its cell;
+   * p2 then walks east fourteen times to (33,19), outside the 12-cell share square and out
+   * of everyone's view — which is what makes the second kill's full-experience verdict
+   * meaningful.
+   *
+   * <p>Every kill needs 900 ms of world time between blows, i.e. ≥18 pumped ticks; the
+   * chicken (walk 1400 ms, attack 3000 ms per the Monster.DB row) moves only on pumped
+   * ticks, so both servers replay the identical chase.
+   */
+  public static List<Op> duoPartyScript() {
+    return parseScript("""
+        # --- party protocol over the wire: allow, invite (refused first), roster ---
+        p1 groupmode 1
+        p1 groupcreate {p2}
+        p2 groupmode 1
+        p1 groupcreate {p2}
+        p1 bag
+        p2 bag
+        tick 20
+        # --- chicken #1 stands at (19,19), pecking p2; p1 swings UP_LEFT ---
+        p1 hit 7
+        tick 20
+        p1 hit 7
+        tick 20
+        p1 hit 7
+        tick 20
+        p1 hit 7
+        tick 20
+        p1 hit 7
+        tick 40
+        p1 bag
+        p2 bag
+        # --- p2 collects the 鸡肉 the kill dropped (it lies on the corpse cell (19,19),
+        #     one step north of p2). The pump first outlives the corpse timer — 5 s =
+        #     100 ticks after death — because a corpse keeps blocking its cell. ---
+        tick 40
+        p2 turn 0
+        p2 walk 0
+        p2 pickup
+        tick 5
+        p2 bag
+        # --- boundary: p2 leaves the 12-cell share square — fourteen cells east along
+        #     y=19 from the pickup cell, past p1's row and out of everyone's view ---
+        p2 turn 2
+        p2 walk 2
+        p2 walk 2
+        p2 walk 2
+        p2 walk 2
+        p2 walk 2
+        p2 walk 2
+        p2 walk 2
+        p2 walk 2
+        p2 walk 2
+        p2 walk 2
+        p2 walk 2
+        p2 walk 2
+        p2 walk 2
+        p2 walk 2
+        tick 20
+        # --- chicken #2 followed p2 north and parked at (19,20) when p2 went east; it
+        #     stands idle next to p1 now, so p1 swings LEFT for the solo kill ---
+        p1 hit 6
+        tick 20
+        p1 hit 6
+        tick 20
+        p1 hit 6
+        tick 20
+        p1 hit 6
+        tick 20
+        p1 hit 6
+        tick 40
+        p1 bag
+        p2 bag
+        # --- leader kicks p2: SM_GROUPCANCEL to p2, roster gone on both sides ---
+        p1 groupdel {p2}
+        tick 5
+        p1 bag
+        p2 bag
+        # --- both players persist through a relog ---
+        p1 relog
+        p1 bag
+        p2 relog
+        p2 bag
+        """);
+  }
+
+  /**
+   * The W30 death/PK regression script (W27 plan §4, 场景 2+4): p2 murders p1 in cold blood
+   * over the wire and both sides of the aftermath are compared.
+   *
+   * <p>Coverage: the murder itself (every {@code SM_STRUCK} between players sets the
+   * aggressor's PK flag and repaints the name via {@code SM_CHANGENAMECOLOR}), the death
+   * broadcast, <b>死亡自动退队</b> — {@code handleDeath} runs {@code leaveGroup}, so the
+   * party disbands and both members are told — the +100 {@code m_nPkPoint} murder penalty
+   * with the classic GBK notices, and the relogin paths: the dead victim stands back up on
+   * the restored cell with the classic 14 HP, while the murderer's PK point survives the
+   * round trip in {@code character_state}.
+   *
+   * <p>No monsters: the world is booted with {@code --monsters 0}; the only combat is the
+   * scripted PvP. Blows need ≥18 pumped ticks between them (900 ms CM_HIT interval).
+   */
+  public static List<Op> duoDeathPkScript() {
+    return parseScript("""
+        # --- the doomed party ---
+        p1 groupmode 1
+        p2 groupmode 1
+        p1 groupcreate {p2}
+        p1 bag
+        p2 bag
+        tick 20
+        # --- p2 (spawned at the cell north-west of p1) turns on p1: every blow sets the
+        #     aggressor flag and repaints the name ---
+        p2 hit 3
+        tick 20
+        p2 hit 3
+        tick 20
+        p2 hit 3
+        tick 20
+        p2 hit 3
+        tick 20
+        p2 hit 3
+        tick 20
+        p2 hit 3
+        tick 20
+        p2 hit 3
+        tick 20
+        p2 hit 3
+        tick 20
+        p2 hit 3
+        tick 20
+        p2 hit 3
+        tick 20
+        p2 hit 3
+        tick 40
+        p1 bag
+        p2 bag
+        # --- the victim stands back up; the murderer's PK point survives the round trip ---
+        p1 relog
+        p1 bag
+        p2 relog
+        p2 bag
+        """);
+  }
+
+  /**
+   * The W30 persistence regression script (W27 plan §4, 场景 3): a solo character whose bag
+   * and wallet the harness seeded before boot (木剑 / 布衣(男) / 金创药(小量) plus 3000 gold)
+   * runs the full item lifecycle over the wire, then relogs and must restore byte-identical
+   * state: gold, the worn set and the bag.
+   *
+   * <p>Coverage: equipping both wearable slots ({@code SM_TAKEON_OK}), a ground-item round
+   * trip ({@code CM_DROPITEM} → {@code CM_PICKUP} on the same cell), consuming the potion
+   * ({@code CM_EAT} → the bag shrinks on the next refresh), taking the weapon back off —
+   * including Delphi's every-success-carries-a-FAIL-packet quirk (ObjBase.pas:17294) — and
+   * the relog restore. Runs on a SYSTEM clock with no monsters — nothing here depends on
+   * world time.
+   *
+   * <p>The potion is eaten while the dress is still in the bag, on purpose: a
+   * {@code CM_QUERYBAGITEMS} is silent on an <em>empty</em> bag, so the refresh after the
+   * eat needs a non-empty bag to be observable.
+   */
+  public static List<Op> persistenceScript() {
+    return parseScript("""
+        # --- the seeded entry state: three items plus a wallet ---
+        bag
+        say @who
+        # --- weapon on, then a full ground-item round trip on one cell ---
+        takeon 木剑
+        drop 金创药(小量)
+        pickup
+        bag
+        # --- consume the potion while the bag still holds the dress ---
+        eat 金创药(小量)
+        bag
+        # --- dress on (the male wearer passes the gender lock), weapon off ---
+        takeon 布衣(男)
+        bag
+        takeoff 木剑
+        bag
+        # --- the relog must restore gold, worn and bag identically ---
+        relog
+        bag
+        turn 0
+        walk 4
+        """);
+  }
+
+  /**
+   * The W30 equipment-lock regression script (W27 plan §4, 场景 5): the harness boots the
+   * world with a {@code DisableTakeOffList} naming 木剑 and seeds the character with that
+   * very sword. Equipping still works (the Delphi list gates {@code ClientTakeOffItems} and
+   * {@code DropUseItems}, never {@code ClientTakeOnItems}), but taking it off must be
+   * refused observably: {@code SM_TAKEOFF_FAIL} plus the W26 {@code SM_SYSMESSAGE}
+   * 「无法取下物品」 — and the item must stay in the worn set through a relog.
+   */
+  public static List<Op> lockScript() {
+    return parseScript("""
+        bag
+        takeon 木剑
+        bag
+        # --- the lock: SM_TAKEOFF_FAIL + SM_SYSMESSAGE 无法取下物品 ---
+        takeoff 木剑
+        bag
+        # --- the lock and the worn slot both survive the round trip ---
+        relog
+        bag
+        takeoff 木剑
+        bag
         """);
   }
 }

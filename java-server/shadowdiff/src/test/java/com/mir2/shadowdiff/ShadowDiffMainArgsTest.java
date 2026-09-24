@@ -33,7 +33,9 @@ class ShadowDiffMainArgsTest {
   void everySwitchTheRunnerTreatsAsAFlagIsRegisteredAsOne() {
     // containsKey() checks in run()/runEmbedded() only work for registered flags.
     assertTrue(ShadowDiffMain.Args.FLAGS.containsAll(
-        java.util.List.of("embedded", "help", "pve", "ai", "ai-all", "strict-messages")));
+        java.util.List.of("embedded", "help", "pve", "ai", "ai-all", "strict-messages",
+            "persistence", "lock")),
+        "the W30 scenario switches must be registered or they eat the next argument");
   }
 
   @Test

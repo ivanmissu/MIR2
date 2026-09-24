@@ -26,7 +26,15 @@ class WorldGroupTest {
       eventsA.clear();
       eventsB.clear();
 
-      // LeaderA creates group with MemberB
+      // A fresh player refuses invitations (m_boAllowGroup := False, ObjBase.pas:1270):
+      // the very first create must answer SM_CREATEGROUP_FAIL reason -4.
+      assertFalse(run(world, world.allowGroup(idB)));
+      assertFalse(run(world, world.createGroup(idA, "MemberB")));
+      assertTrue(eventsA.stream().anyMatch(e -> e instanceof WorldEvent.GroupCreateFailed
+          && ((WorldEvent.GroupCreateFailed) e).reason() == -4));
+
+      // MemberB opens group mode; now the invitation is accepted
+      run(world, world.setAllowGroup(idB, true));
       assertTrue(run(world, world.createGroup(idA, "MemberB")));
 
       assertTrue(run(world, world.isGroupLeader(idA)));
@@ -94,6 +102,8 @@ class WorldGroupTest {
         WorldObjectSnapshot m = run(world,
             world.enterPlayer("Member" + i, "0", new Position(1 + i, 1), Direction.DOWN, ignored -> {}));
         memberIds.add(m.id());
+        // Every invitee must permit invitations first (m_boAllowGroup starts False).
+        run(world, world.setAllowGroup(m.id(), true));
       }
 
       // Create with Member1 -> 2 members
@@ -127,6 +137,9 @@ class WorldGroupTest {
       int idB = b.id();
       int idC = c.id();
 
+      // Invitees open group mode first (m_boAllowGroup starts False, ObjBase.pas:1270).
+      run(world, world.setAllowGroup(idB, true));
+      run(world, world.setAllowGroup(idC, true));
       assertTrue(run(world, world.createGroup(idA, "MemberB")));
       assertTrue(run(world, world.addGroupMember(idA, "MemberC")));
       assertEquals(List.of("LeaderA", "MemberB", "MemberC"), run(world, world.groupMembers(idA)));
@@ -167,6 +180,9 @@ class WorldGroupTest {
       int idB = b.id();
       int idC = c.id();
 
+      // Invitees open group mode first (m_boAllowGroup starts False, ObjBase.pas:1270).
+      run(world, world.setAllowGroup(idB, true));
+      run(world, world.setAllowGroup(idC, true));
       assertTrue(run(world, world.createGroup(idA, "MemberB")));
       assertTrue(run(world, world.addGroupMember(idA, "MemberC")));
 

@@ -101,4 +101,55 @@ class ShadowDiffTest {
     assertThrows(IllegalArgumentException.class,
         () -> ShadowDiff.compare("L", "R", List.of(a, a), List.of(a), false));
   }
+
+  // ------------------------------------------------------------ W30: group + name-colour state
+
+  private static StateSnapshot duoState(int x, int y, int hp, List<String> bag,
+      List<String> group, int nameColor) {
+    return new StateSnapshot("0", x, y, 4, hp, 15, 15, 15, 1, 0, 0, bag, List.of(),
+        List.of(), List.of(), -1, group, nameColor);
+  }
+
+  @Test
+  void groupRosterDriftIsAStateFailure() {
+    OpObservation left = observation("p1 groupcreate shadow02", List.of(),
+        List.of("SM_CREATEGROUP_OK", "SM_GROUPMEMBERS"),
+        duoState(20, 20, 15, List.of(), List.of("shadow01", "shadow02"), -1));
+    OpObservation right = observation("p1 groupcreate shadow02", List.of(),
+        List.of("SM_CREATEGROUP_OK", "SM_GROUPMEMBERS"),
+        duoState(20, 20, 15, List.of(), List.of("shadow01"), -1));
+    ShadowDiff.Result result = ShadowDiff.compare("L", "R",
+        List.of(left), List.of(right), false);
+    assertFalse(result.passed());
+    ShadowDiff.Entry entry = result.entries().get(0);
+    assertEquals(ShadowDiff.Severity.STATE, entry.severity());
+    assertTrue(entry.details().stream().anyMatch(detail -> detail.startsWith("group:")),
+        entry.details().toString());
+  }
+
+  @Test
+  void nameColourDriftIsAStateFailure() {
+    // The wire-visible trace of the PK model: the aggressor's tint on the first blow.
+    OpObservation left = observation("p2 hit 6", List.of("+GOOD"),
+        List.of("SM_CHANGENAMECOLOR"), duoState(20, 20, 12, List.of(), List.of(), 47));
+    OpObservation right = observation("p2 hit 6", List.of("+GOOD"),
+        List.of("SM_CHANGENAMECOLOR"), duoState(20, 20, 12, List.of(), List.of(), -1));
+    ShadowDiff.Result result = ShadowDiff.compare("L", "R",
+        List.of(left), List.of(right), false);
+    assertFalse(result.passed());
+    assertTrue(result.entries().get(0).details().stream()
+        .anyMatch(detail -> detail.startsWith("nameColor:")));
+  }
+
+  @Test
+  void emptyGroupAndUnpaintedNamesStayInvisibleToTheDiffer() {
+    // Pre-existing scripts must not start failing just because two new fields exist.
+    StateSnapshot legacy = new StateSnapshot("0", 20, 20, 4, 15, 15, 15, 15,
+        1, 0, 0, List.of(), List.of(), List.of());
+    StateSnapshot w30 = new StateSnapshot("0", 20, 20, 4, 15, 15, 15, 15,
+        1, 0, 0, List.of(), List.of(), List.of(), List.of(), -1, List.of(), -1);
+    assertEquals(legacy, w30);
+    assertFalse(legacy.describe().contains("group="));
+    assertFalse(legacy.describe().contains("nameColor="));
+  }
 }

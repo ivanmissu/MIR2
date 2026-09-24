@@ -41,6 +41,28 @@ class GameGroupProtocolTest {
       assertEquals(ProtocolConstants.SM_GROUPMODECHANGED, modeReply.message().ident());
       assertEquals(1, modeReply.message().param());
 
+      // 1b. MemberB must open group mode too: m_boAllowGroup starts False
+      // (TPlayObject.Initialize, ObjBase.pas:1270), so an invite to a fresh player
+      // is refused with SM_CREATEGROUP_FAIL reason -4 until this switch is on.
+      WirePacket refusedInvite = new WirePacket(
+          new DefaultMessage(0, ProtocolConstants.CM_CREATEGROUP, 0, 0, 0),
+          WireMessageCodec.encodeBody("MemberB"));
+      assertTrue(adapterA.handle(refusedInvite));
+      world.tickOnce();
+      WirePacket refusal = outputA.stream()
+          .filter(GameOutbound.Packet.class::isInstance)
+          .map(GameOutbound.Packet.class::cast)
+          .map(GameOutbound.Packet::packet)
+          .filter(p -> p.message().ident() == ProtocolConstants.SM_CREATEGROUP_FAIL)
+          .findFirst().orElseThrow();
+      assertEquals(-4, refusal.message().recog());
+      outputA.clear();
+      outputB.clear();
+      WirePacket modePacketB = new WirePacket(
+          new DefaultMessage(0, ProtocolConstants.CM_GROUPMODE, 1, 0, 0), "");
+      assertTrue(adapterB.handle(modePacketB));
+      world.tickOnce();
+
       // 2. CM_CREATEGROUP (1020) body="MemberB" -> SM_CREATEGROUP_OK (660) + SM_GROUPMEMBERS (667)
       WirePacket createPacket = new WirePacket(
           new DefaultMessage(0, ProtocolConstants.CM_CREATEGROUP, 0, 0, 0),
