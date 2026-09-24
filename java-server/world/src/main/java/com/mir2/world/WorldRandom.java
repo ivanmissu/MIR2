@@ -51,7 +51,9 @@ public final class WorldRandom {
     /** {@code RegenMonsters}: respawn cell and facing selection. */
     SPAWN,
     /** {@code MakeWeaponUnlock}: the 1-in-5 murder weapon-curse roll (ObjBase.pas:20950). */
-    WEAPON_UNLOCK
+    WEAPON_UNLOCK,
+    /** Magic.DB power, MC/SC and target-MAC rolls; appended so old seeded streams do not move. */
+    MAGIC
   }
 
   private static final Stream[] STREAMS = Stream.values();

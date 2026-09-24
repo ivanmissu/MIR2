@@ -40,11 +40,10 @@ public final class AbilityCodec {
     ByteBuffer buffer = ByteBuffer.allocate(ABILITY_BYTES).order(ByteOrder.LITTLE_ENDIAN);
     buffer.putShort((short) ability.level());
     buffer.putInt(packRange(ability.minAc(), ability.maxAc()));
-    // MAC/MC/SC are not modelled by the current combat slice and stay zero.
-    buffer.putInt(0);
+    buffer.putInt(packRange(ability.minMac(), ability.maxMac()));
     buffer.putInt(packRange(ability.minDc(), ability.maxDc()));
-    buffer.putInt(0);
-    buffer.putInt(0);
+    buffer.putInt(packRange(ability.minMc(), ability.maxMc()));
+    buffer.putInt(packRange(ability.minSc(), ability.maxSc()));
     buffer.putShort((short) ability.hp());
     buffer.putShort((short) ability.mp());
     buffer.putShort((short) ability.maxHp());

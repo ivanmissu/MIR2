@@ -58,6 +58,18 @@ class AbilityWeightBlockTest {
   }
 
   @Test
+  void magicalRangesOccupyTheirDelphiOffsetsInsteadOfBeingZeroFilled() {
+    Ability ability = new Ability(15, 15, 15, 15,
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 1, 0, 100);
+    ByteBuffer body = ByteBuffer.wrap(AbilityCodec.bytes(ability)).order(ByteOrder.LITTLE_ENDIAN);
+    assertEquals((4 << 16) | 3, body.getInt(2), "AC");
+    assertEquals((6 << 16) | 5, body.getInt(6), "MAC");
+    assertEquals((2 << 16) | 1, body.getInt(10), "DC");
+    assertEquals((8 << 16) | 7, body.getInt(14), "MC");
+    assertEquals((10 << 16) | 9, body.getInt(18), "SC");
+  }
+
+  @Test
   void theHealthPoolsStillOccupyTheirOwnOffsets() {
     // Regression guard: the weight block must not have shifted HP/MP, which the client reads
     // to draw the red and blue globes (FState.pas:3608 needs MaxHP > 0 and MaxMP > 0).

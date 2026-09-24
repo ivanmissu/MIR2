@@ -22,6 +22,12 @@ public sealed interface WorldEvent
         WorldEvent.LevelUp,
         WorldEvent.ItemsRemoved,
         WorldEvent.HealthChanged,
+        WorldEvent.SkillLearned,
+        WorldEvent.SkillsSent,
+        WorldEvent.SpellAccepted,
+        WorldEvent.SpellRejected,
+        WorldEvent.ObjectSpellCast,
+        WorldEvent.MagicFired,
         WorldEvent.ExperienceGained,
         WorldEvent.AttackAccepted,
         WorldEvent.AttackRejected,
@@ -185,6 +191,73 @@ public sealed interface WorldEvent
   record HealthChanged(WorldObjectSnapshot object) implements WorldEvent {
     public HealthChanged {
       Objects.requireNonNull(object, "object");
+    }
+  }
+
+  /** A StdMode-4 book added one durable TUserMagic row. */
+  record SkillLearned(int playerId, LearnedMagic magic) implements WorldEvent {
+    public SkillLearned {
+      if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
+      Objects.requireNonNull(magic, "magic");
+    }
+  }
+
+  /** Login refresh corresponding to RM_SENDMYMAGIC -> SM_SENDMYMAGIC. */
+  record SkillsSent(int playerId, List<LearnedMagic> magics) implements WorldEvent {
+    public SkillsSent {
+      if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
+      magics = List.copyOf(magics);
+      if (magics.isEmpty()) throw new IllegalArgumentException("magic list must not be empty");
+    }
+  }
+
+  record SpellAccepted(int playerId, int magicId) implements WorldEvent {
+    public SpellAccepted {
+      if (playerId <= 0 || magicId <= 0)
+        throw new IllegalArgumentException("player and magic ids must be positive");
+    }
+  }
+
+  record SpellRejected(int playerId, int magicId, SpellRejection reason, String message)
+      implements WorldEvent {
+    public SpellRejected {
+      if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
+      Objects.requireNonNull(reason, "reason");
+      Objects.requireNonNull(message, "message");
+    }
+  }
+
+  enum SpellRejection {
+    ACTOR_DEAD,
+    UNKNOWN_SKILL,
+    WRONG_JOB,
+    LEVEL_TOO_LOW,
+    NOT_ENOUGH_MANA,
+    TOO_FAST,
+    OUT_OF_RANGE,
+    INVALID_TARGET,
+    BUFF_ALREADY_ACTIVE,
+    UNSUPPORTED_SKILL
+  }
+
+  /** RM_SPELL: observers begin the casting animation; the caster already animates locally. */
+  record ObjectSpellCast(WorldObjectSnapshot caster, Position target, MagicDefinition magic)
+      implements WorldEvent {
+    public ObjectSpellCast {
+      Objects.requireNonNull(caster, "caster");
+      Objects.requireNonNull(target, "target");
+      Objects.requireNonNull(magic, "magic");
+    }
+  }
+
+  /** RM_MAGICFIRE: the accepted spell's projectile/effect packet, sent to self and observers. */
+  record MagicFired(int casterId, Position target, int targetId, MagicDefinition magic)
+      implements WorldEvent {
+    public MagicFired {
+      if (casterId <= 0 || targetId < 0)
+        throw new IllegalArgumentException("invalid caster/target id");
+      Objects.requireNonNull(target, "target");
+      Objects.requireNonNull(magic, "magic");
     }
   }
 

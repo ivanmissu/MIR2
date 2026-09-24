@@ -7,6 +7,7 @@ import com.mir2.world.AttackKind;
 import com.mir2.world.BackpackItem;
 import com.mir2.world.Direction;
 import com.mir2.world.GroundItem;
+import com.mir2.world.LearnedMagic;
 import com.mir2.world.MovementKind;
 import com.mir2.world.Position;
 import com.mir2.world.WorldEngine;
@@ -68,6 +69,13 @@ public final class GameProtocolAdapter implements WorldEventSink {
         case ProtocolConstants.CM_HIT, ProtocolConstants.CM_HEAVYHIT, ProtocolConstants.CM_BIGHIT ->
             reportExceptionalFailure(world.attack(boundPlayer, unpackPosition(message.recog()),
                 Direction.fromCode(message.tag()), attackKind(message.ident())));
+        // CM_SPELL: Recog=MakeLong(X,Y), Param/Series=target id words, Tag=MagicId.
+        case ProtocolConstants.CM_SPELL -> reportExceptionalFailure(world.castSpell(
+            boundPlayer, message.tag(), unpackPosition(message.recog()),
+            (message.param() & 0xffff) | (message.series() << 16)));
+        // CM_MAGICKEYCHANGE: Recog=MagicId, Param=the new key byte; there is no reply.
+        case ProtocolConstants.CM_MAGICKEYCHANGE -> reportExceptionalFailure(
+            world.changeMagicKey(boundPlayer, message.recog(), message.param() & 0xff));
         // The client sends its own cell in param/tag, not a packed Recog (ClMain.pas:CM_PICKUP).
         case ProtocolConstants.CM_PICKUP -> reportExceptionalFailure(
             world.pickUp(boundPlayer, new Position(message.param(), message.tag())));
@@ -176,6 +184,39 @@ public final class GameProtocolAdapter implements WorldEventSink {
       case WorldEvent.AttackRejected rejected -> {
         if (rejected.playerId() == playerId) sendStatus(false);
       }
+      case WorldEvent.SkillLearned learned -> {
+        if (learned.playerId() == playerId) {
+          output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_ADDMAGIC,
+              0, 0, 0, 0, encodeMagic(learned.magic()))));
+        }
+      }
+      case WorldEvent.SkillsSent sent -> {
+        if (sent.playerId() == playerId) sendSkills(sent);
+      }
+      case WorldEvent.SpellAccepted accepted -> {
+        if (accepted.playerId() == playerId) sendStatus(true);
+      }
+      case WorldEvent.SpellRejected rejected -> {
+        if (rejected.playerId() == playerId) {
+          output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_MAGICFIRE_FAIL,
+              playerId, 0, 0, 0, "")));
+          output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_SYSMESSAGE,
+              0, 0xFF, 0, 1, WireMessageCodec.encodeBody(rejected.message()))));
+          sendStatus(false);
+        }
+      }
+      case WorldEvent.ObjectSpellCast cast -> {
+        // Delphi suppresses RM_SPELL for the caster; the local client already animated it.
+        if (cast.caster().id() != playerId) {
+          output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_SPELL,
+              cast.caster().id(), cast.target().x(), cast.target().y(), cast.magic().effect(),
+              Integer.toString(cast.magic().id()))));
+        }
+      }
+      case WorldEvent.MagicFired fired -> output.accept(new GameOutbound.Packet(packet(
+          ProtocolConstants.SM_MAGICFIRE, fired.casterId(), fired.target().x(), fired.target().y(),
+          (fired.magic().effectType() & 0xff) | ((fired.magic().effect() & 0xff) << 8),
+          encodeInteger(fired.targetId()))));
       case WorldEvent.PickupRejected rejected -> {
         if (rejected.playerId() == playerId) sendStatus(false);
       }
@@ -395,6 +436,8 @@ public final class GameProtocolAdapter implements WorldEventSink {
         || ident == ProtocolConstants.CM_HIT
         || ident == ProtocolConstants.CM_HEAVYHIT
         || ident == ProtocolConstants.CM_BIGHIT
+        || ident == ProtocolConstants.CM_SPELL
+        || ident == ProtocolConstants.CM_MAGICKEYCHANGE
         || ident == ProtocolConstants.CM_PICKUP
         || ident == ProtocolConstants.CM_OPENDOOR
         || ident == ProtocolConstants.CM_QUERYBAGITEMS
@@ -657,6 +700,23 @@ public final class GameProtocolAdapter implements WorldEventSink {
     if (backpack.isEmpty()) return;
     output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_BAGITEMS, requirePlayerId(),
         0, 0, backpack.size(), ClientItemCodec.encodeBag(backpack))));
+  }
+
+  private void sendSkills(WorldEvent.SkillsSent sent) {
+    StringBuilder body = new StringBuilder();
+    for (LearnedMagic magic : sent.magics()) body.append(encodeMagic(magic)).append('/');
+    output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_SENDMYMAGIC,
+        0, 0, 0, sent.magics().size(), body.toString())));
+  }
+
+  private static String encodeMagic(LearnedMagic magic) {
+    return new String(SixBitCodec.encode(MagicCodec.encode(magic)), StandardCharsets.ISO_8859_1);
+  }
+
+  private static String encodeInteger(int value) {
+    byte[] raw = ByteBuffer.allocate(Integer.BYTES).order(ByteOrder.LITTLE_ENDIAN)
+        .putInt(value).array();
+    return new String(SixBitCodec.encode(raw), StandardCharsets.ISO_8859_1);
   }
 
   /**

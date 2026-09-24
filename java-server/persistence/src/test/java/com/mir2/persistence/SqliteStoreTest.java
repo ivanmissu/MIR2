@@ -6,6 +6,7 @@ import com.mir2.world.BackpackItem;
 import com.mir2.world.Equipment;
 import com.mir2.world.EquipmentSlot;
 import com.mir2.world.ItemDatabase;
+import com.mir2.world.PlayerSkill;
 import com.mir2.world.PlayerState;
 import com.mir2.world.StdItem;
 import com.mir2.world.StdItems;
@@ -434,6 +435,36 @@ class SqliteStoreTest {
       assertEquals(restored.withGold(0), new PlayerState(
           restored.characterId(), restored.ability(), restored.backpack(),
           restored.equipment(), 0));
+    } finally {
+      Files.deleteIfExists(file);
+    }
+  }
+
+  @Test
+  void magicalAbilityRangesAndUserMagicRoundTripAtomically() throws Exception {
+    Path file = Files.createTempFile("mir2-w28-", ".db");
+    String url = "jdbc:sqlite:" + file;
+    UUID characterId = UUID.randomUUID();
+    Ability ability = new Ability(50, 80, 40, 60,
+        1, 3, 2, 4, 5, 7, 8, 11, 12, 14, 31, 99, 2_000_000);
+    List<PlayerSkill> skills = List.of(
+        new PlayerSkill(1, 2, 35, 'F'), new PlayerSkill(31, 1, 200, 'D'));
+
+    try (SqliteStore store = new SqliteStore(url)) {
+      store.saveAccount("wizard", new byte[] {1});
+      store.save(new Character(characterId, "wizard", "法师", 0, 31, 1, 1, 0, 0));
+      store.save(new PlayerState(
+          characterId, ability, List.of(), Equipment.empty(), 0, 0, 0, skills));
+    }
+    try (SqliteStore reopened = new SqliteStore(url)) {
+      PlayerState restored = reopened.load(characterId).orElseThrow();
+      assertEquals(5, restored.ability().minMac());
+      assertEquals(7, restored.ability().maxMac());
+      assertEquals(8, restored.ability().minMc());
+      assertEquals(11, restored.ability().maxMc());
+      assertEquals(12, restored.ability().minSc());
+      assertEquals(14, restored.ability().maxSc());
+      assertEquals(skills, restored.skills());
     } finally {
       Files.deleteIfExists(file);
     }

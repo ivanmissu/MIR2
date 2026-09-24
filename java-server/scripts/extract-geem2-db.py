@@ -11,6 +11,8 @@ by MonsterTemplate/MonsterAppearanceTest for the verified RaceImg/Appr pairs:
 
 Outputs (UTF-8 TSV, regenerated deterministically — never hand-edit):
 
+  java-server/world/src/main/resources/db/MagicDb.tsv       33 rows whose id/name pair is
+                                                            shared by the 1.50 engine
   java-server/world/src/main/resources/db/MonsterDb.tsv    378 rows, native columns
   java-server/world/src/main/resources/db/StdItemsDb.tsv   686 rows, native columns
   java-server/world/src/main/resources/db/MonItems/*.txt   drop tables of the
@@ -46,6 +48,23 @@ MONSTER_COLUMNS = [
     ("DC", "dc"), ("DCMAX", "dcMax"), ("MC", "mc"), ("SC", "sc"),
     ("SPEED", "speed"), ("HIT", "hit"), ("WALK_SPD", "walkSpd"),
     ("WalkStep", "walkStep"), ("WalkWait", "walkWait"), ("ATTACK_SPD", "attackSpd"),
+]
+
+# The leaked 1.50 source and the later GEEM2 dump agree on both id and Chinese name for
+# skills 1..33.  GEEM2 renumbered several later skills and also appends hero rows that reuse
+# the same ids; importing either set as if it were 1.50 data would silently teach/cast the
+# wrong skill.  Keep the mechanically provable intersection only until a matching Magic.DB
+# is captured from the original server environment.
+MAGIC_COLUMNS = [
+    ("MagID", "magicId"), ("MagName", "name"),
+    ("EffectType", "effectType"), ("Effect", "effect"),
+    ("Spell", "spell"), ("Power", "power"), ("MaxPower", "maxPower"),
+    ("DefSpell", "defSpell"), ("DefPower", "defPower"),
+    ("DefMaxPower", "defMaxPower"), ("Job", "job"),
+    ("NeedL1", "needL1"), ("L1Train", "l1Train"),
+    ("NeedL2", "needL2"), ("L2Train", "l2Train"),
+    ("NeedL3", "needL3"), ("L3Train", "l3Train"),
+    ("Delay", "delay"), ("Descr", "description"),
 ]
 
 STDITEMS_COLUMNS = [
@@ -106,6 +125,22 @@ def write_tsv(path: Path, columns, rows, notes=()) -> None:
         out.write("\n".join(header) + "\n")
         for row in rows:
             out.write("\t".join(str(v) for v in row) + "\n")
+
+
+def extract_magic(conn) -> list[list[str]]:
+    cols = ", ".join(f'"{c}"' for c, _ in MAGIC_COLUMNS)
+    rows = []
+    for raw in conn.execute(
+        f"SELECT {cols} FROM Magic WHERE MagID BETWEEN 1 AND 33 AND Descr = '' ORDER BY rowid"
+    ):
+        magic_id = as_int(raw[0], raw)
+        name = str(raw[1]).strip()
+        if len(name.encode("gbk")) > 12:
+            fail(f"magic name does not fit TMagic String[12]: {name}")
+        rows.append([magic_id, name] + [as_int(v, raw) for v in raw[2:-1]] + [str(raw[-1])])
+    if len(rows) != 33 or [row[0] for row in rows] != list(range(1, 34)):
+        fail("Magic 1.50 intersection is not the expected contiguous id range 1..33")
+    return rows
 
 
 def extract_monsters(conn) -> list[list[str]]:
@@ -214,11 +249,16 @@ def main() -> None:
     out_db = Path(__file__).resolve().parent.parent / "world/src/main/resources/db"
 
     conn = load_tables(sql_path)
+    magic = extract_magic(conn)
     monsters = extract_monsters(conn)
     stditems, std_notes = extract_stditems(conn)
     std_names = {r[1] for r in stditems}
 
     out_db.mkdir(parents=True, exist_ok=True)
+    write_tsv(out_db / "MagicDb.tsv", MAGIC_COLUMNS, magic, notes=[
+        "only id/name pairs 1..33 shared by the 1.50 source and GEEM2 are imported",
+        "GEEM2 hero rows and renumbered post-33 skills are deliberately excluded",
+    ])
     write_tsv(out_db / "MonsterDb.tsv", MONSTER_COLUMNS, monsters, notes=["rows in original dump order"])
     write_tsv(out_db / "StdItemsDb.tsv", STDITEMS_COLUMNS, stditems,
               notes=["rows in original dump order (= Idx order)"] + std_notes)
@@ -226,8 +266,8 @@ def main() -> None:
 
     for n in std_notes + mon_notes:
         print(f"note: {n}")
-    print(f"wrote {len(monsters)} monsters, {len(stditems)} std items, "
-          f"{len(MONITEM_FILES)} drop tables -> {out_db}")
+    print(f"wrote {len(magic)} magic definitions, {len(monsters)} monsters, "
+          f"{len(stditems)} std items, {len(MONITEM_FILES)} drop tables -> {out_db}")
 
 
 if __name__ == "__main__":
