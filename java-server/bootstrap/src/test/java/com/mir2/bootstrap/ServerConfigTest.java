@@ -208,4 +208,63 @@ class ServerConfigTest {
     assertThrows(IllegalArgumentException.class, () -> ServerConfig.parseNpcList("屠夫:3:5"));
     assertThrows(IllegalArgumentException.class, () -> ServerConfig.parseNpcList("屠夫:x:5:0"));
   }
+
+  @Test
+  void accessLayerDefaultsMatchTheShippedDelphiValues() {
+    ServerConfig config = ServerConfig.from(Map.of());
+    // nMaxConnOfIPaddr (RunGate), nIPCountLimit1, nIPCountLimit2 (GateShare.pas:31-32, 95).
+    assertEquals(50, config.maxConnectionsPerIp());
+    assertEquals(20, config.connectionBurstLimit1s());
+    assertEquals(40, config.connectionBurstLimit3s());
+    assertEquals(900, config.idleTimeoutSeconds());
+    assertEquals(com.mir2.gate.BlockMethod.DISCONNECT, config.blockMethod());
+    assertNull(config.blockIpFile());
+    // RunGate's read-burst guard (GateShare.pas:96-100).
+    assertEquals(7000, config.maxClientPacketSize());
+    assertEquals(150, config.normalClientPacketSize());
+    assertEquals(15, config.maxClientMessagesPerRead());
+    assertTrue(config.kickOnOversizePacket());
+  }
+
+  @Test
+  void accessLayerLimitsAreOverridableFromTheEnvironment() {
+    ServerConfig config = ServerConfig.from(Map.of(
+        "MIR2_MAX_CONNECTIONS_PER_IP", "10",
+        "MIR2_CONNECTION_BURST_LIMIT_1S", "5",
+        "MIR2_CONNECTION_BURST_LIMIT_3S", "9",
+        "MIR2_BLOCK_METHOD", "block-list",
+        "MIR2_BLOCK_IP_FILE", "/etc/mir2/BlockIPList.txt",
+        "MIR2_MAX_CLIENT_PACKET_SIZE", "4096",
+        "MIR2_NORMAL_CLIENT_PACKET_SIZE", "200",
+        "MIR2_MAX_CLIENT_MESSAGES_PER_READ", "8",
+        "MIR2_KICK_ON_OVERSIZE_PACKET", "false"));
+    assertEquals(10, config.maxConnectionsPerIp());
+    assertEquals(5, config.connectionBurstLimit1s());
+    assertEquals(9, config.connectionBurstLimit3s());
+    assertEquals(com.mir2.gate.BlockMethod.BLOCK_LIST, config.blockMethod());
+    assertEquals(Path.of("/etc/mir2/BlockIPList.txt"), config.blockIpFile());
+    assertEquals(4096, config.maxClientPacketSize());
+    assertEquals(200, config.normalClientPacketSize());
+    assertEquals(8, config.maxClientMessagesPerRead());
+    assertFalse(config.kickOnOversizePacket());
+
+    // The derived policies carry those values through to the gate.
+    assertEquals(com.mir2.gate.BlockMethod.BLOCK_LIST,
+        config.accessPolicy(com.mir2.gate.BlockIpList.empty()).blockMethod());
+    assertEquals(new com.mir2.gate.PacketSizePolicy(200, 4096, 8, false), config.packetSizePolicy());
+  }
+
+  @Test
+  void rejectsIncoherentAccessLayerConfiguration() {
+    // A "normal" size above the hard cap would make every read oversized.
+    assertThrows(IllegalArgumentException.class, () -> ServerConfig.from(Map.of(
+        "MIR2_MAX_CLIENT_PACKET_SIZE", "100",
+        "MIR2_NORMAL_CLIENT_PACKET_SIZE", "500")));
+    assertThrows(IllegalArgumentException.class,
+        () -> ServerConfig.from(Map.of("MIR2_BLOCK_METHOD", "nonsense")));
+    assertThrows(IllegalArgumentException.class,
+        () -> ServerConfig.from(Map.of("MIR2_KICK_ON_OVERSIZE_PACKET", "maybe")));
+    assertThrows(IllegalArgumentException.class,
+        () -> ServerConfig.from(Map.of("MIR2_CONNECTION_BURST_LIMIT_1S", "0")));
+  }
 }

@@ -25,8 +25,8 @@ public record ServerConfig(
     String bootstrapUser,
     String bootstrapPassword,
     int maxConnectionsPerIp,
-    int connectionAttemptsPerWindow,
-    int connectionAttemptWindowSeconds,
+    int connectionBurstLimit1s,
+    int connectionBurstLimit3s,
     int idleTimeoutSeconds,
     int saveIntervalSeconds,
     long testGold,
@@ -35,7 +35,13 @@ public record ServerConfig(
     boolean spawnConfigured,
     List<NpcPlacement> npcPlacements,
     Path disableTakeOffFile,
-    com.mir2.world.WorldClock.Mode worldClockMode) {
+    com.mir2.world.WorldClock.Mode worldClockMode,
+    Path blockIpFile,
+    com.mir2.gate.BlockMethod blockMethod,
+    int maxClientPacketSize,
+    int normalClientPacketSize,
+    int maxClientMessagesPerRead,
+    boolean kickOnOversizePacket) {
 
   /**
    * One decorative NPC to stand near the spawn point: a {@code MIR2_NPC_LIST} entry
@@ -65,8 +71,12 @@ public record ServerConfig(
       String monsterKind, String bootstrapUser, String bootstrapPassword) {
     this(database, ports, advertisedHost, serverName, mapFile, null, mapId, spawnX, spawnY,
         worldTickMillis, monsterCount, monsterKind, null, bootstrapUser, bootstrapPassword,
-        128, 300, 60, 900, 600, 0, null, com.mir2.world.StartPoint.DEFAULT_SAFE_ZONE_SIZE,
-        true, List.of(), null, com.mir2.world.WorldClock.Mode.SYSTEM);
+        50, 20, 40, 900, 600, 0, null, com.mir2.world.StartPoint.DEFAULT_SAFE_ZONE_SIZE,
+        true, List.of(), null, com.mir2.world.WorldClock.Mode.SYSTEM,
+        null, com.mir2.gate.BlockMethod.DISCONNECT,
+        com.mir2.gate.PacketSizePolicy.DEFAULT_MAX_SIZE,
+        com.mir2.gate.PacketSizePolicy.DEFAULT_NORMAL_SIZE,
+        com.mir2.gate.PacketSizePolicy.DEFAULT_MAX_MESSAGES, true);
   }
 
   /** Compatibility constructor that also pins the world seed (shadow comparison harness). */
@@ -75,8 +85,12 @@ public record ServerConfig(
       String monsterKind, String bootstrapUser, String bootstrapPassword, Long worldSeed) {
     this(database, ports, advertisedHost, serverName, mapFile, null, mapId, spawnX, spawnY,
         worldTickMillis, monsterCount, monsterKind, null, bootstrapUser, bootstrapPassword,
-        128, 300, 60, 900, 600, 0, worldSeed, com.mir2.world.StartPoint.DEFAULT_SAFE_ZONE_SIZE,
-        true, List.of(), null, com.mir2.world.WorldClock.Mode.SYSTEM);
+        50, 20, 40, 900, 600, 0, worldSeed, com.mir2.world.StartPoint.DEFAULT_SAFE_ZONE_SIZE,
+        true, List.of(), null, com.mir2.world.WorldClock.Mode.SYSTEM,
+        null, com.mir2.gate.BlockMethod.DISCONNECT,
+        com.mir2.gate.PacketSizePolicy.DEFAULT_MAX_SIZE,
+        com.mir2.gate.PacketSizePolicy.DEFAULT_NORMAL_SIZE,
+        com.mir2.gate.PacketSizePolicy.DEFAULT_MAX_MESSAGES, true);
   }
 
   public ServerConfig {
@@ -94,9 +108,17 @@ public record ServerConfig(
       throw new IllegalArgumentException("world tick interval must be between 1 and 10000 milliseconds");
     if (monsterCount < 0 || monsterCount > 1_000)
       throw new IllegalArgumentException("monster count must be between 0 and 1000");
-    if (maxConnectionsPerIp < 1 || connectionAttemptsPerWindow < 1
-        || connectionAttemptWindowSeconds < 1 || idleTimeoutSeconds < 1)
+    if (maxConnectionsPerIp < 1 || connectionBurstLimit1s < 1
+        || connectionBurstLimit3s < 1 || idleTimeoutSeconds < 1)
       throw new IllegalArgumentException("access-layer limits and timeouts must be positive");
+    Objects.requireNonNull(blockMethod, "blockMethod");
+    if (normalClientPacketSize < 0)
+      throw new IllegalArgumentException("normal client packet size must not be negative");
+    if (maxClientPacketSize < 1 || maxClientMessagesPerRead < 1)
+      throw new IllegalArgumentException("client packet limits must be positive");
+    if (maxClientPacketSize < normalClientPacketSize)
+      throw new IllegalArgumentException(
+          "MIR2_MAX_CLIENT_PACKET_SIZE must be at least MIR2_NORMAL_CLIENT_PACKET_SIZE");
     if (saveIntervalSeconds < 1)
       throw new IllegalArgumentException("save interval must be a positive number of seconds");
     if (safeZoneSize < 0 || safeZoneSize > 100)
@@ -136,10 +158,11 @@ public record ServerConfig(
   public ServerConfig withSafeZoneSize(int newSafeZoneSize) {
     return new ServerConfig(database, ports, advertisedHost, serverName, mapFile, mapInfoFile,
         mapId, spawnX, spawnY, worldTickMillis, monsterCount, monsterKind, monGenFile,
-        bootstrapUser, bootstrapPassword, maxConnectionsPerIp, connectionAttemptsPerWindow,
-        connectionAttemptWindowSeconds, idleTimeoutSeconds, saveIntervalSeconds, testGold,
+        bootstrapUser, bootstrapPassword, maxConnectionsPerIp, connectionBurstLimit1s,
+        connectionBurstLimit3s, idleTimeoutSeconds, saveIntervalSeconds, testGold,
         worldSeed, newSafeZoneSize, spawnConfigured, npcPlacements, disableTakeOffFile,
-        worldClockMode);
+        worldClockMode, blockIpFile, blockMethod, maxClientPacketSize, normalClientPacketSize,
+        maxClientMessagesPerRead, kickOnOversizePacket);
   }
 
   /**
@@ -151,9 +174,11 @@ public record ServerConfig(
   public ServerConfig withWorldClockMode(com.mir2.world.WorldClock.Mode mode) {
     return new ServerConfig(database, ports, advertisedHost, serverName, mapFile, mapInfoFile,
         mapId, spawnX, spawnY, worldTickMillis, monsterCount, monsterKind, monGenFile,
-        bootstrapUser, bootstrapPassword, maxConnectionsPerIp, connectionAttemptsPerWindow,
-        connectionAttemptWindowSeconds, idleTimeoutSeconds, saveIntervalSeconds, testGold,
-        worldSeed, safeZoneSize, spawnConfigured, npcPlacements, disableTakeOffFile, mode);
+        bootstrapUser, bootstrapPassword, maxConnectionsPerIp, connectionBurstLimit1s,
+        connectionBurstLimit3s, idleTimeoutSeconds, saveIntervalSeconds, testGold,
+        worldSeed, safeZoneSize, spawnConfigured, npcPlacements, disableTakeOffFile, mode,
+        blockIpFile, blockMethod, maxClientPacketSize, normalClientPacketSize,
+        maxClientMessagesPerRead, kickOnOversizePacket);
   }
 
   /**
@@ -192,9 +217,13 @@ public record ServerConfig(
         nullablePath(environment.get("MIR2_MONGEN_FILE")),
         nullable(environment.get("MIR2_BOOTSTRAP_USER")),
         nullable(environment.get("MIR2_BOOTSTRAP_PASSWORD")),
-        positiveInt(environment, "MIR2_MAX_CONNECTIONS_PER_IP", 128),
-        positiveInt(environment, "MIR2_CONNECTION_ATTEMPTS_PER_WINDOW", 300),
-        positiveInt(environment, "MIR2_CONNECTION_ATTEMPT_WINDOW_SECONDS", 60),
+        // nMaxConnOfIPaddr: 50 on RunGate (10 on LoginGate/SelGate, but the three gates share
+        // one policy here and 50 is what keeps the 50-bot rehearsal admissible from loopback).
+        positiveInt(environment, "MIR2_MAX_CONNECTIONS_PER_IP", 50),
+        // nIPCountLimit1 / nIPCountLimit2 (GateShare.pas:31-32) over Delphi's fixed 1s / 3s
+        // tumbling windows. The window spans are constants in the original, not config.
+        positiveInt(environment, "MIR2_CONNECTION_BURST_LIMIT_1S", 20),
+        positiveInt(environment, "MIR2_CONNECTION_BURST_LIMIT_3S", 40),
         positiveInt(environment, "MIR2_IDLE_TIMEOUT_SECONDS", 900),
         // g_Config.dwSaveHumanRcdTime defaults to 10 minutes (M2Share.pas).
         positiveInt(environment, "MIR2_SAVE_INTERVAL_SECONDS", 600),
@@ -216,7 +245,35 @@ public record ServerConfig(
         // Production reads the host clock exactly as Delphi reads GetTickCount. 'virtual'
         // derives world time from the tick counter so two processes agree on every cadence;
         // it is a determinism tool for 影子对拍, not a production mode (see WorldClock).
-        worldClockMode(environment.get("MIR2_WORLD_CLOCK")));
+        worldClockMode(environment.get("MIR2_WORLD_CLOCK")),
+        // BlockIPList.txt (GateShare.pas:86) — permanent, prefix-matched IP bans.
+        nullablePath(environment.get("MIR2_BLOCK_IP_FILE")),
+        // BlockMethod (GateShare.pas:63): what to do with an address that trips a limit.
+        com.mir2.gate.BlockMethod.parse(environment.get("MIR2_BLOCK_METHOD")),
+        // RunGate's client read-burst guard (GateShare.pas:96-100).
+        positiveInt(environment, "MIR2_MAX_CLIENT_PACKET_SIZE",
+            com.mir2.gate.PacketSizePolicy.DEFAULT_MAX_SIZE),
+        nonNegativeInt(environment, "MIR2_NORMAL_CLIENT_PACKET_SIZE",
+            com.mir2.gate.PacketSizePolicy.DEFAULT_NORMAL_SIZE),
+        positiveInt(environment, "MIR2_MAX_CLIENT_MESSAGES_PER_READ",
+            com.mir2.gate.PacketSizePolicy.DEFAULT_MAX_MESSAGES),
+        // bokickOverPacketSize = True: an oversized read closes the connection. False keeps
+        // it open but still discards the bytes, exactly as Delphi does.
+        booleanValue(environment, "MIR2_KICK_ON_OVERSIZE_PACKET", true));
+  }
+
+  /** The admission guard for all three gates: IP bans plus Delphi's three connection limits. */
+  public com.mir2.gate.AccessPolicy accessPolicy(com.mir2.gate.BlockIpList blockList) {
+    return new com.mir2.gate.AccessPolicy(
+        new com.mir2.gate.AccessPolicy.Config(maxConnectionsPerIp, connectionBurstLimit1s,
+            connectionBurstLimit3s, java.time.Duration.ofSeconds(idleTimeoutSeconds), blockMethod),
+        blockList);
+  }
+
+  /** RunGate's per-read size/count guard, applied to the game gate. */
+  public com.mir2.gate.PacketSizePolicy packetSizePolicy() {
+    return new com.mir2.gate.PacketSizePolicy(normalClientPacketSize, maxClientPacketSize,
+        maxClientMessagesPerRead, kickOnOversizePacket);
   }
 
   /**
@@ -307,6 +364,17 @@ public record ServerConfig(
     int result = nonNegativeInt(environment, key, fallback);
     if (result == 0) throw new IllegalArgumentException(key + " must be a positive integer");
     return result;
+  }
+
+  /** Parses a boolean switch, accepting Delphi's {@code TRUE}/{@code FALSE} spellings. */
+  private static boolean booleanValue(Map<String, String> environment, String key, boolean fallback) {
+    String raw = environment.get(key);
+    if (raw == null || raw.isBlank()) return fallback;
+    return switch (raw.trim().toLowerCase(java.util.Locale.ROOT)) {
+      case "true", "yes", "1", "on" -> true;
+      case "false", "no", "0", "off" -> false;
+      default -> throw new IllegalArgumentException(key + " must be a boolean (true/false)");
+    };
   }
 
   private static int nonNegativeInt(Map<String, String> environment, String key, int fallback) {

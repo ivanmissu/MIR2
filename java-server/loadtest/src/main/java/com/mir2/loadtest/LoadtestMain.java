@@ -168,23 +168,29 @@ public final class LoadtestMain {
     int spawnY = intOption(options, "spawn-y", 10);
     Path mapFile = options.containsKey("map-file") ? Path.of(options.get("map-file")) : null;
     // Every bot dials in from 127.0.0.1, so the whole swarm shares one AccessPolicy bucket.
-    // The shipped per-IP defaults (128 active, 300 attempts/minute) are sized for real
-    // players behind distinct addresses: a 50-bot run opens three connections per session
-    // (login + select + game) and relogs on a timer, which lands right on top of the
-    // 300/minute ceiling and makes the verdict depend on how many sessions happen to fit in
-    // the window. Scale both limits with the swarm so the run measures the server, not the
-    // anti-abuse guard. Real deployments keep the defaults.
+    // Delphi's shipped per-IP limits are sized for real players behind distinct addresses:
+    // 50 concurrent connections, plus burst ceilings of 20 connects/second and 40 per three
+    // seconds. A 50-bot run opens three connections per session (login + select + game) and
+    // relogs on a timer, so with the shipped values the guard — not the server — would be
+    // what the run measures. Scale all three with the swarm; real deployments keep the
+    // defaults.
     int loginsPerSession = 3;
     int maxActivePerIp = Math.max(128, fallbackSpec.bots() * loginsPerSession);
-    // Budget every bot for a relog every 10s of the window, then double it for headroom.
-    int attemptsPerWindow = Math.max(300, fallbackSpec.bots() * loginsPerSession * 12);
+    // Ramp-up alone can push the whole swarm through the gates inside one burst window.
+    int burstLimit1s = Math.max(20, fallbackSpec.bots() * loginsPerSession);
+    int burstLimit3s = Math.max(40, fallbackSpec.bots() * loginsPerSession * 2);
     ServerConfig config = new ServerConfig(database, ports, "127.0.0.1",
         fallbackSpec.serverName(), mapFile, null, "0", spawnX, spawnY, tickMillis, monsters,
-        monsterKind, null, null, null, maxActivePerIp, attemptsPerWindow, 60, 900, 600, 0, null,
+        monsterKind, null, null, null, maxActivePerIp, burstLimit1s, burstLimit3s, 900, 600, 0,
+        null,
         // The swarm exists to hammer the combat path, so the debug monster ring has to sit
         // within reach of the spawn: no start-point safe zone in this harness, and no
         // decorative NPCs either — their cells would sit inside the ring.
-        0, true, java.util.List.of(), null, com.mir2.world.WorldClock.Mode.SYSTEM);
+        0, true, java.util.List.of(), null, com.mir2.world.WorldClock.Mode.SYSTEM,
+        null, com.mir2.gate.BlockMethod.DISCONNECT,
+        com.mir2.gate.PacketSizePolicy.DEFAULT_MAX_SIZE,
+        com.mir2.gate.PacketSizePolicy.DEFAULT_NORMAL_SIZE,
+        com.mir2.gate.PacketSizePolicy.DEFAULT_MAX_MESSAGES, true);
     Mir2Server server = new Mir2Server(config);
     server.start();
 

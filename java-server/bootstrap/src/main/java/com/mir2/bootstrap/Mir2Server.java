@@ -162,12 +162,10 @@ public final class Mir2Server implements AutoCloseable {
       CharacterService characters = new CharacterService(store);
       LegacyGateHandler.WorldConfig worldConfig = new LegacyGateHandler.WorldConfig(
           world, config.mapId(), spawn, Direction.DOWN);
+      com.mir2.gate.BlockIpList blockList = loadBlockIpList();
       gates = new GateServer(
           config.ports(), new SessionRouter(auth, characters), config.gateConfig(), worldConfig,
-          new AccessPolicy(new AccessPolicy.Config(config.maxConnectionsPerIp(),
-              config.connectionAttemptsPerWindow(),
-              Duration.ofSeconds(config.connectionAttemptWindowSeconds()),
-              Duration.ofSeconds(config.idleTimeoutSeconds()))));
+          config.accessPolicy(blockList), config.packetSizePolicy());
       gates.start();
       LOG.info(() -> "MIR2 Java server started: login=" + config.ports().login()
           + ", select=" + config.ports().select() + ", game=" + config.ports().game()
@@ -178,10 +176,38 @@ public final class Mir2Server implements AutoCloseable {
           + ", monsters=" + config.monsterCount() + "x" + config.monsterTemplate().name()
           + ", npcs=" + npcCount
           + ", worldSeed=" + (config.worldSeed() == null ? "unseeded" : config.worldSeed())
-          + ", worldClock=" + config.worldClockMode().name().toLowerCase(java.util.Locale.ROOT));
+          + ", worldClock=" + config.worldClockMode().name().toLowerCase(java.util.Locale.ROOT)
+          + ", maxConnPerIp=" + config.maxConnectionsPerIp()
+          + ", blockMethod=" + config.blockMethod().name().toLowerCase(java.util.Locale.ROOT)
+          + ", blockedIps=" + blockList.permanentEntries().size());
     } catch (IOException | RuntimeException error) {
       close();
       throw error;
+    }
+  }
+
+  /**
+   * Loads {@code BlockIPList.txt} ({@code LoadBlockIPFile}, LoginGate/GateShare.pas:86) when
+   * {@code MIR2_BLOCK_IP_FILE} points at one. Entries are permanent and prefix-matched, so a
+   * line of {@code 192.168.1.} bans that whole range — see {@link com.mir2.gate.BlockIpList}.
+   * A missing path or file yields an empty list, exactly like a gate started without the file.
+   */
+  private com.mir2.gate.BlockIpList loadBlockIpList() {
+    Path file = config.blockIpFile();
+    if (file == null) return com.mir2.gate.BlockIpList.empty();
+    Path resolved = file.toAbsolutePath().normalize();
+    if (!Files.isRegularFile(resolved)) {
+      LOG.warning("BlockIPList file not found, ignoring: " + resolved);
+      return com.mir2.gate.BlockIpList.empty();
+    }
+    try (var reader = Files.newBufferedReader(resolved, java.nio.charset.StandardCharsets.UTF_8)) {
+      com.mir2.gate.BlockIpList list = com.mir2.gate.BlockIpList.parse(reader);
+      LOG.info(() -> "Loaded BlockIPList (" + list.permanentEntries().size()
+          + " entr(ies)) from " + resolved);
+      return list;
+    } catch (IOException error) {
+      LOG.log(Level.WARNING, "failed to load BlockIPList from " + resolved, error);
+      return com.mir2.gate.BlockIpList.empty();
     }
   }
 
