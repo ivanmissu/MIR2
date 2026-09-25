@@ -111,6 +111,15 @@ Java 服务端。
   （含 label/category/status/reason）+ 日志，让拒绝在测试/shadowdiff/日志中可观测，但线上仍与
   Delphi 一样不向真实客户端发包（原版这些分支由未设置的 `m_boXXX` 旗守卫，等价于「该商人不支持
   此功能」）。`@@useitemname` 复刻 `CompareLStr` 前缀匹配，其余标签 `CompareText` 大小写不敏感。
+- **交互与持久化 shadowdiff 回归（W30）**：`shadowdiff` 增加双人 harness 与四个固定场景，
+  把 W27 §4 的组合回归改造成可重复 CLI 门禁：`--duo party` 每侧双账号双会话同时在线，覆盖
+  组队开关/建组、近身组队击杀、`鸡肉` 掉落拾取、12 格外经验边界、队长踢人和双方重登；
+  `--duo death-pk` 覆盖玩家谋杀、交手/黄名颜色消息、死亡自动退队、PK 点落库与受害者重登
+  14 HP；`--persistence` 预种 `木剑`/`布衣(男)`/`金创药(小量)` 与 3000 金币，验证穿戴、
+  丢弃、拾取、吃药、取下和重登后的金币/装备/背包一致；`--lock` 通过同生产解析器加载 GBK
+  `DisableTakeOffList.txt`，验证 `SM_TAKEOFF_FAIL` + 「无法取下物品」提示和锁定穿戴槽重登保持。
+  `StateSnapshot` 新增组队名单、名字颜色和地面物品观测面，消息可用 `--strict-messages` 升为失败条件；
+  这仍是 Java↔Java 确定性回归，真实客户端 / Delphi 对拍仍按 G4 门禁另行要求。
 - **战斗/背包存档**：HP、MP、等级、经验与 46 格背包通过 SQLite 事务保存，在角色进图前恢复；支持从旧 W02 schema 原位升级
 - **物品目录与背包同步（W04）**：最小标准物品库（`StdItem` 完整 `TStdItem` 字段 + SQLite `std_items` 表）、
   复刻 `GetItemNumber` 的稳定 `MakeIndex`、耐久字段、76 字节 `TClientItem` 小端编解码，
@@ -411,9 +420,11 @@ docker compose -f java-server/compose.yml up --build
 - 编译与启动冒烟测试**尚不能**证明与真实 `mir2.exe` 完全兼容，真实客户端联调验证仍在
   进行中；bot 压测军团（50 机器人 × 5 分钟全链路，embedded 与 remote 双模式，
   报告见 `java-server/docs/g0-evidence/`）、wiretool 录制/回放对拍骨架与 shadowdiff
-  影子对拍 harness（embedded 双 Java 自拍严格判定 PASS，含 W23 起的 `--ai` 会动的怪确定性对拍；
+  影子对拍 harness（embedded 双 Java 自拍严格判定 PASS，含 W23 起的 `--ai` 会动的怪确定性对拍，
+  以及 W30 起的 `--duo party` / `--duo death-pk` / `--persistence` / `--lock` 交互与持久化固定脚本；
   remote 模式待 Delphi 环境即插即用）均已先行就位，但**不能替代**真实客户端对拍与 Delphi 实捕
-  golden；`--ai` 的 remote 用法还要求两侧都以手动时钟启动，Delphi 侧目前无 `@tick` 对应物；
+  golden；其中 W30 的 `--duo` / seeded solo 模式当前是 embedded Java↔Java 回归，`--ai` 的
+  remote 用法还要求两侧都以手动时钟启动，Delphi 侧目前无 `@tick` 对应物；
 - 7200 游戏网关已把 RunLogin、移动与战斗消息接入世界命令队列，并通过双会话 Socket 集成测试；
   但**尚未与真实 `mir2.exe` 对拍**，字段与消息顺序仍属待验证假设；
 - 认证码一次性消费与断线清理仅覆盖 GAME 连接的会话生命周期；LOGIN/SELECT 网关的连接数/频率限制、

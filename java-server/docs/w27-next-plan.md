@@ -36,9 +36,16 @@ W29 已建立 `MerchantCommand` 目录（`M2Share.pas` 26 个商人标签全量�
 
 证据见 `docs/g0-evidence/2026-09-24-w29-merchant-command-boundary.md`。
 
-### 4. 交互与持久化回归（P1）
+### 4. 交互与持久化回归（P1）— 已完成（W30）
 
-覆盖以下组合场景：组队 + 击杀经验 + 掉落、死亡自动退队、重登后金币/装备/背包一致、PK 与组队经验边界、装备锁定提示。使用 shadowdiff 固定脚本，每个场景同时验证状态快照与关键消息集合。
+W30 已把 §4 收敛为 shadowdiff 固定脚本与 CLI 门禁入口，而不是继续扩大玩法面：
+
+1. **双人组队回归**：`--embedded --duo party --strict-messages` 进程内拉起左右两套服务端、每套双账号双 GAME 会话；脚本覆盖「未开组队先拒绝 → 开关组队 → 建组 → 近身组队击杀鸡 → 掉落拾取 → 12 格外经验边界 → 队长踢人 → 双方重登」。
+2. **死亡 / PK 回归**：`--embedded --duo death-pk --strict-messages` 覆盖玩家谋杀、交手/红黄名颜色消息、死亡自动退队、PK 点落库与双方重登恢复（受害者 HP<=0 重登 14 HP）。
+3. **持久化回归**：`--embedded --persistence --strict-messages` 预种 `木剑` / `布衣(男)` / `金创药(小量)` 与 3000 金币，走穿戴、丢弃、拾取、吃药、取下、重登，比较金币、装备、背包与关键消息集合。
+4. **装备锁定提示回归**：`--embedded --lock --strict-messages` 通过同生产解析器加载 GBK `DisableTakeOffList.txt`，验证 `SM_TAKEOFF_FAIL` + `SM_SYSMESSAGE`「无法取下物品」可观测，且锁定装备重登后仍留在穿戴槽。
+
+支撑改动集中在 `shadowdiff`：`DuoHarness`、`Op` 的 `p1`/`p2` 前缀与组队 op、`ShadowSession` 的组队名单 / 名字颜色 / 地面物品快照、`ShadowDiffMain` 的 `--duo`/`--persistence`/`--lock` 模式，以及 `ScenarioRegressionTest` 的五个端到端 CLI 用例。证据见 `docs/g0-evidence/2026-09-25-w30-interaction-persistence-regression.md`。
 
 ### 5. G4 证据与发布门禁（P0）
 
@@ -56,4 +63,4 @@ W29 已建立 `MerchantCommand` 目录（`M2Share.pas` 26 个商人标签全量�
 
 ## 当前进度与下一项
 
-G4 能力矩阵、三技能基础框架（W28）与 NPC/Market_Def 指令清单及安全拒绝边界（W29）已完成；下一项按顺序推进 **交互与持久化回归**（§4：组队+击杀经验+掉落、死亡自动退队、重登金币/装备/背包一致、PK 与组队经验边界、装备锁定提示，用 shadowdiff 固定脚本同时验证状态快照与关键消息集合）。每个切片继续独立测试、独立证据、独立对拍。
+G4 能力矩阵、三技能基础框架（W28）、NPC/Market_Def 指令清单及安全拒绝边界（W29）和交互/持久化 shadowdiff 回归（W30）已完成；下一项按顺序推进 **G4 证据与发布门禁**（§5：全量 `mvn verify`、基础/PvE/AI/组队/死亡PK/持久化/锁定 shadowdiff 证据汇总，输出仍未完成的技能、脚本、行会/攻城/交易缺口，不把本地 Java↔Java 对拍误报为真实客户端 G4 通过）。每个切片继续独立测试、独立证据、独立对拍。
