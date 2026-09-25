@@ -1,0 +1,29 @@
+# G4 发布门禁清单（W31 · 本文件为唯一权威版本，G4ReleaseGateTest 机械校验）
+#
+# 用途：把 w27-next-plan §5 要求的「全量 mvn verify + shadowdiff 场景集合」固化成数据，
+#       由 scripts/g4-release-gate.sh 逐行执行并汇总，避免证据文档与实际跑批命令漂移。
+#
+# 列：id / kind / blocking / expect / command / artifact / scope / notes
+#   id        门禁行标识（小写 kebab，全局唯一）
+#   kind      maven | shadowdiff
+#   blocking  yes = 失败即不可签发；no = 仅收集信息（当前无 no 行，保留语义位）
+#   expect    exit-0 = 必须通过；exit-1 = 负控制，必须报告差异（0 或 2 均判失败）
+#   command   实际执行的命令；占位符 {{jar}} = shadowdiff fat JAR 路径，
+#             {{report}} = 本轮报告根目录，{{repo}} = 仓库根目录。禁止手工改写成别的形式，
+#             测试会把 shadowdiff 行的参数向量喂给真正的 ShadowDiffMain.Args 解析器。
+#   artifact  该行产出的报告子目录 / 日志（相对 {{report}}），全局唯一
+#   scope     这一行能证明什么（写清楚边界，防止把 Java↔Java 对拍当成真实客户端结论）
+#
+# 红线：本清单全绿 ≠ G4 通过。G4 还需要真实 mir2.exe / Delphi 服务端外部基线，
+#       以及技能 / NPC 脚本 / 行会 / 攻城 / 交易的缺口收口（见 g4-capability-matrix.tsv）。
+id	kind	blocking	expect	command	artifact	scope	notes
+maven-verify	maven	yes	exit-0	mvn -f {{repo}}/java-server/pom.xml --batch-mode --no-transfer-progress verify	maven-verify.log	全模块单测 + 集成测试 + 两个数据门禁（G4CapabilityMatrixTest 能力矩阵、G4ReleaseGateTest 本清单）	构建产物同时提供后续 shadowdiff 行所需的 fat JAR
+shadowdiff-base	shadowdiff	yes	exit-0	java --enable-native-access=ALL-UNNAMED -jar {{jar}} --embedded --strict-messages --report-dir {{report}}/shadowdiff-base	shadowdiff-base	登录→选人→进图→走/说话/背包 基础操作流在双服上逐 op 状态一致（严格消息）	W21 基线场景，harness 自检
+shadowdiff-pve	shadowdiff	yes	exit-0	java --enable-native-access=ALL-UNNAMED -jar {{jar}} --embedded --pve --seed 20260922 --report-dir {{report}}/shadowdiff-pve	shadowdiff-pve	同种子木桩 PvE：每一击伤害、HP、经验必须同流（守 WorldRandom 种子注入）	静止怪，SYSTEM 时钟
+shadowdiff-ai	shadowdiff	yes	exit-0	java --enable-native-access=ALL-UNNAMED -jar {{jar}} --embedded --ai --strict-messages --seed 20260922 --report-dir {{report}}/shadowdiff-ai	shadowdiff-ai	会动的怪：MANUAL 世界时钟下 AI 走位/攻击节拍与 SM 流逐 op 一致（守虚拟时钟不漏真实墙钟）	W23 虚拟时钟门禁
+shadowdiff-ai-negative	shadowdiff	yes	exit-1	java --enable-native-access=ALL-UNNAMED -jar {{jar}} --embedded --ai --seed 20260922 --right-seed 99999 --report-dir {{report}}/shadowdiff-ai-negative	shadowdiff-ai-negative	负控制：右侧世界故意错种子，必须被判差异（exit 1）——证明 AI 对拍真的在观察	exit 0 = 对拍失明；exit 2 = 崩溃，两者均判门禁失败
+shadowdiff-ai-matrix	shadowdiff	yes	exit-0	java --enable-native-access=ALL-UNNAMED -jar {{jar}} --embedded --ai-all --strict-messages --seed 20260922 --report-dir {{report}}/shadowdiff-ai-matrix	shadowdiff-ai-matrix	W24 首批 10 种怪 AI 矩阵逐种对拍，生成 ai-matrix.md 汇总	仅覆盖首批 10 种，其余 47 种仍是红线
+shadowdiff-duo-party	shadowdiff	yes	exit-0	java --enable-native-access=ALL-UNNAMED -jar {{jar}} --embedded --duo party --strict-messages --report-dir {{report}}/shadowdiff-duo-party	shadowdiff-duo-party	双人：组队协议全链路、共享击杀经验与掉落拾取、12 格分摊边界、踢人、双方重登	W30 §4.1
+shadowdiff-duo-death-pk	shadowdiff	yes	exit-0	java --enable-native-access=ALL-UNNAMED -jar {{jar}} --embedded --duo death-pk --strict-messages --report-dir {{report}}/shadowdiff-duo-death-pk	shadowdiff-duo-death-pk	双人：玩家谋杀、交手/名字颜色、死亡自动退队、PK 点落库、受害者重登 14 HP	W30 §4.2
+shadowdiff-persistence	shadowdiff	yes	exit-0	java --enable-native-access=ALL-UNNAMED -jar {{jar}} --embedded --persistence --strict-messages --report-dir {{report}}/shadowdiff-persistence	shadowdiff-persistence	预种装备/药品/3000 金币，穿戴→丢弃→拾取→食用→取下→重登后金币/装备/背包一致	W30 §4.3
+shadowdiff-lock	shadowdiff	yes	exit-0	java --enable-native-access=ALL-UNNAMED -jar {{jar}} --embedded --lock --strict-messages --report-dir {{report}}/shadowdiff-lock	shadowdiff-lock	DisableTakeOffList 锁定：取下被拒可观测（SM_TAKEOFF_FAIL + 系统消息），锁定跨重登保持	W30 §4.4
