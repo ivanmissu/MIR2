@@ -99,14 +99,23 @@ W28 已实现的 `SKILL_FIREBALL` 单体延迟伤害管线的直接延伸，风�
 
 ## 7. 验证记录
 
-本沙箱不含系统 JDK/Maven（`java`/`mvn` 均不可执行，`apt-get` 因沙箱网络策略无法安装），与既往每一份
-W2x/W3x 证据的记录一致：改动经过人工静态复核（类型/可见性/现有构造函数调用点逐一核对，确认
-`MonsterTemplate` 新增分量不破坏任何既有调用点——除本次新增测试外，仓库内所有 `new MonsterTemplate(...)`
-调用均走未改变签名的兼容构造函数），并遵照仓库既定流程把最终 `mvn -f java-server/pom.xml verify` 的
-执行与结论移交 CI（`.github/workflows/java-server.yml`）。提交后请以该 PR 的 Actions 运行结果为准；
-如需要在合入前额外确认，可在有 JDK 21 + Maven 3.9 的环境本地重跑：
+本沙箱不含系统 JDK/Maven（`java`/`mvn` 均不可执行，`apt-get`/直连 JDK 发行包因沙箱网络策略均无法完成），
+与既往每一份 W2x/W3x 证据的记录一致：改动先经过人工静态复核（类型/可见性/现有构造函数调用点逐一核对，
+确认 `MonsterTemplate` 新增分量不破坏任何既有调用点——除本次新增测试外，仓库内所有
+`new MonsterTemplate(...)` 调用均走未改变签名的兼容构造函数），随后按仓库既定流程把
+`mvn -f java-server/pom.xml verify` 的执行与结论移交 CI。
 
-```bash
-mvn -f java-server/pom.xml -pl world,gate -am test \
-  -Dtest=WorldMagicTest,G4CapabilityMatrixTest
-```
+**PR #52（`arena/01a0d8b6-mir2` → `master`）CI 结论，全部通过：**
+
+| Job | 结果 | 用时 |
+|---|---|---|
+| `test`（`mvn verify` 全量，含新增的 `fireball2SharesTheFireballDelayedDamageChain` 与 `lighteningAppliesTheUndeadMultiplierAtCastTime`） | ✅ pass | 7m11s |
+| `Build fat JAR and publish to dist branch` | ✅ pass | 28s |
+| `Bot-swarm stability (scaled G0 rehearsal)` | ✅ pass | 2m46s |
+| `Shadowdiff embedded self-comparison` | ✅ pass | 2m9s |
+| `Wiretool record/replay smoke` | ✅ pass | 51s |
+| `G4 release gate (manifest-driven)` | ✅ pass | 8m44s |
+
+`test` job 的通过意味着 §4 描述的 `FixedRandom` 确定性倍率断言（`round(livingDamage * 1.5) == undeadDamage`）
+在真实 JVM 上按预期成立，`G4CapabilityMatrixTest` 也确认了矩阵格式与 59×3 技能行覆盖的机械校验未被破坏。
+
