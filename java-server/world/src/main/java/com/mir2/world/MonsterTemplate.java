@@ -41,7 +41,8 @@ public record MonsterTemplate(
     long experience,
     MonsterBehavior behavior,
     List<ItemDrop> drops,
-    List<MonsterDropTable.GoldDrop> goldDrops) {
+    List<MonsterDropTable.GoldDrop> goldDrops,
+    boolean undead) {
 
   public MonsterTemplate {
     if (name == null || name.isBlank()) throw new IllegalArgumentException("monster name must not be blank");
@@ -55,19 +56,27 @@ public record MonsterTemplate(
     goldDrops = List.copyOf(goldDrops);
   }
 
+  /** Compatibility constructor for templates built before the {@code undead} column landed (W32). */
+  public MonsterTemplate(String name, int feature, Ability ability, int viewRange,
+      long walkIntervalMillis, long attackIntervalMillis, long experience, MonsterBehavior behavior,
+      List<ItemDrop> drops, List<MonsterDropTable.GoldDrop> goldDrops) {
+    this(name, feature, ability, viewRange, walkIntervalMillis, attackIntervalMillis, experience,
+        behavior, drops, goldDrops, false);
+  }
+
   /** Compatibility constructor for templates that have ordinary item drops but no gold rows. */
   public MonsterTemplate(String name, int feature, Ability ability, int viewRange,
       long walkIntervalMillis, long attackIntervalMillis, long experience, MonsterBehavior behavior,
       List<ItemDrop> drops) {
     this(name, feature, ability, viewRange, walkIntervalMillis, attackIntervalMillis, experience,
-        behavior, drops, List.of());
+        behavior, drops, List.of(), false);
   }
 
   /** Compatibility constructor for the W03 melee slice: everything defaults to aggressive AI. */
   public MonsterTemplate(String name, int feature, Ability ability, int viewRange,
       long walkIntervalMillis, long attackIntervalMillis, long experience, List<ItemDrop> drops) {
     this(name, feature, ability, viewRange, walkIntervalMillis, attackIntervalMillis, experience,
-        MonsterBehavior.AGGRESSIVE, drops, List.of());
+        MonsterBehavior.AGGRESSIVE, drops, List.of(), false);
   }
 
   /**
@@ -126,8 +135,9 @@ public record MonsterTemplate(
 
   /**
    * Builds a template from the imported Monster.DB row and MonItems drop table
-   * ({@code UsrEngn.pas:2581} field mapping; race/Undead/CoolEye/SPEED/HIT have no engine
-   * consumer yet and stay readable through {@link MonsterDb}).
+   * ({@code UsrEngn.pas:2581} field mapping; race/CoolEye/SPEED/HIT have no engine consumer
+   * yet and stay readable through {@link MonsterDb}). {@code Undead} feeds
+   * {@code m_btLifeAttrib = LA_UNDEAD} (W32: {@code SKILL_LIGHTENING}'s 1.5x multiplier).
    */
   private static MonsterTemplate fromDb(String dbName, String displayName, int viewRange,
       MonsterBehavior behavior) {
@@ -143,7 +153,7 @@ public record MonsterTemplate(
         ability, viewRange,
         MonsterDb.clampActionInterval(row.walkSpd()),
         MonsterDb.clampActionInterval(row.attackSpd()),
-        row.exp(), behavior, drops.drops(), drops.goldDrops());
+        row.exp(), behavior, drops.drops(), drops.goldDrops(), row.undead() != 0);
   }
 
   /** The wallet-gold rows of a template; exposed for docs/tests alongside ordinary drops. */

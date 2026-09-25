@@ -334,9 +334,9 @@ SKILL	SKILL_ONESWORD:taoist	3	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	基本
 SKILL	SKILL_ILKWANG:warrior	4	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	精神力战法；GEEM2 Magic.DB 同名行 job=taoist learnable=no
 SKILL	SKILL_ILKWANG:wizard	4	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	精神力战法；GEEM2 Magic.DB 同名行 job=taoist learnable=no
 SKILL	SKILL_ILKWANG:taoist	4	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	精神力战法；GEEM2 Magic.DB 同名行 job=taoist learnable=yes
-SKILL	SKILL_FIREBALL2:warrior	5	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	大火球；GEEM2 Magic.DB 同名行 job=wizard learnable=no
-SKILL	SKILL_FIREBALL2:wizard	5	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	大火球；GEEM2 Magic.DB 同名行 job=wizard learnable=yes
-SKILL	SKILL_FIREBALL2:taoist	5	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	大火球；GEEM2 Magic.DB 同名行 job=wizard learnable=no
+SKILL	SKILL_FIREBALL2:warrior	5	n/a	gate-game	implemented	WorldMagicTest	Grobal2.pas:SKILL_*	大火球；GEEM2 Magic.DB 同名行 job=wizard learnable=no；W32 复用 SKILL_FIREBALL 的单体延迟伤害链（Magic.pas:280 两者共用同一 case 分支）
+SKILL	SKILL_FIREBALL2:wizard	5	n/a	gate-game	implemented	WorldMagicTest	Grobal2.pas:SKILL_*	大火球；GEEM2 Magic.DB 同名行 job=wizard learnable=yes；W32 复用 SKILL_FIREBALL 的单体延迟伤害链（Magic.pas:280 两者共用同一 case 分支）
+SKILL	SKILL_FIREBALL2:taoist	5	n/a	gate-game	implemented	WorldMagicTest	Grobal2.pas:SKILL_*	大火球；GEEM2 Magic.DB 同名行 job=wizard learnable=no；W32 复用 SKILL_FIREBALL 的单体延迟伤害链（Magic.pas:280 两者共用同一 case 分支）
 SKILL	SKILL_AMYOUNSUL:warrior	6	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	施毒术；GEEM2 Magic.DB 同名行 job=taoist learnable=no
 SKILL	SKILL_AMYOUNSUL:wizard	6	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	施毒术；GEEM2 Magic.DB 同名行 job=taoist learnable=no
 SKILL	SKILL_AMYOUNSUL:taoist	6	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	施毒术；GEEM2 Magic.DB 同名行 job=taoist learnable=yes
@@ -352,9 +352,9 @@ SKILL	SKILL_FIRE:taoist	9	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	地狱火�
 SKILL	SKILL_SHOOTLIGHTEN:warrior	10	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	疾光电影；GEEM2 Magic.DB 同名行 job=wizard learnable=no
 SKILL	SKILL_SHOOTLIGHTEN:wizard	10	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	疾光电影；GEEM2 Magic.DB 同名行 job=wizard learnable=yes
 SKILL	SKILL_SHOOTLIGHTEN:taoist	10	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	疾光电影；GEEM2 Magic.DB 同名行 job=wizard learnable=no
-SKILL	SKILL_LIGHTENING:warrior	11	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	雷电术；GEEM2 Magic.DB 同名行 job=wizard learnable=no
-SKILL	SKILL_LIGHTENING:wizard	11	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	雷电术；GEEM2 Magic.DB 同名行 job=wizard learnable=yes
-SKILL	SKILL_LIGHTENING:taoist	11	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	雷电术；GEEM2 Magic.DB 同名行 job=wizard learnable=no
+SKILL	SKILL_LIGHTENING:warrior	11	n/a	gate-game	implemented	WorldMagicTest	Grobal2.pas:SKILL_*	雷电术；GEEM2 Magic.DB 同名行 job=wizard learnable=no；W32 单体延迟伤害 + LA_UNDEAD 1.5x（Magic.pas:392，稻草人为已接线怪物中唯一 Undead=1 行）
+SKILL	SKILL_LIGHTENING:wizard	11	n/a	gate-game	implemented	WorldMagicTest	Grobal2.pas:SKILL_*	雷电术；GEEM2 Magic.DB 同名行 job=wizard learnable=yes；W32 单体延迟伤害 + LA_UNDEAD 1.5x（Magic.pas:392，稻草人为已接线怪物中唯一 Undead=1 行）
+SKILL	SKILL_LIGHTENING:taoist	11	n/a	gate-game	implemented	WorldMagicTest	Grobal2.pas:SKILL_*	雷电术；GEEM2 Magic.DB 同名行 job=wizard learnable=no；W32 单体延迟伤害 + LA_UNDEAD 1.5x（Magic.pas:392，稻草人为已接线怪物中唯一 Undead=1 行）
 SKILL	SKILL_ERGUM:warrior	12	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	刺杀剑术；GEEM2 Magic.DB 同名行 job=warrior learnable=yes
 SKILL	SKILL_ERGUM:wizard	12	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	刺杀剑术；GEEM2 Magic.DB 同名行 job=warrior learnable=no
 SKILL	SKILL_ERGUM:taoist	12	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	刺杀剑术；GEEM2 Magic.DB 同名行 job=warrior learnable=no

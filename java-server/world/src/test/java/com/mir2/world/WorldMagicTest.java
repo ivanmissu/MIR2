@@ -16,7 +16,11 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
 
-/** W28 minimum acceptance slice: book, fireball, healing and transient magic-shield lifecycle. */
+/**
+ * W28 minimum acceptance slice: book, fireball, healing and transient magic-shield lifecycle.
+ * W32 adds the first per-skill batch on top of that framework: 大火球 (identical delivery to
+ * fireball) and 雷电术 (same delivery plus the {@code LA_UNDEAD} 1.5x multiplier).
+ */
 class WorldMagicTest {
   private final AtomicLong now = new AtomicLong();
 
@@ -104,6 +108,84 @@ class WorldMagicTest {
       assertTrue(run(world, world.snapshot(target.id())).ability().hp() < targetHp);
       assertTrue(events.stream().anyMatch(WorldEvent.ObjectStruck.class::isInstance));
       assertTrue(events.stream().anyMatch(WorldEvent.HealthChanged.class::isInstance));
+    }
+  }
+
+  @Test
+  void fireball2SharesTheFireballDelayedDamageChain() {
+    // Magic.pas:280 — SKILL_FIREBALL and SKILL_FIREBALL2 are literally the same case branch;
+    // 大火球 only differs from 火球术 in its own Magic.DB power/level columns.
+    RecordingStore store = new RecordingStore();
+    UUID characterId = UUID.randomUUID();
+    store.save(state(characterId, LevelAbilities.JOB_WIZARD, 15, 5));
+
+    try (WorldEngine world = engine(store)) {
+      List<WorldEvent> events = new ArrayList<>();
+      WorldObjectSnapshot wizard = enter(world, characterId, "法师", 5, 5,
+          LevelAbilities.JOB_WIZARD, events);
+      MonsterTemplate dummy = new MonsterTemplate("木桩", 0, Ability.monster(100, 0, 0, 0, 0),
+          1, 1_000_000, 1_000_000, 0, List.of());
+      WorldObjectSnapshot target = run(world,
+          world.spawnMonster(dummy, "0", new Position(7, 5), Direction.LEFT));
+      int targetHp = target.ability().hp();
+      int mana = wizard.ability().mp();
+      events.clear();
+
+      assertTrue(run(world, world.castSpell(wizard.id(), 5, target.position(), target.id())));
+      assertTrue(run(world, world.snapshot(wizard.id())).ability().mp() < mana);
+      assertEquals(targetHp, run(world, world.snapshot(target.id())).ability().hp(),
+          "greater fireball is a delayed hit too, not an immediate socket-side mutation");
+      assertTrue(events.stream().anyMatch(WorldEvent.MagicFired.class::isInstance));
+
+      now.addAndGet(600);
+      world.tickOnce();
+      assertTrue(run(world, world.snapshot(target.id())).ability().hp() < targetHp);
+      assertTrue(events.stream().anyMatch(WorldEvent.ObjectStruck.class::isInstance));
+      assertTrue(events.stream().anyMatch(WorldEvent.HealthChanged.class::isInstance));
+    }
+  }
+
+  @Test
+  void lighteningAppliesTheUndeadMultiplierAtCastTime() {
+    // Magic.pas:392 — SKILL_LIGHTENING rolls the same single-target bolt as SKILL_FIREBALL
+    // but multiplies the *final* power by 1.5 when the target's LA_UNDEAD flag is set
+    // (Monster.DB Undead column; 稻草人 is the only wired-behaviour monster with Undead=1).
+    // A FixedRandom collapses every roll (the wide power/MC bands) to its minimum so the two
+    // casts share the exact same pre-multiplier power, isolating the multiplier itself.
+    RecordingStore store = new RecordingStore();
+    UUID characterId = UUID.randomUUID();
+    store.save(state(characterId, LevelAbilities.JOB_WIZARD, 17, 11));
+
+    try (WorldEngine world = deterministicEngine(store)) {
+      List<WorldEvent> events = new ArrayList<>();
+      WorldObjectSnapshot wizard = enter(world, characterId, "法师", 5, 5,
+          LevelAbilities.JOB_WIZARD, events);
+      MonsterTemplate livingDummy = new MonsterTemplate("木桩", 0,
+          Ability.monster(100_000, 0, 0, 0, 0), 1, 1_000_000, 1_000_000, 0, List.of());
+      MonsterTemplate undeadDummy = new MonsterTemplate("稻草人", 0,
+          Ability.monster(100_000, 0, 0, 0, 0), 1, 1_000_000, 1_000_000, 0,
+          MonsterBehavior.STATIONARY, List.of(), List.of(), true);
+      WorldObjectSnapshot living = run(world,
+          world.spawnMonster(livingDummy, "0", new Position(3, 5), Direction.RIGHT));
+      WorldObjectSnapshot undead = run(world,
+          world.spawnMonster(undeadDummy, "0", new Position(7, 5), Direction.LEFT));
+      int livingHp = living.ability().hp();
+      int undeadHp = undead.ability().hp();
+
+      assertTrue(run(world, world.castSpell(wizard.id(), 11, living.position(), living.id())));
+      now.addAndGet(600);
+      world.tickOnce();
+      int livingDamage = livingHp - run(world, world.snapshot(living.id())).ability().hp();
+      assertTrue(livingDamage > 0, "the bolt must actually land for the comparison to mean anything");
+
+      now.addAndGet(2_000);
+      assertTrue(run(world, world.castSpell(wizard.id(), 11, undead.position(), undead.id())));
+      now.addAndGet(600);
+      world.tickOnce();
+      int undeadDamage = undeadHp - run(world, world.snapshot(undead.id())).ability().hp();
+
+      assertEquals(Math.rint(livingDamage * 1.5), (double) undeadDamage,
+          "SKILL_LIGHTENING must scale the identical base power by 1.5x against LA_UNDEAD");
     }
   }
 
@@ -210,6 +292,23 @@ class WorldMagicTest {
         new WorldEngine.Config(Duration.ofMillis(50), 12, 1_000, 900, 5_000, 180_000);
     return new WorldEngine(config, List.of(GameMap.empty("0", "PoC", 30, 30)), now::get,
         new Random(20020522L), store, ItemDatabase.of(StdItemsDb.all()));
+  }
+
+  /** Same wiring as {@link #engine}, but every random draw collapses to its range minimum. */
+  private WorldEngine deterministicEngine(PlayerStateStore store) {
+    WorldEngine.Config config =
+        new WorldEngine.Config(Duration.ofMillis(50), 12, 1_000, 900, 5_000, 180_000);
+    return new WorldEngine(config, List.of(GameMap.empty("0", "PoC", 30, 30)), now::get,
+        new FixedRandom(), store, ItemDatabase.of(StdItemsDb.all()));
+  }
+
+  /** {@code nextInt(bound)} always answers 0, so every {@code WorldRandom} draw is the range's
+   *  lower bound — used to strip roll noise away from a single deterministic relationship. */
+  private static final class FixedRandom extends Random {
+    @Override
+    public int nextInt(int bound) {
+      return 0;
+    }
   }
 
   private static <T extends WorldEvent> T one(List<WorldEvent> events, Class<T> type) {
