@@ -99,9 +99,9 @@ for index in "${!rows_id[@]}"; do
   fi
 
   cmd="${rows_cmd[$index]}"
-  cmd="${cmd//\{\{jar\}\}/$jar}"
-  cmd="${cmd//\{\{report\}\}/$report_dir}"
-  cmd="${cmd//\{\{repo\}\}/$repo_root}"
+  cmd="${cmd//"{{jar}}"/$jar}"
+  cmd="${cmd//"{{report}}"/$report_dir}"
+  cmd="${cmd//"{{repo}}"/$repo_root}"
   log="$report_dir/$id.log"
 
   echo
