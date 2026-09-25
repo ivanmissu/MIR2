@@ -83,3 +83,27 @@ W27 计划五项全部落地：§1 G4 能力矩阵、§2 三技能最小切片�
 独立证据，并把对应 shadowdiff 场景直接写入 `docs/g4-release-gate.tsv`，让新玩法从第一天起就进发布门禁。
 Market_Def 事务（缺口 2）在库存/金币事务模型与回滚测试就绪前继续保持 `DEFERRED_TRANSACTION`；
 行会 / 攻城 / 交易与真实客户端对拍仍是显式红线。
+
+### 技能逐项接入·第一批（W32）— 已完成
+
+W32 在 W28 框架上接入两个技能，两者都复用既有的单体延迟伤害管线，不引入新形状：
+
+- `SKILL_FIREBALL2`（5，大火球）：Magic.pas:280 与 `SKILL_FIREBALL` 共用同一 `case` 分支，Java 侧同样
+  直接复用 `rollFireballPower`/`validSpellTarget`/`MagicImpactKind.DAMAGE` 管线，只是换成大火球自己的
+  Magic.DB 等级/威力/冷却数据。
+- `SKILL_LIGHTENING`（11，雷电术）：Magic.pas:392，同为单体延迟伤害，额外复刻
+  `TargeTBaseObject.m_btLifeAttrib = LA_UNDEAD` 时最终伤害 `ROUND(nPower * 1.5)` 的判定；为此把
+  Monster.DB 已导入但此前无消费方的 `Undead` 列接到 `MonsterTemplate.undead()`（首批接线怪物中仅
+  稻草人 `Undead=1`，回归测试可观测）。
+
+`docs/g4-capability-matrix.tsv` 对应 6 行（`SKILL_FIREBALL2`/`SKILL_LIGHTENING` × 3 职业）由
+`unimplemented` 转为 `implemented`，evidence 复用 `WorldMagicTest`。证据见
+`docs/g0-evidence/2026-09-25-w32-skill-batch-fireball2-lightening.md`。
+
+**本轮不做**：没有给这两个技能接 shadowdiff 场景或 `g4-release-gate.tsv` 新行——W28 的三个基础技能
+同样只有单元测试证据，本批延续同一验收基线，不单独抬高门槛；技能类 shadowdiff 场景仍是本条目未清的
+待办，留给技能批次全部就绪后一次性补齐更有效率。
+
+下一项：继续按 `Grobal2.pas` SKILL_* 顺序推进第二批（候选：`SKILL_ONESWORD`/`SKILL_ILKWANG` 等战士
+武器技需要先梳理 `ObjBase.pas:9030` 的近战特殊出招管线，`SKILL_FIRECHARM` 等符箓类需要先梳理
+`CheckAmulet`/`UseAmulet` 的护身符消耗模型——两者都比本批的“纯复用”更重，需要单独立项）。

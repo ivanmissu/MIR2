@@ -129,6 +129,14 @@ Java 服务端。
   绑在一起：场景不能悄悄消失、命令必须是可解析的参数向量、执行器不得硬编码场景，并且**只要能力
   矩阵还有 `unimplemented` 行，证据文档就必须写明「G4 未签发」**。本轮结论即为未签发——技能 168 行、
   Market_Def 事务 23 标签、行会/攻城/交易 32 行仍未实现，真实 mir2.exe / Delphi 外部基线仍挂账。
+- **技能逐项接入·第一批（W32）**：在 W28 三技能框架之上按 `Magic.pas` 逐条核对再接入，而非批量猜测——
+  `SKILL_FIREBALL2`（5，大火球）在 Magic.pas:280 与 `SKILL_FIREBALL` 共用同一 `case` 分支，接入即复用
+  既有单体延迟伤害链，只是换成大火球自己的 Magic.DB 等级/威力数据；`SKILL_LIGHTENING`（11，雷电术，
+  Magic.pas:392）同为单体延迟伤害，额外复刻 `m_btLifeAttrib = LA_UNDEAD` 时最终伤害 ×1.5 的判定——
+  `undead` 字段随之从 Monster.DB 补齐到 `MonsterTemplate`（此前该列已导入但无消费方），首批接线怪物中
+  仅稻草人 `Undead=1`。`docs/g4-capability-matrix.tsv` 对应 6 行（2 技能 × 3 职业）由 `unimplemented`
+  转为 `implemented`；技能矩阵仍有 53 个 `SKILL_*` 未接线（战士武器技/符箓消耗/群体与召唤类），
+  按缺口继续逐批推进，详见 `docs/w27-next-plan.md`。
 - **战斗/背包存档**：HP、MP、等级、经验与 46 格背包通过 SQLite 事务保存，在角色进图前恢复；支持从旧 W02 schema 原位升级
 - **物品目录与背包同步（W04）**：最小标准物品库（`StdItem` 完整 `TStdItem` 字段 + SQLite `std_items` 表）、
   复刻 `GetItemNumber` 的稳定 `MakeIndex`、耐久字段、76 字节 `TClientItem` 小端编解码，
@@ -447,8 +455,13 @@ docker compose -f java-server/compose.yml up --build
   丢弃（`CM_DROPITEM`），装备属性映射逐条取自 `ItmUnit.pas` 且数值随真实目录一起权威；
   W15 的修理（普通/特殊）与复活戒指（`ItemDamageRevivalRing`）数值同样真实化
   （复活戒指 AC/MAC 0-1、Looks 175、等级 16、价 20000）；套装效果（Shape/AniCount
-  111-217 表未收录行为）、技能/魔法、远程攻击与剩余 47 种怪物仍未实现——**Monster.DB 全 378 行
-  虽已入库，但红线内 47 种怪不接线行为，仅数据待命**；修理目前是
+  111-217 表未收录行为）、远程攻击与剩余 47 种怪物仍未实现——**Monster.DB 全 378 行
+  虽已入库，但红线内 47 种怪不接线行为，仅数据待命**；技能/魔法自 W28 起按 `Magic.pas` 逐个
+  `case` 分支接入而非批量猜测，W28 落地火球术/治愈术/魔法盾三种基础形态，W32 追加大火球
+  （复用火球术分支）与雷电术（含 `LA_UNDEAD` 1.5x），Grobal2.pas 59 个 `SKILL_*` 目前
+  5/59（火球术/治愈术/大火球/雷电术/魔法盾）已接线，其余 54 个（战士武器技、符箓消耗类、
+  群体/召唤/隐身类）仍按 `docs/w27-next-plan.md`
+  的缺口顺序逐批推进；修理目前是
   协议级最小闭环（`m_sScriptLable` 状态机 + 修理三消息）。W29 起商人标签走
   `MerchantCommand` 指令清单：`@repair`/`@s_repair`/`@exit` 已实现，其余 23 个标签
   按 `DEFERRED_TRANSACTION`/`DEFERRED_SCRIPT` 归档并在运行期**可观测拒绝**（不再静默），

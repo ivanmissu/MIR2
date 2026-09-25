@@ -170,7 +170,11 @@ public final class WorldEngine implements AutoCloseable {
   private static final long HEAL_IMPACT_DELAY_MILLIS = 800;
   private static final int SKILL_FIREBALL = 1;
   private static final int SKILL_HEALING = 2;
+  private static final int SKILL_FIREBALL2 = 5;
+  private static final int SKILL_LIGHTENING = 11;
   private static final int SKILL_MAGIC_SHIELD = 31;
+  /** Magic.pas:437 {@code TargeTBaseObject.m_btLifeAttrib = LA_UNDEAD} lightning multiplier. */
+  private static final double LIGHTENING_UNDEAD_MULTIPLIER = 1.5;
 
   public record Config(
       Duration tickInterval,
@@ -1581,7 +1585,13 @@ public final class WorldEngine implements AutoCloseable {
     return true;
   }
 
-  /** W28 minimum skill framework: fireball, healing and magic-shield lifecycle. */
+  /**
+   * W28 minimum skill framework: fireball, healing and magic-shield lifecycle.
+   * W32 added 大火球（{@code SKILL_FIREBALL2}, Magic.pas:280 shares the exact
+   * {@code SKILL_FIREBALL} case branch verbatim）and 雷电术（{@code SKILL_LIGHTENING},
+   * Magic.pas:392 — same single-target bolt shape, no adjacency-to-caster gate, and a
+   * {@code LA_UNDEAD} 1.5x multiplier resolved against the live target at cast time）.
+   */
   private boolean castPlayerSpell(int playerId, int magicId, Position requestedTarget, int targetId) {
     Player player = requirePlayer(playerId);
     if (!player.ability.alive())
@@ -1595,7 +1605,7 @@ public final class WorldEngine implements AutoCloseable {
       return rejectSpell(player, magicId, WorldEvent.SpellRejection.WRONG_JOB, "当前职业无法使用该技能");
     if (player.ability.level() < magic.requiredLevel(skill.level()))
       return rejectSpell(player, magicId, WorldEvent.SpellRejection.LEVEL_TOO_LOW, "等级不足，无法使用该技能");
-    if (magicId != SKILL_FIREBALL && magicId != SKILL_HEALING && magicId != SKILL_MAGIC_SHIELD)
+    if (!isDamageBolt(magicId) && magicId != SKILL_HEALING && magicId != SKILL_MAGIC_SHIELD)
       return rejectSpell(player, magicId, WorldEvent.SpellRejection.UNSUPPORTED_SKILL, "该技能尚未开放");
 
     Position target = magicId == SKILL_MAGIC_SHIELD ? player.position : requestedTarget;
@@ -1645,8 +1655,15 @@ public final class WorldEngine implements AutoCloseable {
     for (int viewerId : visibleIds(player.map, player.position, player.id)) emit(players.get(viewerId), cast);
     emitToObserversAndSelf(player, new WorldEvent.MagicFired(player.id, target, targetId, magic));
 
-    if (magicId == SKILL_FIREBALL) {
+    if (magicId == SKILL_FIREBALL || magicId == SKILL_FIREBALL2) {
       int power = rollFireballPower(player, skill, magic);
+      pendingMagicImpacts.add(new PendingMagicImpact(
+          now + FIREBALL_IMPACT_DELAY_MILLIS, MagicImpactKind.DAMAGE,
+          player.id, targetId, target, power));
+    } else if (magicId == SKILL_LIGHTENING) {
+      int power = rollFireballPower(player, skill, magic);
+      if (isUndead(targetObject))
+        power = (int) Math.rint(power * LIGHTENING_UNDEAD_MULTIPLIER);
       pendingMagicImpacts.add(new PendingMagicImpact(
           now + FIREBALL_IMPACT_DELAY_MILLIS, MagicImpactKind.DAMAGE,
           player.id, targetId, target, power));
@@ -1669,8 +1686,18 @@ public final class WorldEngine implements AutoCloseable {
       Player caster, WorldObject target, Position claimed, int magicId) {
     if (target == null || !target.ability().alive() || target.map() != caster.map) return false;
     if (chebyshev(target.position(), claimed) > 1) return false;
-    if (magicId == SKILL_FIREBALL) return target.id() != caster.id && !(target instanceof Npc);
+    if (isDamageBolt(magicId)) return target.id() != caster.id && !(target instanceof Npc);
     return target instanceof Player;
+  }
+
+  /** {@code SKILL_FIREBALL}/{@code SKILL_FIREBALL2}/{@code SKILL_LIGHTENING}: single hostile bolt. */
+  private static boolean isDamageBolt(int magicId) {
+    return magicId == SKILL_FIREBALL || magicId == SKILL_FIREBALL2 || magicId == SKILL_LIGHTENING;
+  }
+
+  /** {@code TargeTBaseObject.m_btLifeAttrib = LA_UNDEAD} (Monster.DB {@code Undead} column). */
+  private static boolean isUndead(WorldObject target) {
+    return target instanceof Monster monster && monster.template.undead();
   }
 
   private static int chebyshev(Position left, Position right) {
