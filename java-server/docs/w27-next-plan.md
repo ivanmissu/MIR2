@@ -47,12 +47,25 @@ W30 已把 §4 收敛为 shadowdiff 固定脚本与 CLI 门禁入口，而不是
 
 支撑改动集中在 `shadowdiff`：`DuoHarness`、`Op` 的 `p1`/`p2` 前缀与组队 op、`ShadowSession` 的组队名单 / 名字颜色 / 地面物品快照、`ShadowDiffMain` 的 `--duo`/`--persistence`/`--lock` 模式，以及 `ScenarioRegressionTest` 的五个端到端 CLI 用例。证据见 `docs/g0-evidence/2026-09-25-w30-interaction-persistence-regression.md`。
 
-### 5. G4 证据与发布门禁（P0）
+### 5. G4 证据与发布门禁（P0）— 已完成（W31，结论：G4 未签发）
 
-- 新增 `docs/g0-evidence/2026-09-24-w27-g4-gap-matrix.md`，记录清单、测试命令、通过数和已知红线。
-- `mvn -f java-server/pom.xml verify` 必须全绿。
-- 运行 shadowdiff：基础 PvE、AI 矩阵、组队经验和重登场景。
-- 只有技能、脚本、行会/攻城仍达到计划要求时才签发 G4；否则输出缺口排序，不把 W27 标记为完成。
+W31 把发布门禁从「散落在 CI YAML / 文档 / JUnit 的三处描述」收敛为一份数据 + 一个执行器：
+
+- `docs/g4-release-gate.tsv`：8 列门禁清单（id / kind / blocking / expect / command / artifact /
+  scope / notes），10 行 = `mvn verify` + 9 个 shadowdiff 场景（base、seeded PvE、AI、AI 负控制、
+  首批 10 种 AI 矩阵、duo party、duo death-pk、persistence、lock）。
+- `scripts/g4-release-gate.sh`：数据驱动执行器，替换 `{{jar}}/{{report}}/{{repo}}`、按 `expect`
+  比对退出码（`exit-1` 只属于负控制，`exit 2` 崩溃一律失败），输出每行日志、shadowdiff 报告与
+  中文汇总 `g4-release-gate.md`；支持 `--list` / `--only` / `--skip-maven` / `--jar`。
+- `G4ReleaseGateTest`（shadowdiff 模块，7 用例）：校验清单格式与场景完整性、把每行参数向量喂给真正的
+  `ShadowDiffMain.Args` 解析、锁死负控制语义、禁止执行器硬编码场景，并且**只要能力矩阵还有
+  `unimplemented` 行，证据文档就必须写明「G4 未签发」**。
+- CI 新增 `g4-release-gate` job：打包 shadowdiff fat JAR 后跑全量清单（`mvn verify` 由 `test` job 承担）
+  并上传跑批证据。
+
+结论按计划要求输出缺口排序而非签发：技能 168 行、Market_Def 事务 23 标签、行会/攻城/交易 32 行仍
+`unimplemented`，真实 mir2.exe / Delphi 外部基线仍挂账，故 **不签发 G4**。证据见
+`docs/g0-evidence/2026-09-25-w31-g4-release-gate.md`。
 
 ## 本轮不做
 
@@ -63,4 +76,10 @@ W30 已把 §4 收敛为 shadowdiff 固定脚本与 CLI 门禁入口，而不是
 
 ## 当前进度与下一项
 
-G4 能力矩阵、三技能基础框架（W28）、NPC/Market_Def 指令清单及安全拒绝边界（W29）和交互/持久化 shadowdiff 回归（W30）已完成；下一项按顺序推进 **G4 证据与发布门禁**（§5：全量 `mvn verify`、基础/PvE/AI/组队/死亡PK/持久化/锁定 shadowdiff 证据汇总，输出仍未完成的技能、脚本、行会/攻城/交易缺口，不把本地 Java↔Java 对拍误报为真实客户端 G4 通过）。每个切片继续独立测试、独立证据、独立对拍。
+W27 计划五项全部落地：§1 G4 能力矩阵、§2 三技能最小切片（W28）、§3 NPC/Market_Def 指令清单与安全拒绝
+边界（W29）、§4 交互/持久化 shadowdiff 回归（W30）、§5 G4 证据与发布门禁（W31）。**G4 未签发。**
+
+下一项按 W31 §5 的缺口排序推进 **技能逐项接入（缺口 1）**：以 `Magic.pas` 为准按批迁移，每批独立测试、
+独立证据，并把对应 shadowdiff 场景直接写入 `docs/g4-release-gate.tsv`，让新玩法从第一天起就进发布门禁。
+Market_Def 事务（缺口 2）在库存/金币事务模型与回滚测试就绪前继续保持 `DEFERRED_TRANSACTION`；
+行会 / 攻城 / 交易与真实客户端对拍仍是显式红线。

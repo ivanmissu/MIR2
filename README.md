@@ -120,6 +120,15 @@ Java 服务端。
   `DisableTakeOffList.txt`，验证 `SM_TAKEOFF_FAIL` + 「无法取下物品」提示和锁定穿戴槽重登保持。
   `StateSnapshot` 新增组队名单、名字颜色和地面物品观测面，消息可用 `--strict-messages` 升为失败条件；
   这仍是 Java↔Java 确定性回归，真实客户端 / Delphi 对拍仍按 G4 门禁另行要求。
+- **G4 发布门禁清单 + 数据驱动执行器（W31）**：`java-server/docs/g4-release-gate.tsv` 把发布门禁
+  固化为 10 行数据（`mvn verify` + base / seeded PvE / AI / AI 负控制 / 首批 10 种 AI 矩阵 /
+  duo party / duo death-pk / persistence / lock 九个 shadowdiff 场景），
+  `scripts/g4-release-gate.sh` 逐行执行并按 `expect` 比对退出码（`exit-1` 只属于负控制、
+  `exit 2` 崩溃一律失败），产出每行日志、shadowdiff 报告与中文汇总；CI 新增 `g4-release-gate`
+  job 上传证据。`G4ReleaseGateTest` 把清单、执行器、真正的 `ShadowDiffMain.Args` 解析器与能力矩阵
+  绑在一起：场景不能悄悄消失、命令必须是可解析的参数向量、执行器不得硬编码场景，并且**只要能力
+  矩阵还有 `unimplemented` 行，证据文档就必须写明「G4 未签发」**。本轮结论即为未签发——技能 168 行、
+  Market_Def 事务 23 标签、行会/攻城/交易 32 行仍未实现，真实 mir2.exe / Delphi 外部基线仍挂账。
 - **战斗/背包存档**：HP、MP、等级、经验与 46 格背包通过 SQLite 事务保存，在角色进图前恢复；支持从旧 W02 schema 原位升级
 - **物品目录与背包同步（W04）**：最小标准物品库（`StdItem` 完整 `TStdItem` 字段 + SQLite `std_items` 表）、
   复刻 `GetItemNumber` 的稳定 `MakeIndex`、耐久字段、76 字节 `TClientItem` 小端编解码，
