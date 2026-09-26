@@ -6,6 +6,7 @@ import com.mir2.protocol.SixBitCodec;
 import com.mir2.world.Direction;
 import com.mir2.world.DoorInfo;
 import com.mir2.world.GameMap;
+import com.mir2.world.HitSpeed;
 import com.mir2.world.MovementKind;
 import com.mir2.world.Position;
 import com.mir2.world.TeleportRoute;
@@ -143,6 +144,15 @@ class GameProtocolAdapterTest {
       assertEquals(ProtocolConstants.SM_ABILITY, ability.message().ident());
       assertEquals(0, ability.message().recog(), "new players start with zero gold and ability sync is immediate");
       assertEquals(50, SixBitCodec.decodeString(ability.encodedBody()).length);
+
+      // ObjBase.pas:5601 — the RM_ABILITY handler always chases SM_ABILITY with SM_SUBABILITY.
+      WirePacket subAbility = ((GameOutbound.Packet) output.removeFirst()).packet();
+      assertEquals(ProtocolConstants.SM_SUBABILITY, subAbility.message().ident());
+      assertEquals(0, subAbility.message().recog(), "m_nAntiMagic is still zero without gear");
+      assertEquals(HitSpeed.DEF_HIT, subAbility.message().param() & 0xff, "准确 = DEFHIT");
+      assertEquals(HitSpeed.DEF_SPEED, (subAbility.message().param() >>> 8) & 0xff, "敏捷 = DEFSPEED");
+      assertEquals(0, subAbility.message().tag());
+      assertEquals(0, subAbility.message().series());
       assertTrue(output.isEmpty());
     }
   }

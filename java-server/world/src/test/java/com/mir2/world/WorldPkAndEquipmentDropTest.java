@@ -163,8 +163,7 @@ class WorldPkAndEquipmentDropTest {
       WorldObjectSnapshot defender = enter(world, "自卫者", new Position(5, 6), defenderEvents);
       run(world, world.setLevel(aggressor.id(), 10));
       run(world, world.setLevel(defender.id(), 40));
-      advance(1_000);
-      run(world, world.attack(aggressor.id(), new Position(5, 5), Direction.DOWN, AttackKind.HIT));
+      landOneBlow(world, aggressor.id(), new Position(5, 5), Direction.DOWN, defender.id());
 
       defenderEvents.clear();
       beatToDeath(world, defender.id(), aggressor.id(), new Position(5, 6), Direction.UP);
@@ -189,8 +188,7 @@ class WorldPkAndEquipmentDropTest {
       run(world, world.setLevel(attacker.id(), 30));
 
       events.clear();
-      advance(1_000);
-      run(world, world.attack(attacker.id(), new Position(5, 5), Direction.DOWN, AttackKind.HIT));
+      landOneBlow(world, attacker.id(), new Position(5, 5), Direction.DOWN, target.id());
 
       WorldEvent.NameColorChanged flagged = lastNameColor(events, attacker.id());
       assertNotNull(flagged, "SetPKFlag repaints the aggressor's name on the first blow");
@@ -524,6 +522,25 @@ class WorldPkAndEquipmentDropTest {
   }
 
   /** Swings from {@code from} until the target is dead; fails the test if it survives. */
+  /**
+   * Swings until one blow actually lands. {@code SetPKFlag} only fires from the
+   * {@code nPower > 0} branch of {@code applyDamage}, and since W33 a DEFHIT = 5 character
+   * is dodged by a DEFSPEED = 15 one about three swings in five (ObjBase.pas:22240), so a
+   * single scripted attack is no longer enough to guarantee the flag.
+   */
+  private void landOneBlow(
+      WorldEngine world, int attackerId, Position from, Direction facing, int targetId) {
+    int hp = run(world, world.snapshot(targetId)).ability().hp();
+    for (int swing = 0; swing < 60; swing++) {
+      advance(1_000);
+      run(world, world.attack(attackerId, from, facing, AttackKind.HIT));
+      int now = run(world, world.snapshot(targetId)).ability().hp();
+      if (now < hp) return;
+      hp = now;
+    }
+    throw new AssertionError("the attacker never landed a blow");
+  }
+
   private void beatToDeath(
       WorldEngine world, int attackerId, int targetId, Position from, Direction facing) {
     for (int swing = 0; swing < 400; swing++) {

@@ -107,3 +107,36 @@ W32 在 W28 框架上接入两个技能，两者都复用既有的单体延迟�
 下一项：继续按 `Grobal2.pas` SKILL_* 顺序推进第二批（候选：`SKILL_ONESWORD`/`SKILL_ILKWANG` 等战士
 武器技需要先梳理 `ObjBase.pas:9030` 的近战特殊出招管线，`SKILL_FIRECHARM` 等符箓类需要先梳理
 `CheckAmulet`/`UseAmulet` 的护身符消耗模型——两者都比本批的“纯复用”更重，需要单独立项）。
+
+### 技能逐项接入·第二批（W33）— 已完成：战士武器技 + 准确/敏捷模型
+
+W33 接入 `SKILL_ONESWORD`(3 基本剑术)、`SKILL_ILKWANG`(4 精神力战法)、`SKILL_YEDO`(7 攻杀剑术)。这三个
+技能在 Delphi 里被 `MagicManager.IsWarrSkill`（`Magic.pas:211`）挡在 `DoSpell` 之外，**是纯被动量**：
+唯一作用是给 `TBaseObject.RecalcHitSpeed`（`ObjBase.pas:18551`）贡献准确点。而准确点此前在 Java 侧没有
+任何消费方，所以本批的主体是先补齐这条链：
+
+- **准确 / 敏捷模型**：新 `HitSpeed` 值类复刻 `RecalcHitSpeed`（`DEFHIT=5`/`DEFSPEED=15`、道士 `+3`、
+  三张 `Round(n/3*level)` 加成表、`m_nHitPlus = DEFHIT + level`、节拍 `7 - level`）；`RecalcAbilitys`
+  之后叠加装备的 `wHitPoint/wSpeedPoint`；怪物侧把 `Monster.DB` 的 `SPEED`/`HIT` 两列（此前已导入、
+  无消费方）接到 `MonsterTemplate`，对应 `UsrEngn.pas:2606` 的直抄语义。
+- **`_Attack` 闪避判定**（`ObjBase.pas:22240`）：`if 目标准确 > 0 then if 我方准确 < Random(目标敏捷)
+  then nPower := 0`。木桩（`练功师`，`HIT=0`）因此永不被闪避，shadowdiff 的 PvE 基准仍确定性。
+- **攻杀剑术闭环**：`ClientAttack` 的节拍块（`ObjBase.pas:8861`）→ `+PWR` 裸标签帧 → 客户端下一刀发
+  `CM_POWERHIT(3018)` → `wHitMode=3` 消费 `m_boPowerHit` 加 `m_nHitPlus` → `AttackDir` 广播
+  `SM_SPELL2(117)`（未武装时仍是 `SM_HIT`）。
+- **`SM_SUBABILITY(752)`** 随每个 `SM_ABILITY` 出站（`ObjBase.pas:5601`），准确/敏捷第一次对客户端可见。
+- **`ClientSpellXY` 空实现分支**（`ObjBase.pas:9027`）：3/4/7 回 `+GOOD`，不扣蓝、不进冷却、不要目标；
+  同属 `IsWarrSkill` 但本批未实现的 12/25/26/27/34/38 明确回 `+FAIL` +「该技能尚未开放」。
+- 顺带补上 `ReadBook → RecalcAbilitys`（`ObjBase.pas:23466`），并修正 `applyDamage` 在 0 伤害时仍广播
+  `SM_STRUCK` 的旧偏差（Delphi 的 `StruckDamage`/`RM_STRUCK` 都在 `if nPower > 0` 里）。
+
+矩阵 9 行（3 技能 × 3 职业）转 `implemented`，`CM_POWERHIT`/`SM_SPELL2`/`SM_SUBABILITY` 由
+`protocol-only` 转 `implemented`。证据见 `docs/g0-evidence/2026-09-26-w33-warrior-weapon-skills.md`。
+
+**本轮不做**：技能熟练度体系（`TrainSkill`/`CheckMagicLevelup`，对 W28/W32 的法术同样缺席，应作为独立
+批次一次性接入）；刺杀/半月/烈火/野蛮冲撞/双龙斩/狂风斩（每个都要新的攻击形状：直线三格、扇形、十字、
+位移撞墙）；属性点加点 `m_BonusAbil`；本批同样不加 shadowdiff 场景或门禁行。
+
+下一项：`SKILL_ERGUM`(12 刺杀剑术) 起的**特殊攻击形状**批次（`SwordLongAttack` 直线三格 →
+`SwordWideAttack` 扇形 → `CrsWideAttack` 十字），它们与本批共用已经铺好的 `wHitMode`/`+标签帧`/
+`AttackKind` 管线，只需补几何与目标选择；或者技能熟练度批次（一次性给全部已接入技能补 `TrainSkill`）。
