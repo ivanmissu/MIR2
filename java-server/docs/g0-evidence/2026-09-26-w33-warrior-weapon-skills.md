@@ -166,6 +166,26 @@ evidence 指向真实存在的 `*Test`、状态自洽）全部通过。**G4 仍�
   `loadtest` / `shadowdiff` 后共 **415 个用例通过**，余下 28 个失败全部是本地缺 `sqlite-jdbc` 驱动
   （`No suitable driver found for jdbc:sqlite:`）或 runner 不支持参数注入所致，与本轮改动无关。
 
-`mvn -f java-server/pom.xml verify` 的权威执行仍按仓库既定流程交给 CI（本文件在 CI 结论产出后补记）。
+`mvn -f java-server/pom.xml verify` 的权威执行按仓库既定流程交给 CI。
 
-<!-- CI-RESULTS -->
+**PR #53（`arena/01a0dc88-mir2` → `master`）CI 结论，全部通过：**
+
+| Job | 结果 | 用时 |
+|---|---|---|
+| `test`（`mvn verify` 全量，含新增的 `WorldWarriorSkillTest` 5 例与 `GameWarriorSkillProtocolTest` 4 例） | ✅ pass | 6m52s |
+| `G4 release gate (manifest-driven)`（10 行清单 = `mvn verify` + 9 个 shadowdiff 场景） | ✅ pass | 8m47s |
+| `Shadowdiff embedded self-comparison` | ✅ pass | 2m14s |
+| `Bot-swarm stability (scaled G0 rehearsal)` | ✅ pass | 2m39s |
+| `Wiretool record/replay smoke` | ✅ pass | 52s |
+| `Build fat JAR and publish to dist branch` | ✅ pass | 42s |
+
+（push 触发与 pull_request 触发两条 workflow 各跑一遍，结论一致；上表取 push 运行
+[36227750848](https://github.com/ivanmissu/MIR2/actions/runs/36227750848) 的用时。）
+
+几个值得单独点名的绿灯：
+
+- **shadowdiff 与 G4 门禁**：闪避判定给每一次近战多抽一次随机数，两台同种子服务器仍然逐字节一致 ——
+  这正是把 `ACCURACY` 追加为独立流、并保住木桩 `HIT = 0` 永不闪避这个 quirk 的目的。
+- **bot-swarm**：命中率大幅下降（机器人不会开怪技能）之后，整群机器人的登录/走位/砍杀/重登循环仍然零
+  错误，说明新的 `#+PWR!` 裸帧通道与 `SM_SUBABILITY` 的额外一帧都没有破坏线路解析。
+- **wiretool 录放**：登录序列多出一帧 `SM_SUBABILITY` 后，录制/回放对比依旧通过。
