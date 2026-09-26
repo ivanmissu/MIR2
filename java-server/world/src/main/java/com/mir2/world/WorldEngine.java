@@ -1487,6 +1487,7 @@ public final class WorldEngine implements AutoCloseable {
     // retaining placeholder HP/MP/level values until its first later mutation.
     emit(player, new WorldEvent.AbilityChanged(
         player.id, player.ability, player.gold, player.job, player.weights()));
+    emitSubAbility(player);
     WorldEvent appeared = new WorldEvent.ObjectAppeared(player.snapshot());
     for (int viewerId : visibleIds) emit(players.get(viewerId), appeared);
     // The test-gold floor is announced once the client can actually see itself.
@@ -1601,6 +1602,23 @@ public final class WorldEngine implements AutoCloseable {
     MagicDefinition magic = magicCatalog.find(magicId).orElse(null);
     if (skill == null || magic == null)
       return rejectSpell(player, magicId, WorldEvent.SpellRejection.UNKNOWN_SKILL, "尚未学习该技能");
+
+    // ClientSpellXY (ObjBase.pas:9027): 基本剑术/精神力战法/攻杀剑术 share one case branch whose
+    // whole body is `Result := True`. They are passive modifiers folded into RecalcHitSpeed, so
+    // "casting" one only acknowledges the key press. MagicManager.DoSpell refuses them outright
+    // (IsWarrSkill, Magic.pas:211), and because the same predicate also suppresses
+    // CheckActionStatus and the m_dwMagicAttackInterval gate, the press costs no mana and is
+    // never rejected as TOO_FAST. Delphi still stamps m_dwMagicAttackTick, which is modelled by
+    // moving lastSpellAt — the three rows carry Delay = 0 in Magic.DB, so the next real spell is
+    // only held for the shared 1350 ms interval.
+    if (HitSpeed.isImplementedWarriorSkill(magicId)) {
+      player.lastSpellAt = clock.getAsLong();
+      emit(player, new WorldEvent.SpellAccepted(player.id, magicId));
+      return true;
+    }
+    if (HitSpeed.isWarriorSkill(magicId))
+      return rejectSpell(player, magicId, WorldEvent.SpellRejection.UNSUPPORTED_SKILL, "该技能尚未开放");
+
     if (magic.job() != MagicDefinition.ANY_JOB && magic.job() != player.job)
       return rejectSpell(player, magicId, WorldEvent.SpellRejection.WRONG_JOB, "当前职业无法使用该技能");
     if (player.ability.level() < magic.requiredLevel(skill.level()))
@@ -1754,7 +1772,14 @@ public final class WorldEngine implements AutoCloseable {
     player.direction = direction;
     WorldObjectSnapshot attacker = player.snapshot();
     emit(player, new WorldEvent.AttackAccepted(attacker, attack));
-    WorldEvent swing = new WorldEvent.ObjectAttacked(attacker, attack);
+    // AttackDir (ObjBase.pas:18826) snapshots m_boPowerHit *before* _Attack consumes it and
+    // maps wHitMode 3 to RM_SPELL2 only when the flag was armed; an unarmed CM_POWERHIT
+    // broadcasts a plain RM_HIT. The consumption itself happens inside _Attack for both the
+    // "hit something" and the "swung at air" branches (ObjBase.pas:22122 / 22145).
+    boolean powerHit = attack == AttackKind.POWER_HIT && player.powerHit;
+    if (attack == AttackKind.POWER_HIT) player.powerHit = false;
+    AttackKind broadcast = attack == AttackKind.POWER_HIT && !powerHit ? AttackKind.HIT : attack;
+    WorldEvent swing = new WorldEvent.ObjectAttacked(attacker, broadcast);
     for (int viewerId : visibleIds(player.map, player.position, player.id)) emit(players.get(viewerId), swing);
 
     Position front = player.position.translate(direction, 1);
@@ -1762,18 +1787,64 @@ public final class WorldEngine implements AutoCloseable {
     // IsAttackTarget is False for TNormNpc/TMerchant (ObjNpc.pas), so a swing at an
     // NPC's cell connects with nothing — the minimal NPC slice keeps them decorative.
     if (target == null || target instanceof Npc || !target.ability().alive()) {
+      advancePowerHitCadence(player);
       return AttackResult.missed(attacker);
     }
 
     // m_nLuck = sum of worn Luck minus UnLuck (RecalcAbilitys, ObjBase.pas:3401); with no gear
     // it is zero and rollDamage draws exactly as before.
-    int damage = rollDamage(player.ability, target.ability(), playerLuck(player));
+    int damage = rollDamage(player.ability, target.ability(), playerLuck(player),
+        powerHit ? player.hitPlus : 0, player, target);
     damage = applyMagicShield(target, damage);
     applyDamage(target, player, damage);
-    // AttackTarget.GetHitStruckDamage only assigns weapon wear when the blow penetrates AC.
+    // ObjBase.pas:22252 rolls `nWeaponDamage := Random(5) + 2` inside the *pre-AC* `nPower > 0`
+    // block, so Delphi also wears the weapon on a blow that AC fully absorbs; the engine has
+    // always tested the post-AC figure instead and that simplification is left alone here.
+    // What matters for W33 is that a dodged swing zeroes nPower ahead of both tests and
+    // therefore wears nothing at all.
     if (damage > 0) damageEquipment(player, EquipmentSlot.WEAPON,
         random.nextInt(WorldRandom.Stream.EQUIPMENT_WEAR, 5) + 2);
+    advancePowerHitCadence(player);
     return new AttackResult(true, attacker, target.snapshot(), damage);
+  }
+
+  /**
+   * The 攻杀剑术 cadence block of {@code TPlayObject.ClientAttack} (ObjBase.pas:8861), which
+   * runs after {@code AttackDir} for every melee ident — a missed swing still advances it.
+   *
+   * <pre>
+   *   if (m_MagicPowerHitSkill &lt;&gt; nil) and (m_UseItems[U_WEAPON].Dura &gt; 0) then begin
+   *     Dec(m_btAttackSkillCount);
+   *     if m_btAttackSkillPointCount = m_btAttackSkillCount then begin
+   *       m_boPowerHit := True;
+   *       SendSocket(nil, '+PWR');
+   *     end;
+   *     if m_btAttackSkillCount &lt;= 0 then begin
+   *       m_btAttackSkillCount := 7 - m_MagicPowerHitSkill.btLevel;
+   *       m_btAttackSkillPointCount := Random(m_btAttackSkillCount);
+   *     end;
+   *   end;
+   * </pre>
+   *
+   * <p>The {@code '+PWR'} tag frame is what makes the 1.76 client send {@code CM_POWERHIT} on
+   * its next swing ({@code g_boNextTimePowerHit}, ClMain.pas:3620 → 2128), so the whole feature
+   * is invisible without it.
+   */
+  private void advancePowerHitCadence(Player player) {
+    PlayerSkill yedo = player.skills.get(HitSpeed.SKILL_YEDO);
+    if (yedo == null) return;
+    // m_UseItems[U_WEAPON].Dura > 0: a broken (or absent) weapon suspends the cycle entirely.
+    if (player.equipment.at(EquipmentSlot.WEAPON).map(BackpackItem::dura).orElse(0) <= 0) return;
+    player.attackSkillCount--;
+    if (player.attackSkillPointCount == player.attackSkillCount) {
+      player.powerHit = true;
+      emit(player, new WorldEvent.PowerHitReady(player.id));
+    }
+    if (player.attackSkillCount <= 0) {
+      int cycle = HitSpeed.attackSkillCycle(yedo.level());
+      player.attackSkillCount = cycle;
+      player.attackSkillPointCount = random.nextInt(WorldRandom.Stream.POWER_HIT, cycle);
+    }
   }
 
   private boolean pickUpItem(int playerId, Position claimedPosition) {
@@ -2031,12 +2102,18 @@ public final class WorldEngine implements AutoCloseable {
     player.backpack.remove(bagIndex);
     PlayerSkill skill = PlayerSkill.learned(definition.id());
     player.skills.put(skill.magicId(), skill);
+    // ObjBase.pas:23466 — ReadBook calls RecalcAbilitys the moment the TUserMagic joins
+    // m_MagicList, which is what makes a freshly read 基本剑术/攻杀剑术 raise 准确 and arm the
+    // 攻杀 cadence without waiting for the next relog. Delphi sends no RM_ABILITY here, so
+    // neither does this: only SendAddMagic follows.
+    recalculateAbilities(player);
     try {
       persist(player);
     } catch (RuntimeException failure) {
       player.backpack.clear();
       player.backpack.addAll(previousBackpack);
       player.skills.remove(skill.magicId());
+      recalculateAbilities(player);
       throw failure;
     }
     emit(player, new WorldEvent.SkillLearned(player.id, new LearnedMagic(skill, definition)));
@@ -2188,6 +2265,7 @@ public final class WorldEngine implements AutoCloseable {
         base.experience(),
         base.maxExperience());
     player.bonus = bonus;
+    recalculateHitSpeed(player, bonus);
     player.revival = equipmentGrantsRevival(player.equipment);
     // The same RecalcAbilitys pass rebuilds the three death-penalty flags.
     player.dropProtection = DropProtection.of(player.equipment);
@@ -2209,6 +2287,41 @@ public final class WorldEngine implements AutoCloseable {
         emit(players.get(viewerId), relit);
       }
     }
+  }
+
+  /**
+   * The {@code RecalcHitSpeed} half of {@code RecalcAbilitys} (ObjBase.pas:3385 → 18551),
+   * followed by the worn-set addition at ObjBase.pas:3394
+   * ({@code Inc(m_btSpeedPoint, m_AddAbil.wSpeedPoint); Inc(m_btHitPoint, m_AddAbil.wHitPoint)}).
+   *
+   * <p>Delphi re-seeds the 攻杀剑术 cadence on every pass, so equipping a ring re-rolls which
+   * swing of the cycle arms the next power hit. That draw only happens for a character who
+   * actually knows 攻杀剑术, which is why no pre-W33 deterministic vector moves.
+   */
+  private void recalculateHitSpeed(Player player, EquipmentBonus bonus) {
+    HitSpeed points = HitSpeed.of(player.job, player.skills.values());
+    player.hitPoint = points.hitPoint() + bonus.hitPoint();
+    player.speedPoint = points.speedPoint() + bonus.speedPoint();
+    player.hitPlus = points.hitPlus();
+    if (points.attackSkillCycle() > 0) {
+      player.attackSkillCount = points.attackSkillCycle();
+      player.attackSkillPointCount =
+          random.nextInt(WorldRandom.Stream.POWER_HIT, points.attackSkillCycle());
+    } else {
+      player.attackSkillCount = 0;
+      player.attackSkillPointCount = 0;
+    }
+  }
+
+  /**
+   * The {@code SM_SUBABILITY} that Delphi sends on the heels of every {@code SM_ABILITY}
+   * (ObjBase.pas:5601). Only the 准确/敏捷 pair is non-zero for now — {@code m_nAntiMagic},
+   * {@code m_btAntiPoison} and the three recovery accumulators have no gear column feeding
+   * them yet, which is what a naked character reports in the original too.
+   */
+  private void emitSubAbility(Player player) {
+    emit(player, new WorldEvent.SubAbilityChanged(
+        player.id, 0, player.hitPoint, player.speedPoint, 0, 0, 0, 0));
   }
 
   /**
@@ -2267,6 +2380,7 @@ public final class WorldEngine implements AutoCloseable {
     emit(player, change);
     emit(player, new WorldEvent.AbilityChanged(
         player.id, player.ability, player.gold, player.job, player.weights()));
+    emitSubAbility(player);
     emitWeight(player);
     // FeatureChanged() broadcasts the new look to everyone who can see the player.
     WorldObjectSnapshot snapshot = player.snapshot();
@@ -2505,6 +2619,49 @@ public final class WorldEngine implements AutoCloseable {
   }
 
   /**
+   * The full {@code _Attack} damage chain (ObjBase.pas:22121-22160) in Delphi's own order:
+   * power roll → 攻杀 bonus → dodge check → AC roll.
+   *
+   * <pre>
+   *   nPower := GetAttackPower(LoWord(m_WAbil.DC), HiWord(m_WAbil.DC) - LoWord(m_WAbil.DC));
+   *   if (wHitMode = 3) and m_boPowerHit then begin m_boPowerHit := False; Inc(nPower, m_nHitPlus); end;
+   *   if IsProperTarget(AttackTarget) then begin
+   *     if AttackTarget.m_btHitPoint &gt; 0 then
+   *       if (m_btHitPoint &lt; Random(AttackTarget.m_btSpeedPoint)) then nPower := 0;
+   *   end else nPower := 0;
+   *   if nPower &gt; 0 then nPower := AttackTarget.GetHitStruckDamage(Self, nPower);
+   * </pre>
+   *
+   * <p>Two deliberate carry-overs from the pre-W33 engine: the AC roll is still taken even when
+   * the blow already scored zero (Delphi skips it, but the engine has always drawn it and the
+   * observable damage is 0 either way), and the dodge draw lives on its own
+   * {@link WorldRandom.Stream#ACCURACY} stream so a seeded shadow run keeps its damage sequence.
+   */
+  private int rollDamage(Ability attacker, Ability defender, int luck, int hitPlus,
+      WorldObject attackerObject, WorldObject target) {
+    int attack = attackPower(attacker.minDc(), attacker.maxDc(), luck);
+    if (hitPlus > 0) attack += hitPlus;
+    if (meleeEvaded(attackerObject, target)) attack = 0;
+    int defence = randomBetween(defender.minAc(), defender.maxAc());
+    return Math.max(0, attack - defence);
+  }
+
+  /**
+   * {@code if AttackTarget.m_btHitPoint > 0 then if (m_btHitPoint < Random(AttackTarget
+   * .m_btSpeedPoint)) then nPower := 0} (ObjBase.pas:22240).
+   *
+   * <p>Two quirks are kept verbatim. The check is skipped entirely when the <em>target</em> has
+   * no 准确 of its own — which is why 木桩 ({@code 练功师}, {@code HIT=0}) can never be missed and
+   * stays a deterministic damage bench. And {@code Random(0)} is a Delphi no-op that still burns
+   * a draw and yields 0, reproduced here by clamping the bound to 1.
+   */
+  private boolean meleeEvaded(WorldObject attacker, WorldObject target) {
+    if (target.hitPoint() <= 0) return false;
+    int dodge = random.nextInt(WorldRandom.Stream.ACCURACY, Math.max(1, target.speedPoint()));
+    return attacker.hitPoint() < dodge;
+  }
+
+  /**
    * {@code TBaseObject.GetAttackPower} (ObjBase.pas:2416), the melee/base-power branch.
    *
    * <p>With {@code luck == 0} this collapses to {@link #randomBetween(int, int)}, i.e. the exact
@@ -2590,10 +2747,12 @@ public final class WorldEngine implements AutoCloseable {
   }
 
   private void applyDamage(WorldObject victim, WorldObject attacker, int damage) {
-    if (damage <= 0) {
-      broadcastStruck(victim, attacker.id(), 0);
-      return;
-    }
+    // ObjBase.pas:22252-22262 gates StruckDamage *and* the RM_STRUCK broadcast behind
+    // `if nPower > 0`, so a blow that was dodged (W33) or fully absorbed by AC is silent on
+    // the wire: no flinch animation, no floating 0. Before W33 the engine broadcast a
+    // zero-damage SM_STRUCK here, which only ever fired on the rare full-absorb case and is
+    // now corrected — otherwise every dodged swing would repaint the victim.
+    if (damage <= 0) return;
     // RM_STRUCK handling (ObjBase.pas:5477) sets the attacker's PK flag before the damage is
     // applied, so even a non-lethal blow between players repaints the aggressor's name.
     setPkFlag(victim, attacker);
@@ -2747,6 +2906,7 @@ public final class WorldEngine implements AutoCloseable {
     if (broken) {
       emit(player, new WorldEvent.AbilityChanged(
         player.id, player.ability, player.gold, player.job, player.weights()));
+      emitSubAbility(player);
       emitWeight(player);
       WorldEvent appearance = new WorldEvent.ObjectAppeared(player.snapshot());
       for (int viewerId : visibleIds(player.map, player.position, player.id)) {
@@ -2976,6 +3136,7 @@ public final class WorldEngine implements AutoCloseable {
     emitToObserversAndSelf(player, new WorldEvent.ObjectRevived(player.snapshot()));
     emit(player, new WorldEvent.AbilityChanged(
         player.id, player.ability, player.gold, player.job, player.weights()));
+    emitSubAbility(player);
     return true;
   }
 
@@ -3113,6 +3274,7 @@ public final class WorldEngine implements AutoCloseable {
     emit(player, new WorldEvent.AbilityChanged(
         player.id, player.ability, player.gold, player.job,
         player.weightsAtLevel(player.ability.level())));
+    emitSubAbility(player);
   }
 
   /**
@@ -3498,6 +3660,7 @@ public final class WorldEngine implements AutoCloseable {
     // RM_LEVELUP's handler also refreshes the whole ability block (ObjBase.pas:5584).
     emit(player, new WorldEvent.AbilityChanged(
         player.id, reached, player.gold, player.job, player.weightsAtLevel(reached.level())));
+    emitSubAbility(player);
     emitToObserversAndSelf(player, new WorldEvent.HealthChanged(player.snapshot()));
   }
 
@@ -3737,7 +3900,9 @@ public final class WorldEngine implements AutoCloseable {
     WorldObjectSnapshot attacker = monster.snapshot();
     WorldEvent swing = new WorldEvent.ObjectAttacked(attacker, AttackKind.HIT);
     emitToObserversAndSelf(monster, swing);
-    int damage = rollDamage(monster.ability, target.ability);
+    // Monsters run the same _Attack chain: their Monster.DB HIT is checked against the
+    // player's 敏捷, so a chicken (HIT=3) misses a DEFSPEED=15 character most of the time.
+    int damage = rollDamage(monster.ability, target.ability, 0, 0, monster, target);
     applyDamage(target, monster, applyMagicShield(target, damage));
   }
 
@@ -4140,6 +4305,12 @@ public final class WorldEngine implements AutoCloseable {
     void setAbility(Ability ability);
 
     WorldObjectSnapshot snapshot();
+
+    /** {@code m_btHitPoint} — 准确: the attacker side of the {@code _Attack} dodge check. */
+    int hitPoint();
+
+    /** {@code m_btSpeedPoint} — 敏捷: the defender side of the same check. */
+    int speedPoint();
   }
 
   private static final class Player implements WorldObject {
@@ -4227,6 +4398,21 @@ public final class WorldEngine implements AutoCloseable {
     private boolean allowGroup = false;
     /** {@code m_GroupOwner} / {@code m_GroupMembers}: active party container. */
     private PlayerGroup group;
+    /**
+     * {@code m_btHitPoint} / {@code m_btSpeedPoint} (准确 / 敏捷), rebuilt by
+     * {@code RecalcHitSpeed} from {@link HitSpeed} plus the worn set. Delphi seeds them to
+     * {@code DEFHIT}/{@code DEFSPEED} in {@code TPlayObject.Initialize} (ObjBase.pas:1241).
+     */
+    private int hitPoint = HitSpeed.DEF_HIT;
+    private int speedPoint = HitSpeed.DEF_SPEED;
+    /** {@code m_nHitPlus}: the flat damage 攻杀剑术 adds when a power hit is consumed. */
+    private int hitPlus;
+    /** {@code m_btAttackSkillCount}: swings left in the current 攻杀 cycle. */
+    private int attackSkillCount;
+    /** {@code m_btAttackSkillPointCount}: the swing of the cycle that arms the power hit. */
+    private int attackSkillPointCount;
+    /** {@code m_boPowerHit}: armed by the cadence, consumed by the next {@code CM_POWERHIT}. */
+    private boolean powerHit;
 
     private Player(
         int id,
@@ -4404,6 +4590,16 @@ public final class WorldEngine implements AutoCloseable {
           id, name, WorldObjectType.PLAYER, map.id(), position, direction, feature(), status,
           light, ability);
     }
+
+    @Override
+    public int hitPoint() {
+      return hitPoint;
+    }
+
+    @Override
+    public int speedPoint() {
+      return speedPoint;
+    }
   }
 
   private static final class Monster implements WorldObject {
@@ -4461,6 +4657,18 @@ public final class WorldEngine implements AutoCloseable {
       return new WorldObjectSnapshot(
           id, template.name(), WorldObjectType.MONSTER, map.id(), position, direction,
           template.feature(), 0, ability);
+    }
+
+    /** {@code m_btHitPoint := Monster.wHitPoint} — straight from Monster.DB (UsrEngn.pas:2607). */
+    @Override
+    public int hitPoint() {
+      return template.hitPoint();
+    }
+
+    /** {@code m_btSpeedPoint := Monster.wSpeed} — monsters never run RecalcHitSpeed. */
+    @Override
+    public int speedPoint() {
+      return template.speedPoint();
     }
   }
 
@@ -4522,6 +4730,17 @@ public final class WorldEngine implements AutoCloseable {
     public WorldObjectSnapshot snapshot() {
       return new WorldObjectSnapshot(
           id, name, WorldObjectType.NPC, map.id(), position, direction, feature, 0);
+    }
+
+    /** {@code TNormNpc} is never an {@code IsProperTarget}, so the pair is never consulted. */
+    @Override
+    public int hitPoint() {
+      return 0;
+    }
+
+    @Override
+    public int speedPoint() {
+      return 0;
     }
   }
 }

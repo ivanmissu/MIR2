@@ -68,7 +68,8 @@ public final class GameProtocolAdapter implements WorldEventSink {
             unpackPosition(message.recog()), Direction.fromCode(message.tag()), MovementKind.WALK));
         case ProtocolConstants.CM_RUN -> reportExceptionalFailure(world.move(boundPlayer,
             unpackPosition(message.recog()), Direction.fromCode(message.tag()), MovementKind.RUN));
-        case ProtocolConstants.CM_HIT, ProtocolConstants.CM_HEAVYHIT, ProtocolConstants.CM_BIGHIT ->
+        case ProtocolConstants.CM_HIT, ProtocolConstants.CM_HEAVYHIT, ProtocolConstants.CM_BIGHIT,
+             ProtocolConstants.CM_POWERHIT ->
             reportExceptionalFailure(world.attack(boundPlayer, unpackPosition(message.recog()),
                 Direction.fromCode(message.tag()), attackKind(message.ident())));
         // CM_SPELL: Recog=MakeLong(X,Y), Param/Series=target id words, Tag=MagicId.
@@ -197,6 +198,11 @@ public final class GameProtocolAdapter implements WorldEventSink {
       }
       case WorldEvent.SpellAccepted accepted -> {
         if (accepted.playerId() == playerId) sendStatus(true);
+      }
+      // SendSocket(nil, '+PWR') — a bare tag frame on the +GOOD/+FAIL channel that arms the
+      // client's g_boNextTimePowerHit so its next swing goes out as CM_POWERHIT.
+      case WorldEvent.PowerHitReady ready -> {
+        if (ready.playerId() == playerId) output.accept(GameOutbound.Signal.POWER_HIT);
       }
       case WorldEvent.SpellRejected rejected -> {
         if (rejected.playerId() == playerId) {
@@ -375,6 +381,9 @@ public final class GameProtocolAdapter implements WorldEventSink {
       case WorldEvent.AbilityChanged changed -> {
         if (changed.playerId() == playerId) sendAbility(changed);
       }
+      case WorldEvent.SubAbilityChanged changed -> {
+        if (changed.playerId() == playerId) sendSubAbility(changed);
+      }
       case WorldEvent.EquipmentSent sent -> {
         if (sent.playerId() == playerId) sendWornSet(sent.equipment());
       }
@@ -454,6 +463,7 @@ public final class GameProtocolAdapter implements WorldEventSink {
         || ident == ProtocolConstants.CM_HIT
         || ident == ProtocolConstants.CM_HEAVYHIT
         || ident == ProtocolConstants.CM_BIGHIT
+        || ident == ProtocolConstants.CM_POWERHIT
         || ident == ProtocolConstants.CM_SPELL
         || ident == ProtocolConstants.CM_MAGICKEYCHANGE
         || ident == ProtocolConstants.CM_PICKUP
@@ -483,18 +493,27 @@ public final class GameProtocolAdapter implements WorldEventSink {
     return (message.param() & 0xffff) | (message.tag() << 16);
   }
 
+  /** {@code TPlayObject.ClientAttack} (ObjBase.pas:8838) ident → {@code wHitMode} mapping. */
   private static AttackKind attackKind(int ident) {
     return switch (ident) {
       case ProtocolConstants.CM_HEAVYHIT -> AttackKind.HEAVY_HIT;
       case ProtocolConstants.CM_BIGHIT -> AttackKind.BIG_HIT;
+      case ProtocolConstants.CM_POWERHIT -> AttackKind.POWER_HIT;
       default -> AttackKind.HIT;
     };
   }
 
+  /**
+   * {@code TPlayObject.AttackDir} (ObjBase.pas:18841) {@code wHitMode} → broadcast ident.
+   * {@code wHitMode = 3} only answers {@code RM_SPELL2} when the swing actually consumed an
+   * armed {@code m_boPowerHit}; the world already folded that decision into the event's
+   * {@link AttackKind}, so an unarmed 攻杀 arrives here as {@link AttackKind#HIT}.
+   */
   private static int attackIdent(AttackKind attack) {
     return switch (attack) {
       case HEAVY_HIT -> ProtocolConstants.SM_HEAVYHIT;
       case BIG_HIT -> ProtocolConstants.SM_BIGHIT;
+      case POWER_HIT -> ProtocolConstants.SM_SPELL2;
       case HIT -> ProtocolConstants.SM_HIT;
     };
   }
@@ -781,6 +800,24 @@ public final class GameProtocolAdapter implements WorldEventSink {
         (changed.job() & 0xff) | (99 << 8),
         0, 0,
         AbilityCodec.encode(changed.ability(), changed.weights()))));
+  }
+
+  /**
+   * {@code RM_SUBABILITY -> SM_SUBABILITY} (ObjBase.pas:5601). Four packed header words, empty
+   * body: {@code Recog = MakeLong(MakeWord(m_nAntiMagic, 0), 0)},
+   * {@code Param = MakeWord(m_btHitPoint, m_btSpeedPoint)},
+   * {@code Tag = MakeWord(m_btAntiPoison, m_nPoisonRecover)} and
+   * {@code Series = MakeWord(m_nHealthRecover, m_nSpellRecover)}. The byte packing is what the
+   * client's 准确/敏捷 readout decodes, so both values are masked to a byte exactly like the
+   * Delphi {@code Byte} fields they come from.
+   */
+  private void sendSubAbility(WorldEvent.SubAbilityChanged changed) {
+    output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_SUBABILITY,
+        changed.antiMagic() & 0xff,
+        makeWord(changed.hitPoint(), changed.speedPoint()),
+        makeWord(changed.antiPoison(), changed.poisonRecover()),
+        makeWord(changed.healthRecover(), changed.spellRecover()),
+        "")));
   }
 
   /** {@code SM_SENDUSEITEMS}; ObjBase.pas:16930 stays silent when nothing is worn. */

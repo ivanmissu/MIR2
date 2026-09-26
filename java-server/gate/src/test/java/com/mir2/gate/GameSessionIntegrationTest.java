@@ -40,11 +40,11 @@ class GameSessionIntegrationTest {
         int certificationTwo = prepareCharacter(handler, "two", "乙");
 
         try (Socket one = connectGame(ports.game(), "one", "甲", certificationOne)) {
-          List<WirePacket> oneEntry = readPackets(one, 7);
+          List<WirePacket> oneEntry = readPackets(one, 8);
           assertEquals(List.of(ProtocolConstants.SM_NEWMAP, ProtocolConstants.SM_CHANGELIGHT,
               ProtocolConstants.SM_LOGON, ProtocolConstants.SM_FEATURECHANGED,
               ProtocolConstants.SM_USERNAME, ProtocolConstants.SM_MAPDESCRIPTION,
-              ProtocolConstants.SM_ABILITY), idents(oneEntry));
+              ProtocolConstants.SM_ABILITY, ProtocolConstants.SM_SUBABILITY), idents(oneEntry));
           byte[] logonBody = SixBitCodec.decodeString(oneEntry.get(2).encodedBody());
           assertEquals(0x01050100,
               ByteBuffer.wrap(logonBody).order(ByteOrder.LITTLE_ENDIAN).getInt(),
@@ -52,11 +52,12 @@ class GameSessionIntegrationTest {
 
           Socket two = connectGame(ports.game(), "two", "乙", certificationTwo);
           try (two) {
-            List<WirePacket> twoEntry = readPackets(two, 8);
+            List<WirePacket> twoEntry = readPackets(two, 9);
             assertEquals(List.of(ProtocolConstants.SM_NEWMAP, ProtocolConstants.SM_CHANGELIGHT,
                 ProtocolConstants.SM_LOGON, ProtocolConstants.SM_FEATURECHANGED,
                 ProtocolConstants.SM_USERNAME, ProtocolConstants.SM_MAPDESCRIPTION,
-                ProtocolConstants.SM_TURN, ProtocolConstants.SM_ABILITY), idents(twoEntry));
+                ProtocolConstants.SM_TURN, ProtocolConstants.SM_ABILITY,
+                ProtocolConstants.SM_SUBABILITY), idents(twoEntry));
             Position twoPosition = new Position(twoEntry.getFirst().message().param(),
                 twoEntry.getFirst().message().tag());
 

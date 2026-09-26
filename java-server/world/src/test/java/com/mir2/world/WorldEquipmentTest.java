@@ -174,10 +174,20 @@ class WorldEquipmentTest {
       // Take a hit first so the restore has room to work.
       WorldObjectSnapshot orc = run(world,
           world.spawnMonster(MonsterTemplate.orc(), "0", new Position(6, 5), Direction.LEFT));
-      // The orc's attack interval is the imported Monster.DB ATTACK_SPD (2500 ms).
-      advance(MonsterTemplate.orc().attackIntervalMillis() + 500);
-      world.tickOnce();
-      int damaged = run(world, world.snapshot(player.id())).ability().hp();
+      // The orc's attack interval is the imported Monster.DB ATTACK_SPD (2500 ms). Since W33
+      // its HIT of 6 is rolled against the character's DEFSPEED of 15, so about half its
+      // swings are dodged; wait for a blow that actually landed rather than for a single
+      // interval, and read the HP straight after it so the 6 s regen cannot hide the wound.
+      int damaged = 100;
+      for (int swing = 0; swing < 60; swing++) {
+        advance(MonsterTemplate.orc().attackIntervalMillis() + 500);
+        world.tickOnce();
+        damaged = run(world, world.snapshot(player.id())).ability().hp();
+        boolean landed = events.stream().anyMatch(event ->
+            event instanceof WorldEvent.ObjectStruck struck
+                && struck.victim().id() == player.id() && struck.damage() > 0);
+        if (landed && damaged < 100) break;
+      }
       assertTrue(damaged < 100, "the orc must land a hit before the potion is drunk");
       events.clear();
 
@@ -232,8 +242,14 @@ class WorldEquipmentTest {
       events.clear();
       advance(1_000);
 
+      // W33: the orc's 敏捷 of 15 dodges most swings from a DEFHIT = 5 character, and a
+      // dodged swing wears nothing — keep swinging until one connects.
       AttackResult hit = run(world,
           world.attack(player.id(), new Position(5, 5), Direction.RIGHT, AttackKind.HIT));
+      for (int swing = 0; swing < 40 && hit.damage() == 0; swing++) {
+        advance(1_000);
+        hit = run(world, world.attack(player.id(), new Position(5, 5), Direction.RIGHT, AttackKind.HIT));
+      }
 
       assertTrue(hit.damage() > 0);
       assertTrue(run(world, world.equipment(player.id())).at(EquipmentSlot.WEAPON).isEmpty());

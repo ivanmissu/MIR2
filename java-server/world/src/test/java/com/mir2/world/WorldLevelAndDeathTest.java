@@ -205,7 +205,9 @@ class WorldLevelAndDeathTest {
       run(world, world.setLevel(player.id(), 20));
       run(world, world.spawnMonster(MonsterTemplate.chicken(), "0", new Position(6, 5), Direction.LEFT));
       int wounded = 0;
-      for (int tick = 0; tick < 40; tick++) {
+      // W33: a chicken (Monster.DB HIT = 3) misses a DEFSPEED = 15 character about three
+      // swings in four, and it only swings every 3 s, so the window has to be generous.
+      for (int tick = 0; tick < 200; tick++) {
         advance(1_000);
         world.tickOnce();
         wounded = run(world, world.snapshot(player.id())).ability().hp();
@@ -266,10 +268,14 @@ class WorldLevelAndDeathTest {
     }
   }
 
-  /** Lets an orc beat the player to death; a fresh character only has 15 HP. */
+  /**
+   * Lets an orc beat the player to death; a fresh character only has 15 HP. Since W33 the
+   * orc's Monster.DB HIT of 6 is rolled against the victim's 敏捷, so roughly half its swings
+   * are dodged and a level-20 warrior out-regenerates it for several minutes of world time.
+   */
   private void killPlayerWithMonster(WorldEngine world, int playerId) {
     run(world, world.spawnMonster(MonsterTemplate.orc(), "0", new Position(6, 5), Direction.LEFT));
-    for (int tick = 0; tick < 200; tick++) {
+    for (int tick = 0; tick < 1_500; tick++) {
       advance(1_000);
       world.tickOnce();
       if (!run(world, world.snapshot(playerId)).ability().alive()) return;
