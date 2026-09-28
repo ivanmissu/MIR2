@@ -3,7 +3,6 @@ package com.mir2.gate;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.mir2.protocol.CharacterDescription;
 import com.mir2.protocol.DefaultMessage;
 import com.mir2.protocol.ProtocolConstants;
 import com.mir2.world.Ability;
