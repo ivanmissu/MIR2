@@ -176,6 +176,17 @@ public final class WorldEngine implements AutoCloseable {
   /** Magic.pas:437 {@code TargeTBaseObject.m_btLifeAttrib = LA_UNDEAD} lightning multiplier. */
   private static final double LIGHTENING_UNDEAD_MULTIPLIER = 1.5;
 
+  /**
+   * {@code g_Config.nSwordLongPowerRate} (M2Share.pas:2076): the percentage 刺杀剑术 keeps of
+   * its computed secondary power ({@code SwordLongAttack}, ObjBase.pas:22012). Ships at 100, i.e.
+   * a no-op, and {@code g_Config.boLimitSwordLong} ships {@code False} so a whiffed thrust never
+   * cancels the swing — both defaults are reproduced verbatim.
+   */
+  private static final int SWORD_LONG_POWER_RATE = 100;
+
+  /** {@code g_Config.WideAttack} (M2Share.pas:1645): 半月弯刀 sweeps dir-1, dir+1, dir+2. */
+  private static final int[] WIDE_ATTACK_OFFSETS = {7, 1, 2};
+
   public record Config(
       Duration tickInterval,
       int viewRange,
@@ -1490,6 +1501,13 @@ public final class WorldEngine implements AutoCloseable {
     emitSubAbility(player);
     WorldEvent appeared = new WorldEvent.ObjectAppeared(player.snapshot());
     for (int viewerId : visibleIds) emit(players.get(viewerId), appeared);
+    // Login re-enables 刺杀剑术 for a character that already knows it (ObjBase.pas:16602): the flag
+    // is set and a bare +LNG tag is sent with no SysMsg hint. 半月弯刀 is deliberately NOT
+    // re-enabled on login — only ReadBook turns it on — so the two shapes diverge here on purpose.
+    if (player.skills.containsKey(HitSpeed.SKILL_ERGUM) && !player.useThrusting) {
+      player.useThrusting = true;
+      emit(player, new WorldEvent.WeaponSkillToggled(player.id, HitSpeed.SKILL_ERGUM, true));
+    }
     // The test-gold floor is announced once the client can actually see itself.
     if (goldFloored) emit(player, new WorldEvent.GoldChanged(player.id, player.gold));
     return player.snapshot();
@@ -1616,6 +1634,10 @@ public final class WorldEngine implements AutoCloseable {
       emit(player, new WorldEvent.SpellAccepted(player.id, magicId));
       return true;
     }
+    // 刺杀剑术/半月弯刀 (ObjBase.pas:9037-9073): the ClientSpellXY branch toggles an active
+    // shape flag and echoes a +LNG/+WID tag before the caller sends +GOOD. IsWarrSkill still
+    // suppresses the mana/cooldown gates, so the toggle costs nothing and never fails.
+    if (HitSpeed.isToggledWeaponSkill(magicId)) return toggleWeaponSkill(player, magicId);
     if (HitSpeed.isWarriorSkill(magicId))
       return rejectSpell(player, magicId, WorldEvent.SpellRejection.UNSUPPORTED_SKILL, "该技能尚未开放");
 
@@ -1700,6 +1722,31 @@ public final class WorldEngine implements AutoCloseable {
     return true;
   }
 
+  /**
+   * {@code ClientSpellXY}'s 刺杀剑术/半月弯刀 branch (ObjBase.pas:9037-9073): flip the shape's
+   * toggle, emit the green {@code SysMsg} hint ({@code ThrustingOnOff}/{@code HalfMoonOnOff},
+   * ObjBase.pas:9711/9723) and the raw {@code +LNG}/{@code +WID} tag frame, then return {@code
+   * True} so the CM_SPELL handler still sends {@code +GOOD}. No mana, no cooldown, no target.
+   */
+  private boolean toggleWeaponSkill(Player player, int magicId) {
+    player.lastSpellAt = clock.getAsLong();
+    boolean on;
+    String hint;
+    if (magicId == HitSpeed.SKILL_ERGUM) {
+      player.useThrusting = !player.useThrusting;
+      on = player.useThrusting;
+      hint = on ? "启用刺杀剑法" : "关闭刺杀剑法";
+    } else {
+      player.useHalfMoon = !player.useHalfMoon;
+      on = player.useHalfMoon;
+      hint = on ? "开启半月弯刀" : "关闭半月弯刀";
+    }
+    emit(player, new WorldEvent.SystemMessage(player.id, hint));
+    emit(player, new WorldEvent.WeaponSkillToggled(player.id, magicId, on));
+    emit(player, new WorldEvent.SpellAccepted(player.id, magicId));
+    return true;
+  }
+
   private boolean validSpellTarget(
       Player caster, WorldObject target, Position claimed, int magicId) {
     if (target == null || !target.ability().alive() || target.map() != caster.map) return false;
@@ -1778,7 +1825,11 @@ public final class WorldEngine implements AutoCloseable {
     // "hit something" and the "swung at air" branches (ObjBase.pas:22122 / 22145).
     boolean powerHit = attack == AttackKind.POWER_HIT && player.powerHit;
     if (attack == AttackKind.POWER_HIT) player.powerHit = false;
-    AttackKind broadcast = attack == AttackKind.POWER_HIT && !powerHit ? AttackKind.HIT : attack;
+    // 刺杀剑术/半月弯刀 only drive their shape when the book is read (and, for 半月, MP > 0);
+    // otherwise AttackDir degrades wHitMode to RM_HIT (ObjBase.pas:18790/18845) and the swing is
+    // an ordinary hit. A LONG/WIDE ident never arms/consumes m_boPowerHit (that is wHitMode 3).
+    WeaponShape shape = activeShape(player, attack);
+    AttackKind broadcast = broadcastKind(attack, powerHit, shape);
     WorldEvent swing = new WorldEvent.ObjectAttacked(attacker, broadcast);
     for (int viewerId : visibleIds(player.map, player.position, player.id)) emit(players.get(viewerId), swing);
 
@@ -1786,32 +1837,206 @@ public final class WorldEngine implements AutoCloseable {
     WorldObject target = objectAt(player.map, front);
     // IsAttackTarget is False for TNormNpc/TMerchant (ObjNpc.pas), so a swing at an
     // NPC's cell connects with nothing — the minimal NPC slice keeps them decorative.
-    if (target == null || target instanceof Npc || !target.ability().alive()) {
+    boolean livingTarget = !(target == null || target instanceof Npc || !target.ability().alive());
+
+    if (shape == null) {
+      // ---- W03 single-cell melee (HIT/HEAVY/BIG/POWER): unchanged draw sequence ----
+      if (!livingTarget) {
+        advancePowerHitCadence(player);
+        return AttackResult.missed(attacker);
+      }
+      // m_nLuck = sum of worn Luck minus UnLuck (RecalcAbilitys, ObjBase.pas:3401); with no gear
+      // it is zero and rollDamage draws exactly as before.
+      int damage = rollDamage(player.ability, target.ability(), playerLuck(player),
+          powerHit ? player.hitPlus : 0, player, target);
+      damage = applyMagicShield(target, damage);
+      applyDamage(target, player, damage);
+      if (damage > 0) {
+        // ObjBase.pas:22283 trains the active passive weapon skill only after a penetrating hit.
+        trainPassiveMeleeSkill(player);
+      }
+      // ObjBase.pas:22252 rolls `nWeaponDamage := Random(5) + 2` inside the *pre-AC* `nPower > 0`
+      // block, so Delphi also wears the weapon on a blow that AC fully absorbs; the engine has
+      // always tested the post-AC figure instead and that simplification is left alone here.
+      // A dodged swing zeroes nPower ahead of both tests and therefore wears nothing at all.
+      if (damage > 0) damageEquipment(player, EquipmentSlot.WEAPON,
+          random.nextInt(WorldRandom.Stream.EQUIPMENT_WEAR, 5) + 2);
+      advancePowerHitCadence(player);
+      return new AttackResult(true, attacker, target.snapshot(), damage);
+    }
+
+    // ---- 刺杀剑术/半月弯刀 special attack shape (_Attack, ObjBase.pas:22169-22200) ----
+    // AttackDir spends 半月's mana before _Attack runs (DamageSpell + HealthSpellChanged); the
+    // thrust has no mana cost. Both happen even on a swing at air, matching Delphi.
+    if (shape.consumesMana) consumeSkillMana(player, shape.magicId);
+    // nPower is rolled once at the top of _Attack and shared by the secondary shape (nSecPwr) and
+    // the primary front target — a single GetAttackPower draw, exactly as Delphi does.
+    int power = attackPower(player.ability.minDc(), player.ability.maxDc(), playerLuck(player));
+    int skillLevel = player.skills.get(shape.magicId).level();
+    applyShapeSecondaries(player, direction, shape, shape.secondaryPower(power, skillLevel));
+
+    if (!livingTarget) {
       advancePowerHitCadence(player);
       return AttackResult.missed(attacker);
     }
-
-    // m_nLuck = sum of worn Luck minus UnLuck (RecalcAbilitys, ObjBase.pas:3401); with no gear
-    // it is zero and rollDamage draws exactly as before.
-    int damage = rollDamage(player.ability, target.ability(), playerLuck(player),
-        powerHit ? player.hitPlus : 0, player, target);
+    // Primary front target: the dodge check and AC roll of an ordinary swing, reusing the shared
+    // nPower instead of drawing a second one (Delphi: GetHitStruckDamage(Self, nPower)).
+    boolean evaded = meleeEvaded(player, target);
+    int defence = randomBetween(target.ability().minAc(), target.ability().maxAc());
+    int damage = evaded ? 0 : Math.max(0, power - defence);
     damage = applyMagicShield(target, damage);
     applyDamage(target, player, damage);
     if (damage > 0) {
-      // ObjBase.pas:22283 trains the active passive weapon skill only after a penetrating hit.
-      // 攻杀剑术 has its own damage/cadence path in this batch; W33's training slice is limited
-      // to the two skills whose Delphi branch calls TrainSkill here.
+      // A penetrating primary hit trains the passive 准确 skill (Random(3)+1) *and* the active
+      // shape (flat +1, gated on wHitMode) (ObjBase.pas:22283/22319).
       trainPassiveMeleeSkill(player);
+      trainActiveShapeSkill(player, shape.magicId);
+      damageEquipment(player, EquipmentSlot.WEAPON,
+          random.nextInt(WorldRandom.Stream.EQUIPMENT_WEAR, 5) + 2);
     }
-    // ObjBase.pas:22252 rolls `nWeaponDamage := Random(5) + 2` inside the *pre-AC* `nPower > 0`
-    // block, so Delphi also wears the weapon on a blow that AC fully absorbs; the engine has
-    // always tested the post-AC figure instead and that simplification is left alone here.
-    // What matters for W33 is that a dodged swing zeroes nPower ahead of both tests and
-    // therefore wears nothing at all.
-    if (damage > 0) damageEquipment(player, EquipmentSlot.WEAPON,
-        random.nextInt(WorldRandom.Stream.EQUIPMENT_WEAR, 5) + 2);
     advancePowerHitCadence(player);
     return new AttackResult(true, attacker, target.snapshot(), damage);
+  }
+
+  /**
+   * The two active weapon-skill shapes of this slice (ObjBase.pas:22169-22200). {@code
+   * divisorOffset} is the {@code +2}/{@code +10} added to {@code btTrainLv} in the {@code nSecPwr}
+   * formula, and {@code consumesMana} marks 半月弯刀 whose {@code AttackDir} spends
+   * {@code DamageSpell} before the swing. 双龙斩 (CrsWideAttack, SKILL_CROSSMOON=34) is deferred:
+   * its Magic.DB row is outside the vetted 1..33 catalog this server loads.
+   */
+  private enum WeaponShape {
+    THRUSTING(HitSpeed.SKILL_ERGUM, 2, false),
+    HALF_MOON(HitSpeed.SKILL_BANWOL, 10, true);
+
+    private final int magicId;
+    private final int divisorOffset;
+    private final boolean consumesMana;
+
+    WeaponShape(int magicId, int divisorOffset, boolean consumesMana) {
+      this.magicId = magicId;
+      this.divisorOffset = divisorOffset;
+      this.consumesMana = consumesMana;
+    }
+
+    /** {@code nSecPwr := Round(nPower / (btTrainLv + offset) * (btLevel + 2))}. */
+    int secondaryPower(int power, int skillLevel) {
+      int divisor = MagicDefinition.HARDCODED_TRAIN_LEVEL + divisorOffset;
+      int base = (int) Math.rint((double) power / divisor * (skillLevel + 2));
+      // SwordLongAttack then scales by nSwordLongPowerRate/100 (ObjBase.pas:22012); 半月 has no
+      // such knob. Both collapse to base under the shipped 100% rate.
+      return this == THRUSTING
+          ? (int) Math.rint((double) base * SWORD_LONG_POWER_RATE / 100.0)
+          : base;
+    }
+  }
+
+  /**
+   * The active weapon shape a swing resolves to, or {@code null} for an ordinary hit. 刺杀 needs
+   * only the learned book; 半月 additionally needs {@code m_WAbil.MP > 0}, otherwise AttackDir
+   * degrades wHitMode to RM_HIT (ObjBase.pas:18790).
+   */
+  private WeaponShape activeShape(Player player, AttackKind attack) {
+    if (attack == AttackKind.LONG_HIT && player.skills.containsKey(HitSpeed.SKILL_ERGUM))
+      return WeaponShape.THRUSTING;
+    if (attack == AttackKind.WIDE_HIT && player.skills.containsKey(HitSpeed.SKILL_BANWOL)
+        && player.ability.mp() > 0)
+      return WeaponShape.HALF_MOON;
+    return null;
+  }
+
+  /**
+   * {@code AttackDir}'s wIdent selection (ObjBase.pas:18841): wHitMode 3 answers RM_SPELL2 only
+   * while a power hit is armed, and the 4/5 special idents only when their skill drives the swing;
+   * everything else broadcasts a plain RM_HIT.
+   */
+  private static AttackKind broadcastKind(AttackKind attack, boolean powerHit, WeaponShape shape) {
+    return switch (attack) {
+      case POWER_HIT -> powerHit ? AttackKind.POWER_HIT : AttackKind.HIT;
+      case LONG_HIT, WIDE_HIT -> shape == null ? AttackKind.HIT : attack;
+      default -> attack;
+    };
+  }
+
+  /**
+   * The geometry of {@code SwordLongAttack}/{@code SwordWideAttack} (ObjBase.pas:22005/22028):
+   * 刺杀 strikes the single cell two tiles ahead, 半月 sweeps the {@code WideAttack} fan of three
+   * cells (dir-1, dir+1, dir+2). Each cell is resolved with {@code DirectAttack}.
+   */
+  private void applyShapeSecondaries(
+      Player player, Direction direction, WeaponShape shape, int secondaryPower) {
+    if (secondaryPower <= 0) return;
+    if (shape == WeaponShape.THRUSTING) {
+      attackSecondaryCell(player, player.position.translate(direction, 2), secondaryPower);
+      return;
+    }
+    for (int offset : WIDE_ATTACK_OFFSETS) {
+      Direction swing = Direction.fromCode((direction.code() + offset) % 8);
+      attackSecondaryCell(player, player.position.translate(swing, 1), secondaryPower);
+    }
+  }
+
+  /**
+   * {@code DirectAttack} (ObjBase.pas:21969): proper-target + dodge, then a no-AC
+   * {@code StruckDamage}. The secondary power lands whole (no armour roll), and — unlike the
+   * primary — there is no {@code if target.m_btHitPoint > 0} guard, so even a 0-准确 target rolls
+   * the dodge.
+   */
+  private void attackSecondaryCell(Player player, Position cell, int secondaryPower) {
+    WorldObject target = objectAt(player.map, cell);
+    if (target == null || target instanceof Npc || target.id() == player.id
+        || !target.ability().alive()) return;
+    if (!directAttackHits(player, target)) return;
+    applyDamage(target, player, secondaryPower);
+  }
+
+  /** {@code if Random(BaseObject.m_btSpeedPoint) < m_btHitPoint} (ObjBase.pas:21977). */
+  private boolean directAttackHits(WorldObject attacker, WorldObject target) {
+    int dodge = random.nextInt(WorldRandom.Stream.ACCURACY, Math.max(1, target.speedPoint()));
+    return dodge < attacker.hitPoint();
+  }
+
+  /**
+   * {@code DamageSpell(btDefSpell + GetMagicSpell)} + {@code HealthSpellChanged}
+   * (ObjBase.pas:18790), which is exactly {@link MagicDefinition#manaCost(int)} clamped at zero.
+   */
+  private void consumeSkillMana(Player player, int magicId) {
+    PlayerSkill skill = player.skills.get(magicId);
+    MagicDefinition magic = magicCatalog.require(magicId);
+    int mp = Math.max(0, player.ability.mp() - magic.manaCost(skill.level()));
+    if (mp == player.ability.mp()) return;
+    Ability before = player.ability;
+    player.setAbility(player.ability.withMp(mp));
+    try {
+      persist(player);
+    } catch (RuntimeException failure) {
+      player.setAbility(before);
+      throw failure;
+    }
+    emitToObserversAndSelf(player, new WorldEvent.HealthChanged(player.snapshot()));
+  }
+
+  /**
+   * {@code TrainSkill(skill, 1)} + one {@code CheckMagicLevelup} for the active shape after a
+   * penetrating primary hit (ObjBase.pas:22319/22336): a flat single point, unlike the passive
+   * skills' {@code Random(3)+1}. {@link PlayerSkill#train} applies the level &lt; 3 / TrainLevel
+   * gates and keeps the remainder in {@code nTranPoint}.
+   */
+  private void trainActiveShapeSkill(Player player, int magicId) {
+    PlayerSkill current = player.skills.get(magicId);
+    if (current == null || current.level() >= MagicDefinition.MAX_SKILL_LEVEL) return;
+    MagicDefinition definition = magicCatalog.require(magicId);
+    PlayerSkill trained = current.train(definition, player.ability.level(), 1);
+    if (trained.equals(current)) return;
+    player.skills.put(magicId, trained);
+    try {
+      persist(player);
+    } catch (RuntimeException failure) {
+      player.skills.put(magicId, current);
+      throw failure;
+    }
+    emit(player, new WorldEvent.SkillTrainingChanged(
+        player.id, new LearnedMagic(trained, definition)));
   }
 
   /**
@@ -2124,8 +2349,28 @@ public final class WorldEngine implements AutoCloseable {
     }
     emit(player, new WorldEvent.SkillLearned(player.id, new LearnedMagic(skill, definition)));
     emit(player, new WorldEvent.ItemUsed(player.id, book, 0, 0));
+    // ReadBook auto-enables a freshly learned 刺杀剑术/半月弯刀 shape and echoes its +LNG/+WID tag
+    // (ObjBase.pas:17377), so the client starts sending CM_LONGHIT/CM_WIDEHIT immediately.
+    autoEnableWeaponSkill(player, definition.id());
     emitWeight(player);
     return true;
+  }
+
+  /**
+   * Turn a learned shape skill on with its green hint + tag frame, as {@code ReadBook} does
+   * (ObjBase.pas:17377): {@code ThrustingOnOff(True)}/{@code HalfMoonOnOff(True)} followed by the
+   * raw tag. A no-op for any other skill or when the flag is already set.
+   */
+  private void autoEnableWeaponSkill(Player player, int magicId) {
+    if (magicId == HitSpeed.SKILL_ERGUM && !player.useThrusting) {
+      player.useThrusting = true;
+      emit(player, new WorldEvent.SystemMessage(player.id, "启用刺杀剑法"));
+      emit(player, new WorldEvent.WeaponSkillToggled(player.id, magicId, true));
+    } else if (magicId == HitSpeed.SKILL_BANWOL && !player.useHalfMoon) {
+      player.useHalfMoon = true;
+      emit(player, new WorldEvent.SystemMessage(player.id, "开启半月弯刀"));
+      emit(player, new WorldEvent.WeaponSkillToggled(player.id, magicId, true));
+    }
   }
 
   /**
@@ -4449,6 +4694,16 @@ public final class WorldEngine implements AutoCloseable {
     private int attackSkillPointCount;
     /** {@code m_boPowerHit}: armed by the cadence, consumed by the next {@code CM_POWERHIT}. */
     private boolean powerHit;
+    /**
+     * {@code m_boUseThrusting} / {@code m_boUseHalfMoon} (ObjBase.pas:337): the toggle state of
+     * 刺杀剑术 / 半月弯刀. Delphi seeds both to {@code False} in {@code Initialize} (ObjBase.pas
+     * :1236), re-enables 刺杀 on login when the book has been read (ObjBase.pas:16602) and both
+     * on {@code ReadBook} (ObjBase.pas:17377). They are transient runtime flags, never persisted;
+     * the server reads them only to pick which {@code +LNG}/{@code +WID} tag to echo — the actual
+     * {@code CM_LONGHIT}/{@code CM_WIDEHIT} handling gates on the learned skill instead.
+     */
+    private boolean useThrusting;
+    private boolean useHalfMoon;
 
     private Player(
         int id,

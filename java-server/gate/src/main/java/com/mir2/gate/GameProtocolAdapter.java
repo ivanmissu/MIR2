@@ -7,6 +7,7 @@ import com.mir2.world.AttackKind;
 import com.mir2.world.BackpackItem;
 import com.mir2.world.Direction;
 import com.mir2.world.GroundItem;
+import com.mir2.world.HitSpeed;
 import com.mir2.world.LearnedMagic;
 import com.mir2.world.MovementKind;
 import com.mir2.world.PlayerSkill;
@@ -70,7 +71,8 @@ public final class GameProtocolAdapter implements WorldEventSink {
         case ProtocolConstants.CM_RUN -> reportExceptionalFailure(world.move(boundPlayer,
             unpackPosition(message.recog()), Direction.fromCode(message.tag()), MovementKind.RUN));
         case ProtocolConstants.CM_HIT, ProtocolConstants.CM_HEAVYHIT, ProtocolConstants.CM_BIGHIT,
-             ProtocolConstants.CM_POWERHIT ->
+             ProtocolConstants.CM_POWERHIT, ProtocolConstants.CM_LONGHIT,
+             ProtocolConstants.CM_WIDEHIT ->
             reportExceptionalFailure(world.attack(boundPlayer, unpackPosition(message.recog()),
                 Direction.fromCode(message.tag()), attackKind(message.ident())));
         // CM_SPELL: Recog=MakeLong(X,Y), Param/Series=target id words, Tag=MagicId.
@@ -205,6 +207,11 @@ public final class GameProtocolAdapter implements WorldEventSink {
       // client's g_boNextTimePowerHit so its next swing goes out as CM_POWERHIT.
       case WorldEvent.PowerHitReady ready -> {
         if (ready.playerId() == playerId) output.accept(GameOutbound.Signal.POWER_HIT);
+      }
+      // SendSocket(nil, '+LNG'/'+ULNG'/'+WID'/'+UWID') — the toggle tag that tells the client to
+      // start (or stop) sending CM_LONGHIT/CM_WIDEHIT for 刺杀剑术/半月弯刀 (ObjBase.pas:9043-9073).
+      case WorldEvent.WeaponSkillToggled toggled -> {
+        if (toggled.playerId() == playerId) output.accept(weaponSkillSignal(toggled));
       }
       case WorldEvent.SpellRejected rejected -> {
         if (rejected.playerId() == playerId) {
@@ -466,6 +473,8 @@ public final class GameProtocolAdapter implements WorldEventSink {
         || ident == ProtocolConstants.CM_HEAVYHIT
         || ident == ProtocolConstants.CM_BIGHIT
         || ident == ProtocolConstants.CM_POWERHIT
+        || ident == ProtocolConstants.CM_LONGHIT
+        || ident == ProtocolConstants.CM_WIDEHIT
         || ident == ProtocolConstants.CM_SPELL
         || ident == ProtocolConstants.CM_MAGICKEYCHANGE
         || ident == ProtocolConstants.CM_PICKUP
@@ -501,6 +510,8 @@ public final class GameProtocolAdapter implements WorldEventSink {
       case ProtocolConstants.CM_HEAVYHIT -> AttackKind.HEAVY_HIT;
       case ProtocolConstants.CM_BIGHIT -> AttackKind.BIG_HIT;
       case ProtocolConstants.CM_POWERHIT -> AttackKind.POWER_HIT;
+      case ProtocolConstants.CM_LONGHIT -> AttackKind.LONG_HIT;
+      case ProtocolConstants.CM_WIDEHIT -> AttackKind.WIDE_HIT;
       default -> AttackKind.HIT;
     };
   }
@@ -516,8 +527,18 @@ public final class GameProtocolAdapter implements WorldEventSink {
       case HEAVY_HIT -> ProtocolConstants.SM_HEAVYHIT;
       case BIG_HIT -> ProtocolConstants.SM_BIGHIT;
       case POWER_HIT -> ProtocolConstants.SM_SPELL2;
+      case LONG_HIT -> ProtocolConstants.SM_LONGHIT;
+      case WIDE_HIT -> ProtocolConstants.SM_WIDEHIT;
       case HIT -> ProtocolConstants.SM_HIT;
     };
+  }
+
+  /** {@code ThrustingOnOff}/{@code HalfMoonOnOff} tag frame (ObjBase.pas:9043-9073). */
+  private static GameOutbound.Signal weaponSkillSignal(WorldEvent.WeaponSkillToggled toggled) {
+    if (toggled.magicId() == HitSpeed.SKILL_ERGUM) {
+      return toggled.on() ? GameOutbound.Signal.THRUSTING_ON : GameOutbound.Signal.THRUSTING_OFF;
+    }
+    return toggled.on() ? GameOutbound.Signal.HALF_MOON_ON : GameOutbound.Signal.HALF_MOON_OFF;
   }
 
   /**

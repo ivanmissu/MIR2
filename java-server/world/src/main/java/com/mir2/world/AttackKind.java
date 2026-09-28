@@ -20,7 +20,23 @@ public enum AttackKind {
    * {@code RM_SPELL2} when {@code m_boPowerHit} was armed by the cadence — an unarmed
    * CM_POWERHIT is broadcast as a plain {@link #HIT}.
    */
-  POWER_HIT;
+  POWER_HIT,
+  /**
+   * 刺杀剑术 swing (CM_LONGHIT → SM_LONGHIT). {@code ClientAttack} maps {@code CM_LONGHIT}
+   * to {@code wHitMode = 4}, whose {@code _Attack} branch runs {@code SwordLongAttack} against
+   * the cell two tiles ahead (ObjBase.pas:22005). {@code AttackDir} only answers
+   * {@code RM_LONGHIT} when {@code m_MagicErgumSkill <> nil} (the book was read); an unlearned
+   * CM_LONGHIT degrades to a plain {@link #HIT}.
+   */
+  LONG_HIT,
+  /**
+   * 半月弯刀 swing (CM_WIDEHIT → SM_WIDEHIT). {@code ClientAttack} maps {@code CM_WIDEHIT}
+   * to {@code wHitMode = 5}, whose {@code _Attack} branch runs {@code SwordWideAttack} across the
+   * {@code g_Config.WideAttack} fan (ObjBase.pas:22028). {@code AttackDir} spends mana up front
+   * ({@code DamageSpell}) and only answers {@code RM_WIDEHIT} when the skill is learned and
+   * {@code m_WAbil.MP > 0}; a manaless or unlearned CM_WIDEHIT degrades to a plain {@link #HIT}.
+   */
+  WIDE_HIT;
 
   /** All melee variants share one cooldown in {@code TPlayObject.CheckActionInterval}. */
   public boolean sharesHitInterval() {

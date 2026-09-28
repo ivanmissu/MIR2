@@ -30,6 +30,14 @@ public record MagicDefinition(
   public static final int MAX_SKILL_LEVEL = 3;
   public static final int ANY_JOB = 99;
 
+  /**
+   * {@code TMagic.btTrainLv}: {@code LocalDB.LoadMagicDB} hard-codes this to 3 for every row it
+   * loads (LocalDB.pas:382), so the melee-skill power formulas that read {@code btTrainLv}
+   * ({@code SwordLongAttack}/{@code SwordWideAttack}, ObjBase.pas:22175/22194) always divide by
+   * {@code 3 + offset}. Exposed as a constant rather than a column because the 1.50 DB has none.
+   */
+  public static final int HARDCODED_TRAIN_LEVEL = 3;
+
   public MagicDefinition {
     if (id < 1 || id > 0xffff) throw new IllegalArgumentException("magic id must be a Word");
     Objects.requireNonNull(name, "name");

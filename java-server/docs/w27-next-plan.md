@@ -145,3 +145,27 @@ W33 后续小批补上两个被动技能的熟练度闭环：穿透近战命中�
 `SwordWideAttack` 扇形 → `CrsWideAttack` 十字），它们与本批共用已经铺好的 `wHitMode`/`+标签帧`/
 `AttackKind` 管线，只需补几何与目标选择；`SKILL_AMYOUNSUL`（6，施毒术）或 `SKILL_FIRECHARM`（13，灵魂火符）
 仍需先梳理 `CheckAmulet`/`UseAmulet` 的护身符消耗模型，不能简化成扣 MP。
+
+### 技能逐项接入·第三批（W34）— 已完成：刺杀剑术 / 半月弯刀（可切换特殊攻击形状）
+
+W34 接入 `SKILL_ERGUM`(12 刺杀剑术，`wHitMode=4`) 与 `SKILL_BANWOL`(25 半月弯刀，`wHitMode=5`)。
+两者是 `ClientSpellXY`（ObjBase.pas:9037-9073）里的**开关型**主动技：按键翻转
+`m_boUseThrusting`/`m_boUseHalfMoon` 并回 `+LNG/+ULNG/+WID/+UWID` 标签帧，客户端据此决定发
+`CM_LONGHIT/CM_WIDEHIT` 还是普通 `CM_HIT`；`ReadBook` 学书即自动启用（带绿字），登录只静默重挂刺杀。
+
+- 命中解析看「书学得 + 半月另需 MP>0」，与服务端开关无关（`AttackDir` 18790/18845），未学退化 `RM_HIT`；
+- 几何：刺杀打正前第 2 格单目标；半月扫 `dir-1/+1/+2` 三格扇形（正前是主目标）。追加目标用
+  `DirectAttack`（无木桩门，整额落地，不掷 AC），`nSecPwr = Round(nPower/(3+offset)*(level+2))`，
+  刺杀 offset=2、半月 offset=10；
+- 半月每挥先扣固定 3 MP（Magic.DB id25 spell=0/defSpell=3），刺杀无消耗；
+- 主目标穿透命中 `TrainSkill(skill,1)` 定值训练 + `CheckMagicLevelup`；
+- 广播 `SM_LONGHIT(19)`/`SM_WIDEHIT(24)`；普攻/攻杀分支保持原样防回归；
+- 证据：`WorldSpecialAttackSkillTest`、`GameSpecialAttackProtocolTest`；`WorldWarriorSkillTest`
+  的「未实现战士技拒绝」断言由 id=12 改用 id=27；`g4-capability-matrix.tsv` 相应六行升为
+  `implemented+gate-game`。详见 `docs/g0-evidence/2026-09-28-w34-skill-batch-ergum-banwol.md`。
+
+**本轮不做 / 显式延后**：`CM_CRSHIT`/双龙斩（`SKILL_CROSSMOON=34`，`CrsWideAttack` 十字）与狂风斩(38)——
+其 Magic.DB 行超出本服加载的 1..33 权威目录；`烈火剑法(26)`、`野蛮冲撞(27)` 仍 `unimplemented`。
+
+下一项：待 Magic.DB 目录扩到含 34/38 后接入 `CrsWideAttack`（十字）与狂风斩；或转向
+`SKILL_AMYOUNSUL`(6)/`SKILL_FIRECHARM`(13) 前先立项护身符消耗模型（`CheckAmulet`/`UseAmulet`）。

@@ -55,6 +55,12 @@ public record HitSpeed(int hitPoint, int speedPoint, int hitPlus, int attackSkil
   /** 攻杀剑术 {@code SKILL_YEDO}. */
   public static final int SKILL_YEDO = 7;
 
+  /** 刺杀剑术 {@code SKILL_ERGUM} — the {@code SwordLongAttack} shape (wHitMode 4). */
+  public static final int SKILL_ERGUM = 12;
+
+  /** 半月弯刀 {@code SKILL_BANWOL} — the {@code SwordWideAttack} fan (wHitMode 5). */
+  public static final int SKILL_BANWOL = 25;
+
   /** {@code Inc(m_btSpeedPoint, 3)} for 道士 (ObjBase.pas:18562). */
   private static final int TAOIST_SPEED_BONUS = 3;
 
@@ -123,13 +129,28 @@ public record HitSpeed(int hitPoint, int speedPoint, int hitPlus, int attackSkil
     return switch (magicId) {
       // 3 基本剑术, 4 精神力战法, 7 攻杀剑术, 12 刺杀剑术, 25 半月弯刀, 26 烈火剑法,
       // 27 野蛮冲撞, 34 双龙斩, 38 狂风斩 (Grobal2.pas:1272-1309).
-      case SKILL_ONESWORD, SKILL_ILKWANG, SKILL_YEDO, 12, 25, 26, 27, 34, 38 -> true;
+      case SKILL_ONESWORD, SKILL_ILKWANG, SKILL_YEDO, SKILL_ERGUM, SKILL_BANWOL,
+          26, 27, 34, 38 -> true;
       default -> false;
     };
   }
 
-  /** The three ids this batch gives a behavioural implementation to. */
+  /**
+   * The three passive ids whose {@code ClientSpellXY} branch is a bare {@code Result := True}
+   * (3/4/7). 刺杀剑术 ({@link #SKILL_ERGUM}) and 半月弯刀 ({@link #SKILL_BANWOL}) are also
+   * implemented but their {@code ClientSpellXY} branch <em>toggles</em> a flag and emits a
+   * {@code +LNG}/{@code +WID} tag, so the world engine handles those two separately.
+   */
   public static boolean isImplementedWarriorSkill(int magicId) {
     return magicId == SKILL_ONESWORD || magicId == SKILL_ILKWANG || magicId == SKILL_YEDO;
+  }
+
+  /**
+   * 刺杀剑术 / 半月弯刀: the two {@code IsWarrSkill} ids whose {@code ClientSpellXY} branch
+   * toggles an active special-attack shape ({@code m_boUseThrusting}/{@code m_boUseHalfMoon},
+   * ObjBase.pas:9037-9073) rather than being a passive 准确 modifier.
+   */
+  public static boolean isToggledWeaponSkill(int magicId) {
+    return magicId == SKILL_ERGUM || magicId == SKILL_BANWOL;
   }
 }
