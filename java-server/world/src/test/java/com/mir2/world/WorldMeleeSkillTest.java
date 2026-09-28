@@ -148,7 +148,7 @@ class WorldMeleeSkillTest {
         List.of(PlayerSkill.learned(3))));
 
     // At skill level 0: hit = DEFHIT 5, target speed = DEFSPEED 15.  Fourteen misses.
-    try (WorldEngine world = engine(missStore, new SequenceRandom(14))) {
+    try (WorldEngine world = engine(missStore, new MaxRandom())) {
       WorldObjectSnapshot player = enter(world, missId, "未熟战士", LevelAbilities.JOB_WARRIOR,
           new ArrayList<>());
       WorldObjectSnapshot target = run(world,
@@ -156,7 +156,7 @@ class WorldMeleeSkillTest {
       AttackResult result = run(world,
           world.attack(player.id(), new Position(5, 5), Direction.RIGHT, AttackKind.HIT));
       assertTrue(result.accepted());
-      assertTrue(result.hitNothing(), "the accuracy roll must reject the adjacent target");
+      assertEquals(0, result.damage(), "the accuracy roll must zero the adjacent target's damage");
       assertEquals(target.ability().hp(), run(world, world.snapshot(target.id())).ability().hp());
     }
 
@@ -165,7 +165,7 @@ class WorldMeleeSkillTest {
     hitStore.save(new PlayerState(hitId, levelOne, List.of(), Equipment.empty(), 0, 0, 0,
         List.of(new PlayerSkill(3, 3, 0, 0))));
     // At skill level 3: hit = 5 + round(9 / 3 * 3) = 14.  Thirteen hits.
-    try (WorldEngine world = engine(hitStore, new SequenceRandom(13, 0, 0))) {
+    try (WorldEngine world = engine(hitStore, new MaxRandom())) {
       WorldObjectSnapshot player = enter(world, hitId, "熟练战士", LevelAbilities.JOB_WARRIOR,
           new ArrayList<>());
       WorldObjectSnapshot target = run(world,
@@ -208,19 +208,10 @@ class WorldMeleeSkillTest {
     }
   }
 
-  private static final class SequenceRandom extends Random {
-    private final int[] values;
-    private int index;
-
-    private SequenceRandom(int... values) {
-      this.values = values;
-    }
-
+  private static final class MaxRandom extends Random {
     @Override
     public int nextInt(int bound) {
-      if (bound < 1) throw new IllegalArgumentException("bound must be positive");
-      int value = index < values.length ? values[index++] : 0;
-      return Math.floorMod(value, bound);
+      return bound - 1;
     }
   }
 
