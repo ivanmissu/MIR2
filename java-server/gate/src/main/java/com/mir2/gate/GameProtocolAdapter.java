@@ -72,7 +72,7 @@ public final class GameProtocolAdapter implements WorldEventSink {
             unpackPosition(message.recog()), Direction.fromCode(message.tag()), MovementKind.RUN));
         case ProtocolConstants.CM_HIT, ProtocolConstants.CM_HEAVYHIT, ProtocolConstants.CM_BIGHIT,
              ProtocolConstants.CM_POWERHIT, ProtocolConstants.CM_LONGHIT,
-             ProtocolConstants.CM_WIDEHIT ->
+             ProtocolConstants.CM_WIDEHIT, ProtocolConstants.CM_FIREHIT ->
             reportExceptionalFailure(world.attack(boundPlayer, unpackPosition(message.recog()),
                 Direction.fromCode(message.tag()), attackKind(message.ident())));
         // CM_SPELL: Recog=MakeLong(X,Y), Param/Series=target id words, Tag=MagicId.
@@ -475,6 +475,7 @@ public final class GameProtocolAdapter implements WorldEventSink {
         || ident == ProtocolConstants.CM_POWERHIT
         || ident == ProtocolConstants.CM_LONGHIT
         || ident == ProtocolConstants.CM_WIDEHIT
+        || ident == ProtocolConstants.CM_FIREHIT
         || ident == ProtocolConstants.CM_SPELL
         || ident == ProtocolConstants.CM_MAGICKEYCHANGE
         || ident == ProtocolConstants.CM_PICKUP
@@ -512,6 +513,7 @@ public final class GameProtocolAdapter implements WorldEventSink {
       case ProtocolConstants.CM_POWERHIT -> AttackKind.POWER_HIT;
       case ProtocolConstants.CM_LONGHIT -> AttackKind.LONG_HIT;
       case ProtocolConstants.CM_WIDEHIT -> AttackKind.WIDE_HIT;
+      case ProtocolConstants.CM_FIREHIT -> AttackKind.FIRE_HIT;
       default -> AttackKind.HIT;
     };
   }
@@ -529,6 +531,7 @@ public final class GameProtocolAdapter implements WorldEventSink {
       case POWER_HIT -> ProtocolConstants.SM_SPELL2;
       case LONG_HIT -> ProtocolConstants.SM_LONGHIT;
       case WIDE_HIT -> ProtocolConstants.SM_WIDEHIT;
+      case FIRE_HIT -> ProtocolConstants.SM_FIREHIT;
       case HIT -> ProtocolConstants.SM_HIT;
     };
   }
@@ -537,6 +540,10 @@ public final class GameProtocolAdapter implements WorldEventSink {
   private static GameOutbound.Signal weaponSkillSignal(WorldEvent.WeaponSkillToggled toggled) {
     if (toggled.magicId() == HitSpeed.SKILL_ERGUM) {
       return toggled.on() ? GameOutbound.Signal.THRUSTING_ON : GameOutbound.Signal.THRUSTING_OFF;
+    }
+    // 烈火剑法 is armed rather than toggled, but it rides the same raw tag channel (+FIR/+UFIR).
+    if (toggled.magicId() == HitSpeed.SKILL_FIRESWORD) {
+      return toggled.on() ? GameOutbound.Signal.FIRE_SWORD_ON : GameOutbound.Signal.FIRE_SWORD_OFF;
     }
     return toggled.on() ? GameOutbound.Signal.HALF_MOON_ON : GameOutbound.Signal.HALF_MOON_OFF;
   }

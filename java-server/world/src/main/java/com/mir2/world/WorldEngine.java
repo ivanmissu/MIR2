@@ -184,6 +184,16 @@ public final class WorldEngine implements AutoCloseable {
    */
   private static final int SWORD_LONG_POWER_RATE = 100;
 
+  /**
+   * {@code AllowFireHitSkill}'s re-arm gate (ObjBase.pas:9784): {@code (GetTickCount -
+   * m_dwLatestFireHitTick) > 10 * 1000}. The comparison is strict, so a press exactly 10 s later
+   * still fails.
+   */
+  private static final long FIRE_SWORD_REARM_MILLIS = 10_000L;
+
+  /** The 烈火剑法 charge lapses 20 s after it was armed ({@code TPlayObject.Run}, ObjBase.pas:6427). */
+  private static final long FIRE_SWORD_EXPIRY_MILLIS = 20_000L;
+
   /** {@code g_Config.WideAttack} (M2Share.pas:1645): 半月弯刀 sweeps dir-1, dir+1, dir+2. */
   private static final int[] WIDE_ATTACK_OFFSETS = {7, 1, 2};
 
@@ -1638,6 +1648,7 @@ public final class WorldEngine implements AutoCloseable {
     // shape flag and echoes a +LNG/+WID tag before the caller sends +GOOD. IsWarrSkill still
     // suppresses the mana/cooldown gates, so the toggle costs nothing and never fails.
     if (HitSpeed.isToggledWeaponSkill(magicId)) return toggleWeaponSkill(player, magicId);
+    if (HitSpeed.isFireSwordSkill(magicId)) return armFireSword(player, skill, magic);
     if (HitSpeed.isWarriorSkill(magicId))
       return rejectSpell(player, magicId, WorldEvent.SpellRejection.UNSUPPORTED_SKILL, "该技能尚未开放");
 
@@ -1747,6 +1758,50 @@ public final class WorldEngine implements AutoCloseable {
     return true;
   }
 
+  /**
+   * {@code ClientSpellXY}'s 烈火剑法 branch (ObjBase.pas:9092) plus {@code AllowFireHitSkill}
+   * (ObjBase.pas:9782):
+   *
+   * <pre>
+   *   if m_MagicFireSwordSkill &lt;&gt; nil then
+   *     if AllowFireHitSkill then begin            // &gt; 10s since the last arming
+   *       nSpellPoint := GetSpellPoint(UserMagic); // Magic.DB id 26: wSpell 0 + btDefSpell 7
+   *       if m_WAbil.MP &gt;= nSpellPoint then begin
+   *         if nSpellPoint &gt; 0 then begin DamageSpell(nSpellPoint); HealthSpellChanged(); end;
+   *         SendSocket(nil, '+FIR');
+   *       end;
+   *     end;
+   *   Result := True;
+   * </pre>
+   *
+   * <p>Two quirks are kept verbatim. {@code AllowFireHitSkill} sets {@code m_boFireHitSkill} and
+   * restamps the tick <em>before</em> the mana test, so a broke character still arms the flag —
+   * it just never learns about it, because the {@code +FIR} tag the client needs to switch to
+   * {@code CM_FIREHIT} is inside the mana branch. And the whole case returns {@code True}
+   * regardless, so a press during the 10 s cooldown is still answered {@code +GOOD} with only
+   * the red 「召唤烈火精灵失败...」 hint to show for it. {@code IsWarrSkill} keeps the press out
+   * of the mana/cooldown gates {@code DoSpell} would otherwise apply.
+   */
+  private boolean armFireSword(Player player, PlayerSkill skill, MagicDefinition magic) {
+    player.lastSpellAt = clock.getAsLong();
+    long now = clock.getAsLong();
+    if (now - player.lastFireHitAt <= FIRE_SWORD_REARM_MILLIS) {
+      emit(player, new WorldEvent.SystemMessage(player.id, "召唤烈火精灵失败..."));
+      emit(player, new WorldEvent.SpellAccepted(player.id, magic.id()));
+      return true;
+    }
+    player.lastFireHitAt = now;
+    player.fireHitArmed = true;
+    emit(player, new WorldEvent.SystemMessage(player.id, "召唤烈火精灵成功..."));
+    int mana = magic.manaCost(skill.level());
+    if (player.ability.mp() >= mana) {
+      if (mana > 0) consumeSkillMana(player, magic.id());
+      emit(player, new WorldEvent.WeaponSkillToggled(player.id, magic.id(), true));
+    }
+    emit(player, new WorldEvent.SpellAccepted(player.id, magic.id()));
+    return true;
+  }
+
   private boolean validSpellTarget(
       Player caster, WorldObject target, Position claimed, int magicId) {
     if (target == null || !target.ability().alive() || target.map() != caster.map) return false;
@@ -1825,11 +1880,20 @@ public final class WorldEngine implements AutoCloseable {
     // "hit something" and the "swung at air" branches (ObjBase.pas:22122 / 22145).
     boolean powerHit = attack == AttackKind.POWER_HIT && player.powerHit;
     if (attack == AttackKind.POWER_HIT) player.powerHit = false;
+    // 烈火剑法 (ObjBase.pas:22128 / 22152): both _Attack branches clear m_boFireHitSkill and
+    // restamp m_dwLatestFireHitTick, so a swing at air burns the charge too (禁止双烈火) — only
+    // the branch that actually found a target adds the damage. AttackDir snapshots the flag
+    // beforehand for the wIdent choice, exactly like m_boPowerHit.
+    boolean fireHit = attack == AttackKind.FIRE_HIT && player.fireHitArmed;
+    if (fireHit) {
+      player.fireHitArmed = false;
+      player.lastFireHitAt = now;
+    }
     // 刺杀剑术/半月弯刀 only drive their shape when the book is read (and, for 半月, MP > 0);
     // otherwise AttackDir degrades wHitMode to RM_HIT (ObjBase.pas:18790/18845) and the swing is
     // an ordinary hit. A LONG/WIDE ident never arms/consumes m_boPowerHit (that is wHitMode 3).
     WeaponShape shape = activeShape(player, attack);
-    AttackKind broadcast = broadcastKind(attack, powerHit, shape);
+    AttackKind broadcast = broadcastKind(attack, powerHit, fireHit, shape);
     WorldEvent swing = new WorldEvent.ObjectAttacked(attacker, broadcast);
     for (int viewerId : visibleIds(player.map, player.position, player.id)) emit(players.get(viewerId), swing);
 
@@ -1848,12 +1912,15 @@ public final class WorldEngine implements AutoCloseable {
       // m_nLuck = sum of worn Luck minus UnLuck (RecalcAbilitys, ObjBase.pas:3401); with no gear
       // it is zero and rollDamage draws exactly as before.
       int damage = rollDamage(player.ability, target.ability(), playerLuck(player),
-          powerHit ? player.hitPlus : 0, player, target);
+          powerHit ? player.hitPlus : 0, fireHit ? player.hitDouble : 0, player, target);
       damage = applyMagicShield(target, damage);
       applyDamage(target, player, damage);
       if (damage > 0) {
         // ObjBase.pas:22283 trains the active passive weapon skill only after a penetrating hit.
         trainPassiveMeleeSkill(player);
+        // ObjBase.pas:22354 trains 烈火剑法 by a flat point on any wHitMode 7 swing that landed,
+        // whether or not the burst itself was armed — the guard is the hit mode, not the flag.
+        if (attack == AttackKind.FIRE_HIT) trainActiveShapeSkill(player, HitSpeed.SKILL_FIRESWORD);
       }
       // ObjBase.pas:22252 rolls `nWeaponDamage := Random(5) + 2` inside the *pre-AC* `nPower > 0`
       // block, so Delphi also wears the weapon on a blow that AC fully absorbs; the engine has
@@ -1950,9 +2017,12 @@ public final class WorldEngine implements AutoCloseable {
    * while a power hit is armed, and the 4/5 special idents only when their skill drives the swing;
    * everything else broadcasts a plain RM_HIT.
    */
-  private static AttackKind broadcastKind(AttackKind attack, boolean powerHit, WeaponShape shape) {
+  private static AttackKind broadcastKind(
+      AttackKind attack, boolean powerHit, boolean fireHit, WeaponShape shape) {
     return switch (attack) {
       case POWER_HIT -> powerHit ? AttackKind.POWER_HIT : AttackKind.HIT;
+      // `7: if boFireHit then wIdent := RM_FIREHIT` — an unarmed 烈火 swing looks like a plain hit.
+      case FIRE_HIT -> fireHit ? AttackKind.FIRE_HIT : AttackKind.HIT;
       case LONG_HIT, WIDE_HIT -> shape == null ? AttackKind.HIT : attack;
       default -> attack;
     };
@@ -2554,6 +2624,7 @@ public final class WorldEngine implements AutoCloseable {
     player.hitPoint = points.hitPoint() + bonus.hitPoint();
     player.speedPoint = points.speedPoint() + bonus.speedPoint();
     player.hitPlus = points.hitPlus();
+    player.hitDouble = points.hitDouble();
     if (points.attackSkillCycle() > 0) {
       player.attackSkillCount = points.attackSkillCycle();
       player.attackSkillPointCount =
@@ -2919,9 +2990,12 @@ public final class WorldEngine implements AutoCloseable {
    * {@link WorldRandom.Stream#ACCURACY} stream so a seeded shadow run keeps its damage sequence.
    */
   private int rollDamage(Ability attacker, Ability defender, int luck, int hitPlus,
-      WorldObject attackerObject, WorldObject target) {
+      int hitDouble, WorldObject attackerObject, WorldObject target) {
     int attack = attackPower(attacker.minDc(), attacker.maxDc(), luck);
     if (hitPlus > 0) attack += hitPlus;
+    // `nPower := nPower + Round(nPower / 100 * (m_nHitDouble * 10))` (ObjBase.pas:22132): the
+    // 烈火 burst is a percentage of the already-boosted roll, applied before the dodge check.
+    if (hitDouble > 0) attack += (int) Math.rint(attack / 100.0 * (hitDouble * 10));
     if (meleeEvaded(attackerObject, target)) attack = 0;
     int defence = randomBetween(defender.minAc(), defender.maxAc());
     return Math.max(0, attack - defence);
@@ -3016,9 +3090,23 @@ public final class WorldEngine implements AutoCloseable {
     }
   }
 
+  /**
+   * {@code TPlayObject.Run}'s 烈火剑法 expiry (ObjBase.pas:6427): 20 seconds after the flag was
+   * armed it lapses with a red hint and a {@code '+UFIR'} tag so the client stops sending
+   * {@code CM_FIREHIT}. The same tick window in Delphi also expires 双龙斩/狂风斩, which this
+   * server does not implement.
+   */
+  private void expireFireSword(Player player, long now) {
+    if (!player.fireHitArmed || now - player.lastFireHitAt <= FIRE_SWORD_EXPIRY_MILLIS) return;
+    player.fireHitArmed = false;
+    emit(player, new WorldEvent.SystemMessage(player.id, "召唤烈火精灵结束..."));
+    emit(player, new WorldEvent.WeaponSkillToggled(player.id, HitSpeed.SKILL_FIRESWORD, false));
+  }
+
   private void expireSkillBuffs() {
     long now = clock.getAsLong();
     for (Player player : players.values()) {
+      expireFireSword(player, now);
       if (player.magicShieldUntil != 0 && player.magicShieldUntil <= now) {
         player.magicShieldUntil = 0;
         player.magicShieldLevel = 0;
@@ -4183,7 +4271,7 @@ public final class WorldEngine implements AutoCloseable {
     emitToObserversAndSelf(monster, swing);
     // Monsters run the same _Attack chain: their Monster.DB HIT is checked against the
     // player's 敏捷, so a chicken (HIT=3) misses a DEFSPEED=15 character most of the time.
-    int damage = rollDamage(monster.ability, target.ability, 0, 0, monster, target);
+    int damage = rollDamage(monster.ability, target.ability, 0, 0, 0, monster, target);
     applyDamage(target, monster, applyMagicShield(target, damage));
   }
 
@@ -4704,6 +4792,23 @@ public final class WorldEngine implements AutoCloseable {
      */
     private boolean useThrusting;
     private boolean useHalfMoon;
+    /**
+     * {@code m_nHitDouble} (ObjBase.pas:18622): the 烈火剑法 burst percentage divided by ten,
+     * rebuilt by {@code RecalcHitSpeed} from the learned book's level.
+     */
+    private int hitDouble;
+    /**
+     * {@code m_boFireHitSkill} (ObjBase.pas:340): 烈火剑法 armed and waiting for the next
+     * {@code CM_FIREHIT}. Transient like the other special-attack flags — {@code Initialize}
+     * clears it (ObjBase.pas:1239) and nothing persists it.
+     */
+    private boolean fireHitArmed;
+    /**
+     * {@code m_dwLatestFireHitTick}: stamped both by {@code AllowFireHitSkill} (the 10 s re-arm
+     * gate) and by the swing that spends the flag (Jacky's 禁止双烈火 guard, ObjBase.pas:22131),
+     * and read by {@code TPlayObject.Run} for the 20 s expiry.
+     */
+    private long lastFireHitAt = Long.MIN_VALUE / 4;
 
     private Player(
         int id,

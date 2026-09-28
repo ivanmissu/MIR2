@@ -29,7 +29,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 /**
- * W34 wire half of the 刺杀剑术/半月弯刀 batch: {@code CM_LONGHIT}/{@code CM_WIDEHIT} in,
+ * W34/W35 wire half of the 刺杀剑术/半月弯刀 batch: {@code CM_LONGHIT}/{@code CM_WIDEHIT} in,
  * {@code SM_LONGHIT}/{@code SM_WIDEHIT} out, and the four {@code ThrustingOnOff}/{@code
  * HalfMoonOnOff} tag frames (+LNG/+ULNG/+WID/+UWID) that switch which packet the client sends
  * (ObjBase.pas:9043-9073).
@@ -61,12 +61,21 @@ class GameSpecialAttackProtocolTest {
       assertEquals("#+ULNG!", encode(GameOutbound.Signal.THRUSTING_OFF));
       assertEquals("#+WID!", encode(GameOutbound.Signal.HALF_MOON_ON));
       assertEquals("#+UWID!", encode(GameOutbound.Signal.HALF_MOON_OFF));
+
+      // W35: 烈火剑法 rides the same raw tag channel (ObjBase.pas:9103 / 6431).
+      adapter.send(new WorldEvent.WeaponSkillToggled(9, HitSpeed.SKILL_FIRESWORD, true));
+      assertEquals(GameOutbound.Signal.FIRE_SWORD_ON, output.remove(0));
+      adapter.send(new WorldEvent.WeaponSkillToggled(9, HitSpeed.SKILL_FIRESWORD, false));
+      assertEquals(GameOutbound.Signal.FIRE_SWORD_OFF, output.remove(0));
+      assertEquals("#+FIR!", encode(GameOutbound.Signal.FIRE_SWORD_ON));
+      assertEquals("#+UFIR!", encode(GameOutbound.Signal.FIRE_SWORD_OFF));
     }
   }
 
   @Test
   void clientLongAndWideHitReachTheWorldAndDegradeToHitForAnUnlearnedActor() {
-    for (int ident : new int[] {ProtocolConstants.CM_LONGHIT, ProtocolConstants.CM_WIDEHIT}) {
+    for (int ident : new int[] {ProtocolConstants.CM_LONGHIT, ProtocolConstants.CM_WIDEHIT,
+        ProtocolConstants.CM_FIREHIT}) {
       try (WorldEngine world = engine(GameMap.empty("0", "PoC", 20, 20))) {
         AtomicReference<WorldEventSink> sink = new AtomicReference<>(ignored -> {});
         var entered = world.enterPlayer("战士", "0", new Position(5, 5), Direction.RIGHT,
@@ -119,6 +128,12 @@ class GameSpecialAttackProtocolTest {
       WirePacket wideHit = ((GameOutbound.Packet) observed.remove(0)).packet();
       assertEquals(ProtocolConstants.SM_WIDEHIT, wideHit.message().ident());
       assertEquals(7, wideHit.message().recog());
+
+      // W35: wHitMode 7 answers SM_FIREHIT (= 8) when the charge was armed.
+      observer.send(new WorldEvent.ObjectAttacked(attacker, AttackKind.FIRE_HIT));
+      WirePacket fireHit = ((GameOutbound.Packet) observed.remove(0)).packet();
+      assertEquals(ProtocolConstants.SM_FIREHIT, fireHit.message().ident());
+      assertEquals(7, fireHit.message().recog());
     }
   }
 

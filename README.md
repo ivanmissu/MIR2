@@ -154,6 +154,20 @@ Java 服务端。
   `ReadBook` 之后补跑 `RecalcAbilitys`（`ObjBase.pas:23466`），以及 0 伤害不再广播 `SM_STRUCK`
   （Delphi 的 `StruckDamage`/`RM_STRUCK` 都在 `if nPower > 0` 内）。矩阵 9 行转 `implemented`，
   `CM_POWERHIT`/`SM_SPELL2`/`SM_SUBABILITY` 由 `protocol-only` 转 `implemented`。
+- **技能逐项接入·第三批（W34）· 可切换特殊攻击形状**：`SKILL_ERGUM`（12 刺杀剑术，`wHitMode=4`）与
+  `SKILL_BANWOL`（25 半月弯刀，`wHitMode=5`）是 `ClientSpellXY`（ObjBase.pas:9037-9073）里的**开关型**
+  主动技：按键翻转 `m_boUseThrusting`/`m_boUseHalfMoon` 并回 `+LNG/+ULNG/+WID/+UWID` 标签帧，
+  `ReadBook` 学书即自动启用、登录只静默重挂刺杀。命中解析看「书学得 +（半月）MP>0」，未学退化 `RM_HIT`；
+  刺杀打正前第 2 格单目标、半月扫 `dir-1/+1/+2` 扇形，追加目标走 `DirectAttack`（无木桩门、整额落地、
+  不掷 AC），`nSecPwr = Round(nPower/(3+offset)*(level+2))`（刺杀 offset=2、半月 offset=10）；
+  半月每挥固定扣 3 MP；主目标穿透命中 `TrainSkill(skill,1)`；广播 `SM_LONGHIT(19)`/`SM_WIDEHIT(24)`。
+- **技能逐项接入·第四批（W35）· 烈火剑法（一次性蓄力）**：`SKILL_FIRESWORD`（26，`wHitMode=7`）
+  是 `IsWarrSkill` 的第三种形态——既非被动也非开关，而是蓄力一刀：`ClientSpellXY`（ObjBase.pas:9092）
+  经 `AllowFireHitSkill` 的 `> 10 秒` 严格闸门点亮 `m_boFireHitSkill`（**先点旗后判蓝**的 quirk 照搬），
+  够蓝才扣 `GetSpellPoint` = 固定 7 MP 并回 `+FIR`；下一刀 `CM_FIREHIT` 在 `_Attack`（22128）烧掉蓄力、
+  重新盖时间戳（禁止双烈火）并把伤害抬到 `nPower + Round(nPower/100*(m_nHitDouble*10))`，
+  `m_nHitDouble = 4 + 4×等级`；砍空同样烧掉蓄力却不加伤（防止砍空刀刀烈火），未蓄力的 `CM_FIREHIT`
+  退化广播 `SM_HIT`；20 秒不用即红字失效并回 `+UFIR`；训练守卫是 hit mode 而非蓄力旗。
 - **战斗/背包存档**：HP、MP、等级、经验与 46 格背包通过 SQLite 事务保存，在角色进图前恢复；支持从旧 W02 schema 原位升级
 - **物品目录与背包同步（W04）**：最小标准物品库（`StdItem` 完整 `TStdItem` 字段 + SQLite `std_items` 表）、
   复刻 `GetItemNumber` 的稳定 `MakeIndex`、耐久字段、76 字节 `TClientItem` 小端编解码，
