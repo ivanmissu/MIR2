@@ -152,7 +152,7 @@ class WorldMeleeSkillTest {
       WorldObjectSnapshot player = enter(world, missId, "未熟战士", LevelAbilities.JOB_WARRIOR,
           new ArrayList<>());
       WorldObjectSnapshot target = run(world,
-          world.spawnMonster(MonsterTemplate.trainer(), "0", new Position(6, 5), Direction.LEFT));
+          world.spawnMonster(MonsterTemplate.orc(), "0", new Position(6, 5), Direction.LEFT));
       AttackResult result = run(world,
           world.attack(player.id(), new Position(5, 5), Direction.RIGHT, AttackKind.HIT));
       assertTrue(result.accepted());
@@ -169,7 +169,7 @@ class WorldMeleeSkillTest {
       WorldObjectSnapshot player = enter(world, hitId, "熟练战士", LevelAbilities.JOB_WARRIOR,
           new ArrayList<>());
       WorldObjectSnapshot target = run(world,
-          world.spawnMonster(MonsterTemplate.trainer(), "0", new Position(6, 5), Direction.LEFT));
+          world.spawnMonster(MonsterTemplate.orc(), "0", new Position(6, 5), Direction.LEFT));
       AttackResult result = run(world,
           world.attack(player.id(), new Position(5, 5), Direction.RIGHT, AttackKind.HIT));
       assertTrue(result.accepted());
