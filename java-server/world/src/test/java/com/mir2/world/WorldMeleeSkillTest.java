@@ -156,7 +156,7 @@ class WorldMeleeSkillTest {
       AttackResult result = run(world,
           world.attack(player.id(), new Position(5, 5), Direction.RIGHT, AttackKind.HIT));
       assertTrue(result.accepted());
-      assertTrue(result.hitNothing(), "the accuracy roll must reject the adjacent target");
+      assertEquals(0, result.damage(), "the accuracy roll must zero the adjacent target's damage");
       assertEquals(target.ability().hp(), run(world, world.snapshot(target.id())).ability().hp());
     }
 
