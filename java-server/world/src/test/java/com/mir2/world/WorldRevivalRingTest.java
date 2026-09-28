@@ -132,7 +132,7 @@ class WorldRevivalRingTest {
       assertFalse(run(world, world.snapshot(player.id())).ability().alive());
       assertNotNull(single(events, WorldEvent.ObjectDied.class));
       // And the ring only ever paid for the first revival.
-      assertEquals(4000, run(world, world.playerState(player.id()))
+      assertRevivalCharges(5000, 1, run(world, world.playerState(player.id()))
           .equipment().at(EquipmentSlot.RING_LEFT).orElseThrow().dura());
     }
   }
@@ -154,7 +154,7 @@ class WorldRevivalRingTest {
       advance(60_001);
       assertTrue(waitForRevival(world, player.id(), events),
           "after the cooldown the ring fires again");
-      assertEquals(3000, run(world, world.playerState(player.id()))
+      assertRevivalCharges(5000, 2, run(world, world.playerState(player.id()))
           .equipment().at(EquipmentSlot.RING_LEFT).orElseThrow().dura());
     }
   }
@@ -237,18 +237,21 @@ class WorldRevivalRingTest {
       events.clear();
       spawnOrc(world);
       assertTrue(waitForRevival(world, player.id(), events));
-      assertEquals(1500, run(world, world.playerState(player.id()))
-          .equipment().at(EquipmentSlot.RING_LEFT).orElseThrow().dura());
-      assertNull(singleOrNull(events, WorldEvent.ItemDurabilityChanged.class),
+      int afterFirst = ringDura(world, player.id());
+      assertRevivalCharges(2500, 1, afterFirst);
+      // The blows leading up to the revival can trip StruckDamage's own 1/8-per-slot wear,
+      // which has its own bucket bookkeeping; what must *not* appear is a bucket change
+      // reporting the post-revival durability.
+      assertFalse(bucketChanges(events).contains(afterFirst),
           "2500 -> 1500 stays in bucket 2 under banker's rounding: no SM_DURACHANGE");
 
       // 1500 -> 500 crosses from bucket 2 to bucket 0 (Round(1.5) = 2, Round(0.5) = 0).
       advance(60_001);
       events.clear();
       assertTrue(waitForRevival(world, player.id(), events));
-      assertEquals(500, run(world, world.playerState(player.id()))
-          .equipment().at(EquipmentSlot.RING_LEFT).orElseThrow().dura());
-      assertNotNull(single(events, WorldEvent.ItemDurabilityChanged.class),
+      int afterSecond = ringDura(world, player.id());
+      assertRevivalCharges(2500, 2, afterSecond);
+      assertTrue(bucketChanges(events).contains(afterSecond),
           "1500 -> 500 moves the bucket: SM_DURACHANGE goes out");
     }
   }
@@ -339,6 +342,37 @@ class WorldRevivalRingTest {
    * as the revival hint reaching the player's own sink — or the player actually dies, which
    * fails the wait.
    */
+  /**
+   * Asserts the ring paid exactly {@code charges} 1000-point revival charges out of
+   * {@code startingDura}.
+   *
+   * <p>The absolute figure can no longer be pinned down: {@code StruckDamage}'s
+   * 1/8-per-slot loop (ObjBase.pas:22517) nibbles 5..14 points off the ring on some of the
+   * blows leading up to the revival, and W33's 准确/敏捷 dodge model changed how many blows
+   * that takes. The revival charge itself is exact, so it is asserted as whole thousands with
+   * the incidental wear bounded well inside one charge.
+   */
+  private static void assertRevivalCharges(int startingDura, int charges, int dura) {
+    int expected = startingDura - charges * 1000;
+    assertTrue(dura <= expected && dura > expected - 500,
+        charges + " x 1000 revival charge out of " + startingDura + " leaves about " + expected
+            + " plus incidental StruckDamage wear, but the ring holds " + dura);
+  }
+
+  private int ringDura(WorldEngine world, int playerId) {
+    return run(world, world.playerState(playerId))
+        .equipment().at(EquipmentSlot.RING_LEFT).orElseThrow().dura();
+  }
+
+  /** Every durability value an {@code RM_DURACHANGE} reported, in emission order. */
+  private static List<Integer> bucketChanges(List<WorldEvent> events) {
+    return events.stream()
+        .filter(WorldEvent.ItemDurabilityChanged.class::isInstance)
+        .map(WorldEvent.ItemDurabilityChanged.class::cast)
+        .map(WorldEvent.ItemDurabilityChanged::dura)
+        .toList();
+  }
+
   private boolean waitForRevival(WorldEngine world, int playerId, List<WorldEvent> events) {
     int seen = events.size();
     for (int tick = 0; tick < 300; tick++) {

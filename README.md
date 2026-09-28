@@ -135,14 +135,25 @@ Java 服务端。
   Magic.pas:392）同为单体延迟伤害，额外复刻 `m_btLifeAttrib = LA_UNDEAD` 时最终伤害 ×1.5 的判定——
   `undead` 字段随之从 Monster.DB 补齐到 `MonsterTemplate`（此前该列已导入但无消费方），首批接线怪物中
   仅稻草人 `Undead=1`。`docs/g4-capability-matrix.tsv` 对应 6 行（2 技能 × 3 职业）由 `unimplemented`
-  转为 `implemented`；技能矩阵当前仍有 52 个 `SKILL_*` 未接线（攻杀/刺杀等战士技、符箓消耗、群体与召唤类），
+  转为 `implemented`；技能矩阵仍有 53 个 `SKILL_*` 未接线（战士武器技/符箓消耗/群体与召唤类），
   按缺口继续逐批推进，详见 `docs/w27-next-plan.md`。
-- **被动近战技能逐项接入（W33）**：`SKILL_ONESWORD`（3，基本剑术）与 `SKILL_ILKWANG`（4，精神力战法）
-  按 `ObjBase.pas:18563/18624/22283` 接入——命中率复刻 `DEFHIT=5` 对目标 `DEFSPEED=15` 的
-  `Random(SpeedPoint) < HitPoint` 判定，基本剑术每级 `Round(9/3×等级)`、精神力战法每级
-  `Round(8/3×等级)`；穿透近战命中后按 `Random(3)+1` 训练，等级/熟练度落库并以
-  `SM_MAGIC_LVEXP` 同步。`WorldMeleeSkillTest` 覆盖职业门禁、命中/闪避、训练和重登；护身符类
-  `SKILL_FIRECHARM` 仍待补齐 `CheckAmulet/UseAmulet`，详见 `docs/w27-next-plan.md`。
+- **技能逐项接入·第二批（W33）· 战士武器技与准确/敏捷模型**：接入 `SKILL_ONESWORD`（3 基本剑术）、
+  `SKILL_ILKWANG`（4 精神力战法）、`SKILL_YEDO`（7 攻杀剑术）。这三个技能被 `MagicManager.IsWarrSkill`
+  （`Magic.pas:211`）挡在 `DoSpell` 之外，是**纯被动量**，所以本批先补齐它们唯一的作用链：
+  `TBaseObject.RecalcHitSpeed`（`ObjBase.pas:18551`）的准确/敏捷模型（`DEFHIT=5`/`DEFSPEED=15`、
+  道士 `+3` 敏捷、`Round(9/3·lv)`/`Round(8/3·lv)`/`Round(3/3·lv)` 三张加成表），怪物侧把 `Monster.DB`
+  的 `SPEED`/`HIT` 两列按 `UsrEngn.pas:2606` 直抄进 `MonsterTemplate`，再接上 `_Attack` 的闪避判定
+  （`ObjBase.pas:22240`：`if 目标准确 > 0 then if 我方准确 < Random(目标敏捷) then nPower := 0`）——
+  近战命中率第一次真正受属性支配（裸角色打半兽人约 60% 落空，基本剑术满级后降到约 7%；木桩 `HIT=0`
+  永不被闪避，shadowdiff 的 PvE 基准保持确定性）。攻杀剑术走完整闭环：`ClientAttack` 的
+  `7 - level` 出招节拍（`ObjBase.pas:8861`）→ `+PWR` 裸标签帧 → 客户端下一刀发 `CM_POWERHIT(3018)`
+  → `wHitMode=3` 消费 `m_boPowerHit` 加 `m_nHitPlus = DEFHIT + level` → `AttackDir` 把广播换成
+  `SM_SPELL2(117)`（未武装时仍是 `SM_HIT`）。`SM_SUBABILITY(752)` 随每个 `SM_ABILITY` 出站，准确/敏捷
+  第一次对客户端可见；`ClientSpellXY`（`ObjBase.pas:9027`）对 3/4/7 的空实现分支回 `+GOOD`（不扣蓝、
+  不进冷却），同属 `IsWarrSkill` 但未实现的 12/25/26/27/34/38 明确回 `+FAIL`。同时修正两处旧偏差：
+  `ReadBook` 之后补跑 `RecalcAbilitys`（`ObjBase.pas:23466`），以及 0 伤害不再广播 `SM_STRUCK`
+  （Delphi 的 `StruckDamage`/`RM_STRUCK` 都在 `if nPower > 0` 内）。矩阵 9 行转 `implemented`，
+  `CM_POWERHIT`/`SM_SPELL2`/`SM_SUBABILITY` 由 `protocol-only` 转 `implemented`。
 - **战斗/背包存档**：HP、MP、等级、经验与 46 格背包通过 SQLite 事务保存，在角色进图前恢复；支持从旧 W02 schema 原位升级
 - **物品目录与背包同步（W04）**：最小标准物品库（`StdItem` 完整 `TStdItem` 字段 + SQLite `std_items` 表）、
   复刻 `GetItemNumber` 的稳定 `MakeIndex`、耐久字段、76 字节 `TClientItem` 小端编解码，
@@ -464,10 +475,13 @@ docker compose -f java-server/compose.yml up --build
   111-217 表未收录行为）、远程攻击与剩余 47 种怪物仍未实现——**Monster.DB 全 378 行
   虽已入库，但红线内 47 种怪不接线行为，仅数据待命**；技能/魔法自 W28 起按 `Magic.pas` 逐个
   `case` 分支接入而非批量猜测，W28 落地火球术/治愈术/魔法盾三种基础形态，W32 追加大火球
-  （复用火球术分支）与雷电术（含 `LA_UNDEAD` 1.5x），Grobal2.pas 59 个 `SKILL_*` 目前
-  5/59（火球术/治愈术/大火球/雷电术/魔法盾）已接线，其余 54 个（战士武器技、符箓消耗类、
-  群体/召唤/隐身类）仍按 `docs/w27-next-plan.md`
-  的缺口顺序逐批推进；修理目前是
+  （复用火球术分支）与雷电术（含 `LA_UNDEAD` 1.5x），W33 追加战士武器技三件（基本剑术/精神力战法/
+  攻杀剑术）并随之补齐准确·敏捷与 `_Attack` 闪避判定，Grobal2.pas 59 个 `SKILL_*` 目前
+  8/59 已接线，其余 51 个（刺杀/半月/烈火等特殊攻击形状、符箓消耗类、群体/召唤/隐身类）仍按
+  `docs/w27-next-plan.md` 的缺口顺序逐批推进；W33 已为基本剑术/精神力战法补上穿透命中后的
+  `TrainSkill(Random(3) + 1)`、单次 `CheckMagicLevelup` 风格升级、`character_magic` 持久化与
+  `SM_MAGIC_LVEXP` 同步，但其余已接线技能的专属训练规则仍未实现；属性点加点
+  (`m_BonusAbil`/`CM_ADJUST_BONUS`) 未实现，故准确/敏捷的加点分量恒为 0；修理目前是
   协议级最小闭环（`m_sScriptLable` 状态机 + 修理三消息）。W29 起商人标签走
   `MerchantCommand` 指令清单：`@repair`/`@s_repair`/`@exit` 已实现，其余 23 个标签
   按 `DEFERRED_TRANSACTION`/`DEFERRED_SCRIPT` 归档并在运行期**可观测拒绝**（不再静默），

@@ -13,7 +13,14 @@ public enum AttackKind {
   /** Heavy weapon swing (CM_HEAVYHIT → SM_HEAVYHIT). */
   HEAVY_HIT,
   /** Wide swing (CM_BIGHIT → SM_BIGHIT). */
-  BIG_HIT;
+  BIG_HIT,
+  /**
+   * 攻杀剑术 swing (CM_POWERHIT → SM_SPELL2). {@code TPlayObject.ClientAttack} maps
+   * {@code CM_POWERHIT} to {@code wHitMode = 3}, and {@code AttackDir} only answers
+   * {@code RM_SPELL2} when {@code m_boPowerHit} was armed by the cadence — an unarmed
+   * CM_POWERHIT is broadcast as a plain {@link #HIT}.
+   */
+  POWER_HIT;
 
   /** All melee variants share one cooldown in {@code TPlayObject.CheckActionInterval}. */
   public boolean sharesHitInterval() {

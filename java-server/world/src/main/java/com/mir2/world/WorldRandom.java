@@ -54,6 +54,16 @@ public final class WorldRandom {
     WEAPON_UNLOCK,
     /** Magic.DB power, MC/SC and target-MAC rolls; appended so old seeded streams do not move. */
     MAGIC,
+    /**
+     * {@code _Attack}'s {@code Random(AttackTarget.m_btSpeedPoint)} dodge roll — one draw per
+     * melee blow that reaches a proper target (ObjBase.pas:22241).
+     */
+    ACCURACY,
+    /**
+     * {@code m_btAttackSkillPointCount := Random(m_btAttackSkillCount)}: which swing of the
+     * 攻杀剑术 cycle arms the next power hit (ObjBase.pas:18613 and 8872).
+     */
+    POWER_HIT,
     /** {@code TrainSkill}: the classic {@code Random(3) + 1} weapon-skill gain. */
     SKILL_TRAIN
   }
