@@ -205,7 +205,7 @@ SM	SM_EAT_FAIL	636	yes	gate-game	implemented	GameItemProtocolTest	Grobal2.pas	�
 SM	SM_BUTCH	637	yes	none	protocol-only	-	Grobal2.pas	挖肉应答
 SM	SM_MAGICFIRE	638	yes	gate-game	implemented	GameMagicProtocolTest,WorldMagicTest	Grobal2.pas	施法结果广播——W28 三技能最小切片已接线
 SM	SM_MAGICFIRE_FAIL	639	yes	gate-game	implemented	GameMagicProtocolTest,WorldMagicTest	Grobal2.pas	施法失败——W28 三技能最小切片已接线
-SM	SM_MAGIC_LVEXP	640	yes	none	protocol-only	-	Grobal2.pas	技能熟练度——技能切片
+SM	SM_MAGIC_LVEXP	640	yes	gate-game	implemented	WorldMeleeSkillTest	Grobal2.pas	技能熟练度——W33 基本剑术/精神力战法训练进度；SM_MAGIC_LVEXP
 SM	SM_DURACHANGE	642	yes	gate-game	implemented	WorldRevivalRingTest,WorldRepairTest	Grobal2.pas	耐久变化（含千位桶 quirk）
 SM	SM_MERCHANTSAY	643	yes	none	protocol-only	-	Grobal2.pas	商人说话——脚本引擎前置
 SM	SM_MERCHANTDLGCLOSE	644	yes	gate-game	implemented	GameMerchantCommandProtocolTest	Grobal2.pas	@exit 关商人窗口（RM_MERCHANTDLGCLOSE, ObjBase.pas:5846）W29
