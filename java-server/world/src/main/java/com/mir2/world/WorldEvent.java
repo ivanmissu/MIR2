@@ -10,6 +10,9 @@ public sealed interface WorldEvent
         WorldEvent.ObjectAppeared,
         WorldEvent.ObjectMoved,
         WorldEvent.ObjectTurned,
+        WorldEvent.ObjectRushed,
+        WorldEvent.ObjectPushed,
+        WorldEvent.ObjectRushFailed,
         WorldEvent.ObjectDisappeared,
         WorldEvent.MoveAccepted,
         WorldEvent.MoveRejected,
@@ -130,6 +133,39 @@ public sealed interface WorldEvent
   record ObjectTurned(WorldObjectSnapshot object) implements WorldEvent {
     public ObjectTurned {
       Objects.requireNonNull(object, "object");
+    }
+  }
+
+  record ObjectRushed(
+      WorldObjectSnapshot object,
+      Position from,
+      Direction direction) implements WorldEvent {
+    public ObjectRushed {
+      Objects.requireNonNull(object, "object");
+      Objects.requireNonNull(from, "from");
+      Objects.requireNonNull(direction, "direction");
+    }
+  }
+
+  record ObjectPushed(
+      WorldObjectSnapshot object,
+      Position from,
+      Direction direction) implements WorldEvent {
+    public ObjectPushed {
+      Objects.requireNonNull(object, "object");
+      Objects.requireNonNull(from, "from");
+      Objects.requireNonNull(direction, "direction");
+    }
+  }
+
+  record ObjectRushFailed(
+      WorldObjectSnapshot object,
+      Position targetCell,
+      Direction direction) implements WorldEvent {
+    public ObjectRushFailed {
+      Objects.requireNonNull(object, "object");
+      Objects.requireNonNull(targetCell, "targetCell");
+      Objects.requireNonNull(direction, "direction");
     }
   }
 

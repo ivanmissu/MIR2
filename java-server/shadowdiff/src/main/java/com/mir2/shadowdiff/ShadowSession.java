@@ -478,7 +478,8 @@ final class ShadowSession implements AutoCloseable {
       // param/tag=cell, series=MakeWord(direction, light). Everything except the player's
       // own actor is a neighbour whose cell and facing the AI comparison watches.
       case ProtocolConstants.SM_TURN, ProtocolConstants.SM_WALK,
-          ProtocolConstants.SM_RUN, ProtocolConstants.SM_BACKSTEP -> {
+          ProtocolConstants.SM_RUN, ProtocolConstants.SM_BACKSTEP,
+          ProtocolConstants.SM_RUSH, ProtocolConstants.SM_RUSHKUNG -> {
         if (message.recog() != selfId) {
           neighbours.put(message.recog(), String.format(Locale.ROOT, "(%d,%d) dir=%d",
               message.param(), message.tag(), message.series() & 0x7));

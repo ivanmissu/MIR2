@@ -241,6 +241,11 @@ public final class GameProtocolAdapter implements WorldEventSink {
           ProtocolConstants.SM_TURN, appeared.object());
       case WorldEvent.ObjectMoved moved -> sendMovement(moved.object(), moved.movement());
       case WorldEvent.ObjectTurned turned -> sendObjectAction(ProtocolConstants.SM_TURN, turned.object());
+      case WorldEvent.ObjectRushed rushed -> sendObjectAction(
+          ProtocolConstants.SM_RUSH, rushed.object());
+      case WorldEvent.ObjectPushed pushed -> sendObjectAction(
+          ProtocolConstants.SM_BACKSTEP, pushed.object());
+      case WorldEvent.ObjectRushFailed failed -> sendRushFailed(failed);
       case WorldEvent.ObjectAttacked attacked -> sendAttack(attacked);
       case WorldEvent.ObjectStruck struck -> sendStruck(struck);
       case WorldEvent.ObjectDied died -> sendDeath(died);
@@ -637,6 +642,15 @@ public final class GameProtocolAdapter implements WorldEventSink {
   private void sendMovement(WorldObjectSnapshot object, MovementKind movement) {
     int ident = movement == MovementKind.RUN ? ProtocolConstants.SM_RUN : ProtocolConstants.SM_WALK;
     sendObjectAction(ident, object);
+  }
+
+  private void sendRushFailed(WorldEvent.ObjectRushFailed failed) {
+    WorldObjectSnapshot object = failed.object();
+    Position position = failed.targetCell();
+    String body = new CharacterDescription(object.feature(), object.status()).encode();
+    output.accept(new GameOutbound.Packet(packet(
+        ProtocolConstants.SM_RUSHKUNG, object.id(), position.x(), position.y(),
+        makeWord(failed.direction().code(), object.light()), body)));
   }
 
   private void sendObjectAction(int ident, WorldObjectSnapshot object) {

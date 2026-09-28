@@ -189,11 +189,23 @@ W33 的 3/4/7 是纯被动，W34 的 12/25 是开关，烈火是**一次性蓄�
   矩阵 `SKILL_FIRESWORD` 三行 + `CM_FIREHIT`/`SM_FIREHIT` 升为 `implemented`。
   详见 `docs/g0-evidence/2026-09-28-w35-skill-batch-firesword.md`。
 
-**本轮不做 / 显式延后**：`野蛮冲撞(27)`（`DoMotaebo` 位移撞墙，需要碰撞/击退模型）、
-`双龙斩(34)`/`狂风斩(38)`（Magic.DB 行超出 1..33 权威目录）、`m_boTwinHitSkill`/`CM_TWINHIT`；
-同样不加 shadowdiff 场景或门禁行。
+### 技能逐项接入·第五批（W36）— 已完成：野蛮冲撞（SKILL_MOOTEBO=27）与推人位移/撞墙模型
 
-下一项：`SKILL_MOOTEBO`(27 野蛮冲撞) 需要先立项 `DoMotaebo`(ObjBase.pas:21703) 的
-「等级差 × 随机 20」判定与撞墙位移/眩晕模型（这是本服第一个位移类技能）；或转向
-`SKILL_AMYOUNSUL`(6 施毒术)/`SKILL_FIRECHARM`(13 灵魂火符)，两者仍需先梳理
-`CheckAmulet`/`UseAmulet` 的护身符消耗模型，不能简化成扣 MP。
+W36 接入 `SKILL_MOOTEBO`(27 野蛮冲撞)——官方 1.76 基线（1..33）战士技能树全部收口，也是服务端首个位移/击退类技能。
+
+- **触发与闸门**：`ClientSpellXY`(9112) 的 `> 3 * 1000` 冷却闸门与 `GetSpellPoint`（4/8/11/15 MP）消耗；
+  朝向从 `nTargetX` 解析；未过冷却依然应答 `+GOOD`。
+- **推人与双推**：`CanMotaebo`(21705) 严格要求施法者等级 > 目标等级；0/1 级冲 3 格，2 级 4 格，3 级 5 格；
+  3 级冲撞可双推正前紧邻两格的目标；主要目标被退 1 格并掉转朝向，怪物步行动作延迟 800ms。
+- **撞墙受挫与反震**：撞墙或推人受阻时广播 `SM_RUSHKUNG(7)` 与红字「冲撞力不够...」；步数未尽撞墙施法者承受反震伤害。
+- **熟练度训练**：穿透冲撞命中目标后 `TrainSkill(skill, Random(3) + 1)` 并触发 `CheckMagicLevelup`。
+- 证据：`WorldMotaeboSkillTest`（7 用例）、`GameMotaeboProtocolTest`（3 用例）；`WorldWarriorSkillTest` 的未实现战士技拒绝断言由 id=27 改用 id=34；
+  矩阵 `SKILL_MOOTEBO` 三行及 `SM_RUSH`/`SM_RUSHKUNG`/`SM_BACKSTEP` 升为 `implemented`。
+  详见 `docs/g0-evidence/2026-09-28-w36-skill-batch-motaebo.md`。
+
+**本轮不做 / 显式延后**：
+- `双龙斩(34)`、`狂风斩(38)`、`逐日剑法` 等超出 1..33 官方目录的技能继续延后。
+- 不为本批单独新增 shadowdiff 场景或门禁行。
+
+下一项：转向道士符箓消耗模型（`CheckAmulet`/`UseAmulet`）与 `SKILL_FIRECHARM`(13 灵魂火符)/`SKILL_AMYOUNSUL`(6 施毒术)；
+或法师多格穿透/群体魔法（`SKILL_FIRE`(9 地狱火)/`SKILL_SHOOTLIGHTEN`(10 疾光电影)）。

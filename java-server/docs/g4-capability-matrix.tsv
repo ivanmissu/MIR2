@@ -109,10 +109,10 @@ CM	CM_SPEEDHACKUSER	10430	yes	none	protocol-only	-	Grobal2.pas	加速举报（�
 CM	CM_SERVERREGINFO	65074	yes	none	protocol-only	-	Grobal2.pas	服务器注册信息——私服族
 SM	SM_41	4	yes	none	protocol-only	-	Grobal2.pas	占位编号
 SM	SM_THROW	5	yes	none	protocol-only	-	Grobal2.pas	投掷动作帧（技能）
-SM	SM_RUSH	6	yes	none	protocol-only	-	Grobal2.pas	野蛮冲撞动作帧——SKILL_MOOTEBO 技能切片
-SM	SM_RUSHKUNG	7	yes	none	protocol-only	-	Grobal2.pas	冲撞延续动作帧
+SM	SM_RUSH	6	yes	gate-game	implemented	GameMotaeboProtocolTest,WorldMotaeboSkillTest	Grobal2.pas	野蛮冲撞动作帧——W36 接入（DoMotaebo 冲撞位移出站）
+SM	SM_RUSHKUNG	7	yes	gate-game	implemented	GameMotaeboProtocolTest,WorldMotaeboSkillTest	Grobal2.pas	冲撞受阻动作帧——W36 接入（DoMotaebo 撞墙/推不动时出站）
 SM	SM_FIREHIT	8	yes	gate-game	implemented	GameSpecialAttackProtocolTest,WorldFireSwordSkillTest	Grobal2.pas	烈火动作帧；W35 接入（仅蓄力命中时广播，否则降级 SM_HIT）
-SM	SM_BACKSTEP	9	yes	none	protocol-only	-	Grobal2.pas	移动失败动作帧（泄露源服务端未见发送）
+SM	SM_BACKSTEP	9	yes	gate-game	implemented	GameMotaeboProtocolTest,WorldMotaeboSkillTest	Grobal2.pas	被推后退动作帧——W36 接入（CharPushed 推人位移出站）
 SM	SM_TURN	10	yes	gate-game	implemented	GameProtocolAdapterTest,WorldEngineTest	Grobal2.pas	转身广播
 SM	SM_WALK	11	yes	gate-game	implemented	GameProtocolAdapterTest,WorldEngineTest	Grobal2.pas	行走广播
 SM	SM_SITDOWN	12	yes	none	protocol-only	-	Grobal2.pas	坐下动作帧
@@ -400,9 +400,9 @@ SKILL	SKILL_BANWOL:taoist	25	n/a	gate-game	implemented	WorldSpecialAttackSkillTe
 SKILL	SKILL_FIRESWORD:warrior	26	n/a	gate-game	implemented	WorldFireSwordSkillTest,GameSpecialAttackProtocolTest	Grobal2.pas:SKILL_*	烈火剑法；GEEM2 Magic.DB 同名行 job=warrior learnable=yes；W35 一次性蓄力切片：ClientSpellXY(9092) 经 AllowFireHitSkill(9782) 10 秒再蓄闸门置 m_boFireHitSkill，按 GetSpellPoint 扣 7 MP 后回 +FIR；_Attack(22128) 以 wHitMode=7 消费该旗，伤害 +Round(nPower/100*(m_nHitDouble*10))，m_nHitDouble=4+4*等级(18622)；砍空同样烧掉蓄力(22152)；20 秒未用即失效并回 +UFIR(6427)；命中训练 TrainSkill(skill,1)(22354)
 SKILL	SKILL_FIRESWORD:wizard	26	n/a	gate-game	implemented	WorldFireSwordSkillTest,GameSpecialAttackProtocolTest	Grobal2.pas:SKILL_*	烈火剑法；GEEM2 Magic.DB 同名行 job=warrior learnable=no；W35 一次性蓄力切片：ClientSpellXY(9092) 经 AllowFireHitSkill(9782) 10 秒再蓄闸门置 m_boFireHitSkill，按 GetSpellPoint 扣 7 MP 后回 +FIR；_Attack(22128) 以 wHitMode=7 消费该旗，伤害 +Round(nPower/100*(m_nHitDouble*10))，m_nHitDouble=4+4*等级(18622)；砍空同样烧掉蓄力(22152)；20 秒未用即失效并回 +UFIR(6427)；命中训练 TrainSkill(skill,1)(22354)
 SKILL	SKILL_FIRESWORD:taoist	26	n/a	gate-game	implemented	WorldFireSwordSkillTest,GameSpecialAttackProtocolTest	Grobal2.pas:SKILL_*	烈火剑法；GEEM2 Magic.DB 同名行 job=warrior learnable=no；W35 一次性蓄力切片：ClientSpellXY(9092) 经 AllowFireHitSkill(9782) 10 秒再蓄闸门置 m_boFireHitSkill，按 GetSpellPoint 扣 7 MP 后回 +FIR；_Attack(22128) 以 wHitMode=7 消费该旗，伤害 +Round(nPower/100*(m_nHitDouble*10))，m_nHitDouble=4+4*等级(18622)；砍空同样烧掉蓄力(22152)；20 秒未用即失效并回 +UFIR(6427)；命中训练 TrainSkill(skill,1)(22354)
-SKILL	SKILL_MOOTEBO:warrior	27	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	野蛮冲撞；GEEM2 Magic.DB 同名行 job=warrior learnable=yes
-SKILL	SKILL_MOOTEBO:wizard	27	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	野蛮冲撞；GEEM2 Magic.DB 同名行 job=warrior learnable=no
-SKILL	SKILL_MOOTEBO:taoist	27	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	野蛮冲撞；GEEM2 Magic.DB 同名行 job=warrior learnable=no
+SKILL	SKILL_MOOTEBO:warrior	27	n/a	gate-game	implemented	WorldMotaeboSkillTest,GameMotaeboProtocolTest	Grobal2.pas:SKILL_*	野蛮冲撞；GEEM2 Magic.DB 同名行 job=warrior learnable=yes；W36 位移冲撞切片：ClientSpellXY(9112) 3秒冷却闸门，按 GetSpellPoint 扣 4..15 MP；DoMotaebo(21703) 空冲 3..5 格，推等级低于自身的目标及 3 级双推；撞墙/推不动播 SM_RUSHKUNG + 冲撞力不够... 并承受反震伤害；命中目标受撞击伤害并 TrainSkill(skill,Random(3)+1)
+SKILL	SKILL_MOOTEBO:wizard	27	n/a	gate-game	implemented	WorldMotaeboSkillTest,GameMotaeboProtocolTest	Grobal2.pas:SKILL_*	野蛮冲撞；GEEM2 Magic.DB 同名行 job=warrior learnable=no；W36 引擎按 magicId 通用接入，非战士无法学得，故冲撞路径不会触发
+SKILL	SKILL_MOOTEBO:taoist	27	n/a	gate-game	implemented	WorldMotaeboSkillTest,GameMotaeboProtocolTest	Grobal2.pas:SKILL_*	野蛮冲撞；GEEM2 Magic.DB 同名行 job=warrior learnable=no；W36 引擎按 magicId 通用接入，非战士无法学得，故冲撞路径不会触发
 SKILL	SKILL_SHOWHP:warrior	28	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	心灵启示；GEEM2 Magic.DB 同名行 job=taoist learnable=no
 SKILL	SKILL_SHOWHP:wizard	28	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	心灵启示；GEEM2 Magic.DB 同名行 job=taoist learnable=no
 SKILL	SKILL_SHOWHP:taoist	28	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	心灵启示；GEEM2 Magic.DB 同名行 job=taoist learnable=yes

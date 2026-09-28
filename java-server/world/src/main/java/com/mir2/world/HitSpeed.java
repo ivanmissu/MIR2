@@ -70,6 +70,9 @@ public record HitSpeed(
    */
   public static final int SKILL_FIRESWORD = 26;
 
+  /** 野蛮冲撞 {@code SKILL_MOOTEBO} (Grobal2.pas). */
+  public static final int SKILL_MOOTEBO = 27;
+
   /** {@code Inc(m_btSpeedPoint, 3)} for 道士 (ObjBase.pas:18562). */
   private static final int TAOIST_SPEED_BONUS = 3;
 
@@ -152,7 +155,7 @@ public record HitSpeed(
       // 3 基本剑术, 4 精神力战法, 7 攻杀剑术, 12 刺杀剑术, 25 半月弯刀, 26 烈火剑法,
       // 27 野蛮冲撞, 34 双龙斩, 38 狂风斩 (Grobal2.pas:1272-1309).
       case SKILL_ONESWORD, SKILL_ILKWANG, SKILL_YEDO, SKILL_ERGUM, SKILL_BANWOL, SKILL_FIRESWORD,
-          27, 34, 38 -> true;
+          SKILL_MOOTEBO, 34, 38 -> true;
       default -> false;
     };
   }
@@ -184,5 +187,15 @@ public record HitSpeed(
    */
   public static boolean isFireSwordSkill(int magicId) {
     return magicId == SKILL_FIRESWORD;
+  }
+
+  /**
+   * 野蛮冲撞: the fourth {@code IsWarrSkill} active branch (ObjBase.pas:9112). It rushes the
+   * player forward up to 3/4/5 steps, pushes lower-level obstacles (and a second target at level 3),
+   * inflicts collision damage, triggers recoil damage when hitting solid terrain, and emits
+   * {@code SM_RUSH}/{@code SM_BACKSTEP}/{@code SM_RUSHKUNG}.
+   */
+  public static boolean isMotaeboSkill(int magicId) {
+    return magicId == SKILL_MOOTEBO;
   }
 }

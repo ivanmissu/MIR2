@@ -51,4 +51,9 @@ public enum Direction {
         .findFirst()
         .orElseThrow();
   }
+
+  /** {@code GetBackDir} (ObjBase.pas:2490) — the exact opposite facing for backstep/push. */
+  public Direction opposite() {
+    return fromCode((code + 4) % 8);
+  }
 }
