@@ -478,9 +478,10 @@ docker compose -f java-server/compose.yml up --build
   （复用火球术分支）与雷电术（含 `LA_UNDEAD` 1.5x），W33 追加战士武器技三件（基本剑术/精神力战法/
   攻杀剑术）并随之补齐准确·敏捷与 `_Attack` 闪避判定，Grobal2.pas 59 个 `SKILL_*` 目前
   8/59 已接线，其余 51 个（刺杀/半月/烈火等特殊攻击形状、符箓消耗类、群体/召唤/隐身类）仍按
-  `docs/w27-next-plan.md` 的缺口顺序逐批推进；**技能熟练度体系（`TrainSkill`/`CheckMagicLevelup`）
-  对已接线的 8 个技能一律缺席**，留给独立批次一次性接入；属性点加点（`m_BonusAbil`/`CM_ADJUST_BONUS`）
-  未实现，故准确/敏捷的加点分量恒为 0；修理目前是
+  `docs/w27-next-plan.md` 的缺口顺序逐批推进；W33 已为基本剑术/精神力战法补上穿透命中后的
+  `TrainSkill(Random(3) + 1)`、单次 `CheckMagicLevelup` 风格升级、`character_magic` 持久化与
+  `SM_MAGIC_LVEXP` 同步，但其余已接线技能的专属训练规则仍未实现；属性点加点
+  (`m_BonusAbil`/`CM_ADJUST_BONUS`) 未实现，故准确/敏捷的加点分量恒为 0；修理目前是
   协议级最小闭环（`m_sScriptLable` 状态机 + 修理三消息）。W29 起商人标签走
   `MerchantCommand` 指令清单：`@repair`/`@s_repair`/`@exit` 已实现，其余 23 个标签
   按 `DEFERRED_TRANSACTION`/`DEFERRED_SCRIPT` 归档并在运行期**可观测拒绝**（不再静默），

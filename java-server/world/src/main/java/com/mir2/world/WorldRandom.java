@@ -63,7 +63,9 @@ public final class WorldRandom {
      * {@code m_btAttackSkillPointCount := Random(m_btAttackSkillCount)}: which swing of the
      * 攻杀剑术 cycle arms the next power hit (ObjBase.pas:18613 and 8872).
      */
-    POWER_HIT
+    POWER_HIT,
+    /** {@code TrainSkill}: the classic {@code Random(3) + 1} weapon-skill gain. */
+    SKILL_TRAIN
   }
 
   private static final Stream[] STREAMS = Stream.values();

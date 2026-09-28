@@ -23,6 +23,7 @@ public sealed interface WorldEvent
         WorldEvent.ItemsRemoved,
         WorldEvent.HealthChanged,
         WorldEvent.SkillLearned,
+        WorldEvent.SkillTrainingChanged,
         WorldEvent.SkillsSent,
         WorldEvent.SpellAccepted,
         WorldEvent.SpellRejected,
@@ -201,6 +202,18 @@ public sealed interface WorldEvent
   /** A StdMode-4 book added one durable TUserMagic row. */
   record SkillLearned(int playerId, LearnedMagic magic) implements WorldEvent {
     public SkillLearned {
+      if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
+      Objects.requireNonNull(magic, "magic");
+    }
+  }
+
+  /**
+   * {@code RM_MAGIC_LVEXP -> SM_MAGIC_LVEXP}: a weapon hit changed one durable
+   * {@code TUserMagic.nTranPoint} row.  The adapter sends the magic id, current level and
+   * training remainder using the same four fields as the Delphi handler.
+   */
+  record SkillTrainingChanged(int playerId, LearnedMagic magic) implements WorldEvent {
+    public SkillTrainingChanged {
       if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
       Objects.requireNonNull(magic, "magic");
     }

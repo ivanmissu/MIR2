@@ -133,10 +133,15 @@ W33 接入 `SKILL_ONESWORD`(3 基本剑术)、`SKILL_ILKWANG`(4 精神力战法)
 矩阵 9 行（3 技能 × 3 职业）转 `implemented`，`CM_POWERHIT`/`SM_SPELL2`/`SM_SUBABILITY` 由
 `protocol-only` 转 `implemented`。证据见 `docs/g0-evidence/2026-09-26-w33-warrior-weapon-skills.md`。
 
-**本轮不做**：技能熟练度体系（`TrainSkill`/`CheckMagicLevelup`，对 W28/W32 的法术同样缺席，应作为独立
-批次一次性接入）；刺杀/半月/烈火/野蛮冲撞/双龙斩/狂风斩（每个都要新的攻击形状：直线三格、扇形、十字、
-位移撞墙）；属性点加点 `m_BonusAbil`；本批同样不加 shadowdiff 场景或门禁行。
+W33 后续小批补上两个被动技能的熟练度闭环：穿透近战命中后按 Delphi `TrainSkill(Random(3) + 1)`
+累加 `character_magic.training_points`，执行一次 `CheckMagicLevelup` 风格升级；训练结果通过世界层
+`SkillTrainingChanged` 事件出站，由 gate 编码为 `SM_MAGIC_LVEXP` 的 magic id、level 与熟练度低/高字。
+`WorldMeleeSkillTest` 覆盖命中训练、等级/熟练度余数、持久化重登与 gate 无 Socket 依赖的边界。
+
+**本轮不做**：刺杀/半月/烈火/野蛮冲撞/双龙斩/狂风斩（每个都要新的攻击形状：直线三格、扇形、十字、
+位移撞墙）；属性点加点 `m_BonusAbil`；攻杀/特殊技能的额外训练规则；本批同样不加 shadowdiff 场景或门禁行。
 
 下一项：`SKILL_ERGUM`(12 刺杀剑术) 起的**特殊攻击形状**批次（`SwordLongAttack` 直线三格 →
 `SwordWideAttack` 扇形 → `CrsWideAttack` 十字），它们与本批共用已经铺好的 `wHitMode`/`+标签帧`/
-`AttackKind` 管线，只需补几何与目标选择；或者技能熟练度批次（一次性给全部已接入技能补 `TrainSkill`）。
+`AttackKind` 管线，只需补几何与目标选择；`SKILL_AMYOUNSUL`（6，施毒术）或 `SKILL_FIRECHARM`（13，灵魂火符）
+仍需先梳理 `CheckAmulet`/`UseAmulet` 的护身符消耗模型，不能简化成扣 MP。

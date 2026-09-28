@@ -1797,6 +1797,12 @@ public final class WorldEngine implements AutoCloseable {
         powerHit ? player.hitPlus : 0, player, target);
     damage = applyMagicShield(target, damage);
     applyDamage(target, player, damage);
+    if (damage > 0) {
+      // ObjBase.pas:22283 trains the active passive weapon skill only after a penetrating hit.
+      // 攻杀剑术 has its own damage/cadence path in this batch; W33's training slice is limited
+      // to the two skills whose Delphi branch calls TrainSkill here.
+      trainPassiveMeleeSkill(player);
+    }
     // ObjBase.pas:22252 rolls `nWeaponDamage := Random(5) + 2` inside the *pre-AC* `nPower > 0`
     // block, so Delphi also wears the weapon on a blow that AC fully absorbs; the engine has
     // always tested the post-AC figure instead and that simplification is left alone here.
@@ -2586,6 +2592,36 @@ public final class WorldEngine implements AutoCloseable {
     emit(player, new WorldEvent.MapLeft(playerId));
     WorldEvent disappeared = new WorldEvent.ObjectDisappeared(playerId);
     for (int viewerId : visibleIds) emit(players.get(viewerId), disappeared);
+  }
+
+  /**
+   * {@code TrainSkill(Random(3) + 1)} followed by one {@code CheckMagicLevelup} pass for the
+   * two W33 passive melee skills. The event is semantic; the gate turns it into
+   * {@code SM_MAGIC_LVEXP} without letting the world layer know about sockets.
+   */
+  private void trainPassiveMeleeSkill(Player player) {
+    int magicId = switch (player.job) {
+      case LevelAbilities.JOB_WARRIOR -> HitSpeed.SKILL_ONESWORD;
+      case LevelAbilities.JOB_TAOIST -> HitSpeed.SKILL_ILKWANG;
+      default -> 0;
+    };
+    if (magicId == 0) return;
+    PlayerSkill current = player.skills.get(magicId);
+    if (current == null || current.level() >= MagicDefinition.MAX_SKILL_LEVEL) return;
+
+    MagicDefinition definition = magicCatalog.require(magicId);
+    int points = random.nextInt(WorldRandom.Stream.SKILL_TRAIN, 3) + 1;
+    PlayerSkill trained = current.train(definition, player.ability.level(), points);
+    if (trained.equals(current)) return;
+    player.skills.put(magicId, trained);
+    try {
+      persist(player);
+    } catch (RuntimeException failure) {
+      player.skills.put(magicId, current);
+      throw failure;
+    }
+    emit(player, new WorldEvent.SkillTrainingChanged(
+        player.id, new LearnedMagic(trained, definition)));
   }
 
   private int rollDamage(Ability attacker, Ability defender) {
