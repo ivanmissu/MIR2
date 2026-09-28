@@ -241,15 +241,15 @@ class WorldMotaeboSkillTest {
       List<WorldEvent> events = new ArrayList<>();
       WorldObjectSnapshot player = enter(world, id, "推怪战士", 5, 5,
           LevelAbilities.JOB_WARRIOR, events);
-      // Spawn trainer dummy (level 1) at (6, 5) facing LEFT.
+      // Spawn orc warrior (level 28) at (6, 5) facing LEFT.
       WorldObjectSnapshot monster = run(world, world.spawnMonster(
-          MonsterTemplate.trainer(), "0", new Position(6, 5), Direction.LEFT));
+          MonsterTemplate.orcWarrior(), "0", new Position(6, 5), Direction.LEFT));
       events.clear();
 
       assertTrue(run(world, world.castSpell(player.id(), HitSpeed.SKILL_MOOTEBO,
           new Position(Direction.RIGHT.code(), 0), 0)));
 
-      // Player level 35 > monster level 1: monster is pushed 3 steps right to (9, 5).
+      // Player level 35 > monster level 28: monster is pushed 3 steps right to (9, 5).
       // Player moves 3 steps to (8, 5).
       WorldObjectSnapshot playerAfter = run(world, world.snapshot(player.id()));
       WorldObjectSnapshot monsterAfter = run(world, world.snapshot(monster.id()));
@@ -329,9 +329,9 @@ class WorldMotaeboSkillTest {
       WorldObjectSnapshot player = enter(world, id, "双推战士", 5, 5,
           LevelAbilities.JOB_WARRIOR, new ArrayList<>());
       WorldObjectSnapshot mon1 = run(world, world.spawnMonster(
-          MonsterTemplate.trainer(), "0", new Position(6, 5), Direction.LEFT));
+          MonsterTemplate.orcWarrior(), "0", new Position(6, 5), Direction.LEFT));
       WorldObjectSnapshot mon2 = run(world, world.spawnMonster(
-          MonsterTemplate.trainer(), "0", new Position(7, 5), Direction.LEFT));
+          MonsterTemplate.orcWarrior(), "0", new Position(7, 5), Direction.LEFT));
 
       assertTrue(run(world, world.castSpell(player.id(), HitSpeed.SKILL_MOOTEBO,
           new Position(Direction.RIGHT.code(), 0), 0)));

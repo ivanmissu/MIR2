@@ -1630,8 +1630,7 @@ public final class WorldEngine implements AutoCloseable {
       return rejectSpell(player, magicId, WorldEvent.SpellRejection.ACTOR_DEAD, "死亡状态无法施法");
 
     PlayerSkill skill = player.skills.get(magicId);
-    MagicDefinition magic = magicCatalog.find(magicId).orElse(null);
-    if (skill == null || magic == null)
+    if (skill == null)
       return rejectSpell(player, magicId, WorldEvent.SpellRejection.UNKNOWN_SKILL, "尚未学习该技能");
 
     // ClientSpellXY (ObjBase.pas:9027): 基本剑术/精神力战法/攻杀剑术 share one case branch whose
@@ -1651,11 +1650,16 @@ public final class WorldEngine implements AutoCloseable {
     // shape flag and echoes a +LNG/+WID tag before the caller sends +GOOD. IsWarrSkill still
     // suppresses the mana/cooldown gates, so the toggle costs nothing and never fails.
     if (HitSpeed.isToggledWeaponSkill(magicId)) return toggleWeaponSkill(player, magicId);
-    if (HitSpeed.isFireSwordSkill(magicId)) return armFireSword(player, skill, magic);
-    if (HitSpeed.isMotaeboSkill(magicId))
+
+    MagicDefinition magic = magicCatalog.find(magicId).orElse(null);
+    if (HitSpeed.isFireSwordSkill(magicId) && magic != null) return armFireSword(player, skill, magic);
+    if (HitSpeed.isMotaeboSkill(magicId) && magic != null)
       return performMotaebo(player, skill, magic, requestedTarget, targetId);
     if (HitSpeed.isWarriorSkill(magicId))
       return rejectSpell(player, magicId, WorldEvent.SpellRejection.UNSUPPORTED_SKILL, "该技能尚未开放");
+
+    if (magic == null)
+      return rejectSpell(player, magicId, WorldEvent.SpellRejection.UNKNOWN_SKILL, "尚未学习该技能");
 
     if (magic.job() != MagicDefinition.ANY_JOB && magic.job() != player.job)
       return rejectSpell(player, magicId, WorldEvent.SpellRejection.WRONG_JOB, "当前职业无法使用该技能");
