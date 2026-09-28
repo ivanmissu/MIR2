@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.mir2.protocol.CharacterDescription;
 import com.mir2.protocol.DefaultMessage;
 import com.mir2.protocol.ProtocolConstants;
+import com.mir2.world.Ability;
 import com.mir2.world.Direction;
 import com.mir2.world.GameMap;
 import com.mir2.world.HitSpeed;
@@ -39,7 +40,8 @@ class GameMotaeboProtocolTest {
       GameProtocolAdapter adapter = new GameProtocolAdapter(world, observed::add, () -> 77);
 
       WorldObjectSnapshot rusher = new WorldObjectSnapshot(12, "冲撞勇士",
-          WorldObjectType.PLAYER, "0", new Position(8, 5), Direction.RIGHT, 101, 0, 3);
+          WorldObjectType.PLAYER, "0", new Position(8, 5), Direction.RIGHT, 101, 0, 3,
+          Ability.defaultPlayer());
 
       adapter.send(new WorldEvent.ObjectRushed(rusher, new Position(7, 5), Direction.RIGHT));
       WirePacket packet = ((GameOutbound.Packet) observed.remove(0)).packet();
@@ -61,7 +63,8 @@ class GameMotaeboProtocolTest {
       GameProtocolAdapter adapter = new GameProtocolAdapter(world, observed::add, () -> 77);
 
       WorldObjectSnapshot pushed = new WorldObjectSnapshot(25, "受击怪物",
-          WorldObjectType.MONSTER, "0", new Position(9, 5), Direction.LEFT, 50, 0, 0);
+          WorldObjectType.MONSTER, "0", new Position(9, 5), Direction.LEFT, 50, 0, 0,
+          Ability.defaultPlayer());
 
       adapter.send(new WorldEvent.ObjectPushed(pushed, new Position(8, 5), Direction.LEFT));
       WirePacket packet = ((GameOutbound.Packet) observed.remove(0)).packet();
@@ -82,7 +85,8 @@ class GameMotaeboProtocolTest {
       GameProtocolAdapter adapter = new GameProtocolAdapter(world, observed::add, () -> 77);
 
       WorldObjectSnapshot rusher = new WorldObjectSnapshot(12, "冲撞勇士",
-          WorldObjectType.PLAYER, "0", new Position(5, 5), Direction.RIGHT, 101, 0, 3);
+          WorldObjectType.PLAYER, "0", new Position(5, 5), Direction.RIGHT, 101, 0, 3,
+          Ability.defaultPlayer());
 
       adapter.send(new WorldEvent.ObjectRushFailed(rusher, new Position(6, 5), Direction.RIGHT));
       WirePacket packet = ((GameOutbound.Packet) observed.remove(0)).packet();

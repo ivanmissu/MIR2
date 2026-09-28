@@ -1903,7 +1903,7 @@ public final class WorldEngine implements AutoCloseable {
 
   private boolean canMotaebo(Player player, WorldObject target, int magicLevel) {
     if (target == null || !target.ability().alive()) return false;
-    if (target.type() == WorldObjectType.NPC) return false;
+    if (target instanceof Npc) return false;
     if (player.ability.level() <= target.ability().level()) return false;
     if (player.map.isSafeZone(target.position())) return false;
     int nC = player.ability.level() - target.ability().level();
@@ -1917,7 +1917,7 @@ public final class WorldEngine implements AutoCloseable {
   private boolean isProperTarget(Player player, WorldObject target) {
     if (target == null || !target.ability().alive() || target.map() != player.map) return false;
     if (target.id() == player.id) return false;
-    if (target.type() == WorldObjectType.NPC) return false;
+    if (target instanceof Npc) return false;
     return true;
   }
 
@@ -1989,7 +1989,7 @@ public final class WorldEngine implements AutoCloseable {
           player.position = nextPos;
           player.direction = direction;
           emitObjectRushed(player, oldPos, direction);
-          syncPlayerGroundItems(player, oldPos, nextPos);
+          emitItemVisibilityChanges(player, oldPos, nextPos);
           try {
             persist(player);
           } catch (RuntimeException failure) {
@@ -2010,7 +2010,7 @@ public final class WorldEngine implements AutoCloseable {
           player.position = nextPos;
           player.direction = direction;
           emitObjectRushed(player, oldPos, direction);
-          syncPlayerGroundItems(player, oldPos, nextPos);
+          emitItemVisibilityChanges(player, oldPos, nextPos);
           try {
             persist(player);
           } catch (RuntimeException failure) {
@@ -2096,7 +2096,7 @@ public final class WorldEngine implements AutoCloseable {
     }
     if (object instanceof Player player) {
       emit(player, new WorldEvent.ObjectPushed(player.snapshot(), source, direction));
-      syncPlayerGroundItems(player, source, player.position);
+      emitItemVisibilityChanges(player, source, player.position);
     }
   }
 
