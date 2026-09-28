@@ -135,8 +135,14 @@ Java 服务端。
   Magic.pas:392）同为单体延迟伤害，额外复刻 `m_btLifeAttrib = LA_UNDEAD` 时最终伤害 ×1.5 的判定——
   `undead` 字段随之从 Monster.DB 补齐到 `MonsterTemplate`（此前该列已导入但无消费方），首批接线怪物中
   仅稻草人 `Undead=1`。`docs/g4-capability-matrix.tsv` 对应 6 行（2 技能 × 3 职业）由 `unimplemented`
-  转为 `implemented`；技能矩阵仍有 53 个 `SKILL_*` 未接线（战士武器技/符箓消耗/群体与召唤类），
+  转为 `implemented`；技能矩阵当前仍有 52 个 `SKILL_*` 未接线（攻杀/刺杀等战士技、符箓消耗、群体与召唤类），
   按缺口继续逐批推进，详见 `docs/w27-next-plan.md`。
+- **被动近战技能逐项接入（W33）**：`SKILL_ONESWORD`（3，基本剑术）与 `SKILL_ILKWANG`（4，精神力战法）
+  按 `ObjBase.pas:18563/18624/22283` 接入——命中率复刻 `DEFHIT=5` 对目标 `DEFSPEED=15` 的
+  `Random(SpeedPoint) < HitPoint` 判定，基本剑术每级 `Round(9/3×等级)`、精神力战法每级
+  `Round(8/3×等级)`；穿透近战命中后按 `Random(3)+1` 训练，等级/熟练度落库并以
+  `SM_MAGIC_LVEXP` 同步。`WorldMeleeSkillTest` 覆盖职业门禁、命中/闪避、训练和重登；护身符类
+  `SKILL_FIRECHARM` 仍待补齐 `CheckAmulet/UseAmulet`，详见 `docs/w27-next-plan.md`。
 - **战斗/背包存档**：HP、MP、等级、经验与 46 格背包通过 SQLite 事务保存，在角色进图前恢复；支持从旧 W02 schema 原位升级
 - **物品目录与背包同步（W04）**：最小标准物品库（`StdItem` 完整 `TStdItem` 字段 + SQLite `std_items` 表）、
   复刻 `GetItemNumber` 的稳定 `MakeIndex`、耐久字段、76 字节 `TClientItem` 小端编解码，

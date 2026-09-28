@@ -107,3 +107,24 @@ W32 在 W28 框架上接入两个技能，两者都复用既有的单体延迟�
 下一项：继续按 `Grobal2.pas` SKILL_* 顺序推进第二批（候选：`SKILL_ONESWORD`/`SKILL_ILKWANG` 等战士
 武器技需要先梳理 `ObjBase.pas:9030` 的近战特殊出招管线，`SKILL_FIRECHARM` 等符箓类需要先梳理
 `CheckAmulet`/`UseAmulet` 的护身符消耗模型——两者都比本批的“纯复用”更重，需要单独立项）。
+
+### 技能逐项接入·第二批（W33）— 已完成
+
+W33 接入 `SKILL_ONESWORD`（3，基本剑术）与 `SKILL_ILKWANG`（4，精神力战法）。这两个 Magic.DB
+条目不是独立的 `DoSpell` 特效，而是 `ObjBase.pas` 的被动近战技能：`RecalcHitSpeed` 以
+`DEFHIT=5` / `DEFSPEED=15` 为基础分别增加 `Round(9 / 3 * btLevel)` / `Round(8 / 3 * btLevel)`
+命中；`_Attack` 用 `Random(target.SpeedPoint) < attacker.HitPoint` 判定是否真正命中；穿透命中后
+按 `TrainSkill(Random(3) + 1)` 累加熟练度并执行一次 `CheckMagicLevelup`。Java 侧新增
+`PlayerSkill.train`、`SKILL_TRAIN` 随机流、语义化 `SkillTrainingChanged` 事件与
+`SM_MAGIC_LVEXP` 编码，技能等级/熟练度跟随 SQLite 的 `character_magic` 持久化。
+
+为保持 W03 兼容，尚未拥有这两个被动技能的角色仍走原有相邻攻击路径；拥有技能后才启用
+Delphi 的命中/闪避比较。证据见 `docs/g0-evidence/2026-09-28-w33-skill-batch-onesword-ilkwang.md`，
+自动化覆盖 `WorldMeleeSkillTest`。能力矩阵对应 6 行已从 `unimplemented` 改为 `implemented`。
+
+**本轮不做**：不接入攻杀/刺杀/半月/烈火等主动武器技，不提前引入符箓消耗；技能 shadowdiff 场景
+仍留待技能批次收口后统一补齐。
+
+下一项按顺序推进 `SKILL_AMYOUNSUL`（6，施毒术）或 `SKILL_FIRECHARM`（13，灵魂火符）。两者都
+必须先补齐 `CheckAmulet`/`UseAmulet` 的护身符槽位、Shape 分类、耐久扣减、损坏删除与
+`SM_DURACHANGE`/`SM_DELITEMS` 对拍，不能把护身符消耗简化成扣 MP。

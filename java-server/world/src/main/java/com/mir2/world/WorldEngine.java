@@ -168,8 +168,12 @@ public final class WorldEngine implements AutoCloseable {
   private static final long MAGIC_HIT_INTERVAL_MILLIS = 1_350;
   private static final long FIREBALL_IMPACT_DELAY_MILLIS = 600;
   private static final long HEAL_IMPACT_DELAY_MILLIS = 800;
+  private static final int DEF_HIT = 5;
+  private static final int DEF_SPEED = 15;
   private static final int SKILL_FIREBALL = 1;
   private static final int SKILL_HEALING = 2;
+  private static final int SKILL_ONESWORD = 3;
+  private static final int SKILL_ILKWANG = 4;
   private static final int SKILL_FIREBALL2 = 5;
   private static final int SKILL_LIGHTENING = 11;
   private static final int SKILL_MAGIC_SHIELD = 31;
@@ -1765,14 +1769,27 @@ public final class WorldEngine implements AutoCloseable {
       return AttackResult.missed(attacker);
     }
 
+    // W33: TBaseObject._Attack first compares m_btHitPoint against the target's
+    // m_btSpeedPoint.  Pre-W33 Java had no accuracy/evasion state and therefore kept every
+    // adjacent swing as a hit; preserve that compatibility for characters without a wired
+    // passive weapon skill, while the OneSword/IlKwang slice uses the Delphi comparison.
+    if (hasWiredWeaponSkill(player) && !passesMeleeAccuracy(player, target)) {
+      return AttackResult.missed(attacker);
+    }
+
     // m_nLuck = sum of worn Luck minus UnLuck (RecalcAbilitys, ObjBase.pas:3401); with no gear
     // it is zero and rollDamage draws exactly as before.
     int damage = rollDamage(player.ability, target.ability(), playerLuck(player));
     damage = applyMagicShield(target, damage);
     applyDamage(target, player, damage);
-    // AttackTarget.GetHitStruckDamage only assigns weapon wear when the blow penetrates AC.
-    if (damage > 0) damageEquipment(player, EquipmentSlot.WEAPON,
-        random.nextInt(WorldRandom.Stream.EQUIPMENT_WEAR, 5) + 2);
+    if (damage > 0) {
+      // The two passive warrior/taoist skills are trained by a penetrating melee hit, matching
+      // the m_MagicOneSwordSkill branch in ObjBase.pas:22283.
+      trainWeaponSkill(player);
+      // AttackTarget.GetHitStruckDamage only assigns weapon wear when the blow penetrates AC.
+      damageEquipment(player, EquipmentSlot.WEAPON,
+          random.nextInt(WorldRandom.Stream.EQUIPMENT_WEAR, 5) + 2);
+    }
     return new AttackResult(true, attacker, target.snapshot(), damage);
   }
 
@@ -2486,6 +2503,63 @@ public final class WorldEngine implements AutoCloseable {
   private static int playerLuck(Player player) {
     EquipmentBonus bonus = player.bonus;
     return bonus.luck() - bonus.unLuck();
+  }
+
+  /** True when the player has one of the two W33 passive melee skills for their actual job. */
+  private boolean hasWiredWeaponSkill(Player player) {
+    return (player.job == LevelAbilities.JOB_WARRIOR && player.skills.containsKey(SKILL_ONESWORD))
+        || (player.job == LevelAbilities.JOB_TAOIST && player.skills.containsKey(SKILL_ILKWANG));
+  }
+
+  /**
+   * {@code RecalcHitSpeed}: base accuracy 5, plus equipment and the passive skill's level
+   * bonus; the target's evasion starts at 15 and receives the normal Taoist/equipment bonus.
+   */
+  private boolean passesMeleeAccuracy(Player attacker, WorldObject target) {
+    int hit = DEF_HIT + attacker.bonus.hitPoint() + weaponSkillAccuracy(attacker);
+    int speed = target instanceof Player victim ? playerSpeed(victim) : DEF_SPEED;
+    return hit >= speed || random.nextInt(WorldRandom.Stream.DAMAGE, speed) < hit;
+  }
+
+  private int playerSpeed(Player player) {
+    return DEF_SPEED + player.bonus.speedPoint()
+        + (player.job == LevelAbilities.JOB_TAOIST ? 3 : 0);
+  }
+
+  /** {@code m_btHitPoint} increments from ObjBase.pas:18590/18624. */
+  private int weaponSkillAccuracy(Player player) {
+    if (player.job == LevelAbilities.JOB_WARRIOR) {
+      PlayerSkill skill = player.skills.get(SKILL_ONESWORD);
+      if (skill != null) return (int) Math.rint(9.0 / 3.0 * skill.level());
+    }
+    if (player.job == LevelAbilities.JOB_TAOIST) {
+      PlayerSkill skill = player.skills.get(SKILL_ILKWANG);
+      if (skill != null) return (int) Math.rint(8.0 / 3.0 * skill.level());
+    }
+    return 0;
+  }
+
+  /**
+   * {@code TrainSkill(Random(3) + 1)} followed by one {@code CheckMagicLevelup} pass.  The
+   * event is deliberately semantic; the gate alone turns it into the legacy SM packet.
+   */
+  private void trainWeaponSkill(Player player) {
+    int magicId = player.job == LevelAbilities.JOB_WARRIOR ? SKILL_ONESWORD : SKILL_ILKWANG;
+    PlayerSkill current = player.skills.get(magicId);
+    if (current == null || current.level() >= MagicDefinition.MAX_SKILL_LEVEL) return;
+    MagicDefinition definition = magicCatalog.require(magicId);
+    int points = random.nextInt(WorldRandom.Stream.SKILL_TRAIN, 3) + 1;
+    PlayerSkill trained = current.train(definition, player.ability.level(), points);
+    if (trained.equals(current)) return;
+    player.skills.put(magicId, trained);
+    try {
+      persist(player);
+    } catch (RuntimeException failure) {
+      player.skills.put(magicId, current);
+      throw failure;
+    }
+    emit(player, new WorldEvent.SkillTrainingChanged(
+        player.id, new LearnedMagic(trained, definition)));
   }
 
   /**

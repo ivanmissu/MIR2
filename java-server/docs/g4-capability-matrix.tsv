@@ -328,12 +328,12 @@ SKILL	SKILL_FIREBALL:taoist	1	n/a	gate-game	implemented	WorldMagicTest	Grobal2.p
 SKILL	SKILL_HEALLING:warrior	2	n/a	gate-game	implemented	WorldMagicTest	Grobal2.pas:SKILL_*	治愈术；GEEM2 Magic.DB 同名行 job=taoist learnable=no；W28 已实现职业门禁与权威效果
 SKILL	SKILL_HEALLING:wizard	2	n/a	gate-game	implemented	WorldMagicTest	Grobal2.pas:SKILL_*	治愈术；GEEM2 Magic.DB 同名行 job=taoist learnable=no；W28 已实现职业门禁与权威效果
 SKILL	SKILL_HEALLING:taoist	2	n/a	gate-game	implemented	WorldMagicTest	Grobal2.pas:SKILL_*	治愈术；GEEM2 Magic.DB 同名行 job=taoist learnable=yes；W28 已实现职业门禁与权威效果
-SKILL	SKILL_ONESWORD:warrior	3	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	基本剑术；GEEM2 Magic.DB 同名行 job=warrior learnable=yes
-SKILL	SKILL_ONESWORD:wizard	3	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	基本剑术；GEEM2 Magic.DB 同名行 job=warrior learnable=no
-SKILL	SKILL_ONESWORD:taoist	3	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	基本剑术；GEEM2 Magic.DB 同名行 job=warrior learnable=no
-SKILL	SKILL_ILKWANG:warrior	4	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	精神力战法；GEEM2 Magic.DB 同名行 job=taoist learnable=no
-SKILL	SKILL_ILKWANG:wizard	4	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	精神力战法；GEEM2 Magic.DB 同名行 job=taoist learnable=no
-SKILL	SKILL_ILKWANG:taoist	4	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	精神力战法；GEEM2 Magic.DB 同名行 job=taoist learnable=yes
+SKILL	SKILL_ONESWORD:warrior	3	n/a	gate-game	implemented	WorldMeleeSkillTest	Grobal2.pas:SKILL_*	基本剑术；W33 接入 ObjBase 被动命中率与近战命中训练/SM_MAGIC_LVEXP
+SKILL	SKILL_ONESWORD:wizard	3	n/a	gate-game	implemented	WorldMeleeSkillTest	Grobal2.pas:SKILL_*	基本剑术；W33 已实现职业门禁（wizard 不可学习/使用）
+SKILL	SKILL_ONESWORD:taoist	3	n/a	gate-game	implemented	WorldMeleeSkillTest	Grobal2.pas:SKILL_*	基本剑术；W33 已实现职业门禁（taoist 不可学习/使用）
+SKILL	SKILL_ILKWANG:warrior	4	n/a	gate-game	implemented	WorldMeleeSkillTest	Grobal2.pas:SKILL_*	精神力战法；W33 已实现职业门禁（warrior 不可学习/使用）
+SKILL	SKILL_ILKWANG:wizard	4	n/a	gate-game	implemented	WorldMeleeSkillTest	Grobal2.pas:SKILL_*	精神力战法；W33 已实现职业门禁（wizard 不可学习/使用）
+SKILL	SKILL_ILKWANG:taoist	4	n/a	gate-game	implemented	WorldMeleeSkillTest	Grobal2.pas:SKILL_*	精神力战法；W33 接入 ObjBase 被动命中率与近战命中训练/SM_MAGIC_LVEXP
 SKILL	SKILL_FIREBALL2:warrior	5	n/a	gate-game	implemented	WorldMagicTest	Grobal2.pas:SKILL_*	大火球；GEEM2 Magic.DB 同名行 job=wizard learnable=no；W32 复用 SKILL_FIREBALL 的单体延迟伤害链（Magic.pas:280 两者共用同一 case 分支）
 SKILL	SKILL_FIREBALL2:wizard	5	n/a	gate-game	implemented	WorldMagicTest	Grobal2.pas:SKILL_*	大火球；GEEM2 Magic.DB 同名行 job=wizard learnable=yes；W32 复用 SKILL_FIREBALL 的单体延迟伤害链（Magic.pas:280 两者共用同一 case 分支）
 SKILL	SKILL_FIREBALL2:taoist	5	n/a	gate-game	implemented	WorldMagicTest	Grobal2.pas:SKILL_*	大火球；GEEM2 Magic.DB 同名行 job=wizard learnable=no；W32 复用 SKILL_FIREBALL 的单体延迟伤害链（Magic.pas:280 两者共用同一 case 分支）

@@ -53,7 +53,9 @@ public final class WorldRandom {
     /** {@code MakeWeaponUnlock}: the 1-in-5 murder weapon-curse roll (ObjBase.pas:20950). */
     WEAPON_UNLOCK,
     /** Magic.DB power, MC/SC and target-MAC rolls; appended so old seeded streams do not move. */
-    MAGIC
+    MAGIC,
+    /** {@code TrainSkill}: the classic {@code Random(3) + 1} weapon-skill gain. */
+    SKILL_TRAIN
   }
 
   private static final Stream[] STREAMS = Stream.values();

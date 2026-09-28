@@ -9,6 +9,7 @@ import com.mir2.world.Direction;
 import com.mir2.world.GroundItem;
 import com.mir2.world.LearnedMagic;
 import com.mir2.world.MovementKind;
+import com.mir2.world.PlayerSkill;
 import com.mir2.world.Position;
 import com.mir2.world.WorldEngine;
 import com.mir2.world.WorldEvent;
@@ -192,6 +193,7 @@ public final class GameProtocolAdapter implements WorldEventSink {
               0, 0, 0, 0, encodeMagic(learned.magic()))));
         }
       }
+      case WorldEvent.SkillTrainingChanged changed -> sendSkillTraining(changed);
       case WorldEvent.SkillsSent sent -> {
         if (sent.playerId() == playerId) sendSkills(sent);
       }
@@ -725,6 +727,15 @@ public final class GameProtocolAdapter implements WorldEventSink {
     for (LearnedMagic magic : sent.magics()) body.append(encodeMagic(magic)).append('/');
     output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_SENDMYMAGIC,
         0, 0, 0, sent.magics().size(), body.toString())));
+  }
+
+  /** {@code RM_MAGIC_LVEXP -> SM_MAGIC_LVEXP}: id, level, low/high training remainder. */
+  private void sendSkillTraining(WorldEvent.SkillTrainingChanged changed) {
+    if (changed.playerId() != playerId) return;
+    PlayerSkill skill = changed.magic().skill();
+    int training = skill.trainingPoints();
+    output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_MAGIC_LVEXP,
+        skill.magicId(), skill.level(), training & 0xffff, (training >>> 16) & 0xffff, "")));
   }
 
   private static String encodeMagic(LearnedMagic magic) {
