@@ -168,6 +168,13 @@ Java 服务端。
   重新盖时间戳（禁止双烈火）并把伤害抬到 `nPower + Round(nPower/100*(m_nHitDouble*10))`，
   `m_nHitDouble = 4 + 4×等级`；砍空同样烧掉蓄力却不加伤（防止砍空刀刀烈火），未蓄力的 `CM_FIREHIT`
   退化广播 `SM_HIT`；20 秒不用即红字失效并回 `+UFIR`；训练守卫是 hit mode 而非蓄力旗。
+- **技能逐项接入·第五批（W36）· 野蛮冲撞（SKILL_MOOTEBO=27 / 推人位移与撞墙模型）**：
+  接入官方 1.76 基线（1..33）战士技能树最后一项：`ClientSpellXY`（ObjBase.pas:9112）
+  经 `> 3 秒` 冷却闸门与 `GetSpellPoint`（4..15 MP）消耗后调用 `DoMotaebo`（ObjBase.pas:21703）；
+  空冲 3..5 格，推等级低于自身的正前实体，3 级野蛮可双推两格目标；被推目标向后退 1 格
+  （广播 `SM_BACKSTEP=9`）并掉转朝向，怪物步行动作延迟 800ms；撞墙受挫广播 `SM_RUSHKUNG=7`
+  并提示「冲撞力不够...」，步数未尽撞墙施法者承受反震伤害；命中目标受撞击伤害并
+  `TrainSkill(skill, Random(3) + 1)` 熟练度升级；战士 1..33 技能全量闭环。
 - **战斗/背包存档**：HP、MP、等级、经验与 46 格背包通过 SQLite 事务保存，在角色进图前恢复；支持从旧 W02 schema 原位升级
 - **物品目录与背包同步（W04）**：最小标准物品库（`StdItem` 完整 `TStdItem` 字段 + SQLite `std_items` 表）、
   复刻 `GetItemNumber` 的稳定 `MakeIndex`、耐久字段、76 字节 `TClientItem` 小端编解码，

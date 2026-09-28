@@ -194,6 +194,9 @@ public final class WorldEngine implements AutoCloseable {
   /** The 烈火剑法 charge lapses 20 s after it was armed ({@code TPlayObject.Run}, ObjBase.pas:6427). */
   private static final long FIRE_SWORD_EXPIRY_MILLIS = 20_000L;
 
+  /** {@code (GetTickCount - m_dwDoMotaeboTick) > 3 * 1000} (ObjBase.pas:9114). */
+  private static final long MOTAEBO_INTERVAL_MILLIS = 3_000L;
+
   /** {@code g_Config.WideAttack} (M2Share.pas:1645): 半月弯刀 sweeps dir-1, dir+1, dir+2. */
   private static final int[] WIDE_ATTACK_OFFSETS = {7, 1, 2};
 
@@ -1627,8 +1630,7 @@ public final class WorldEngine implements AutoCloseable {
       return rejectSpell(player, magicId, WorldEvent.SpellRejection.ACTOR_DEAD, "死亡状态无法施法");
 
     PlayerSkill skill = player.skills.get(magicId);
-    MagicDefinition magic = magicCatalog.find(magicId).orElse(null);
-    if (skill == null || magic == null)
+    if (skill == null)
       return rejectSpell(player, magicId, WorldEvent.SpellRejection.UNKNOWN_SKILL, "尚未学习该技能");
 
     // ClientSpellXY (ObjBase.pas:9027): 基本剑术/精神力战法/攻杀剑术 share one case branch whose
@@ -1648,9 +1650,16 @@ public final class WorldEngine implements AutoCloseable {
     // shape flag and echoes a +LNG/+WID tag before the caller sends +GOOD. IsWarrSkill still
     // suppresses the mana/cooldown gates, so the toggle costs nothing and never fails.
     if (HitSpeed.isToggledWeaponSkill(magicId)) return toggleWeaponSkill(player, magicId);
-    if (HitSpeed.isFireSwordSkill(magicId)) return armFireSword(player, skill, magic);
+
+    MagicDefinition magic = magicCatalog.find(magicId).orElse(null);
+    if (HitSpeed.isFireSwordSkill(magicId) && magic != null) return armFireSword(player, skill, magic);
+    if (HitSpeed.isMotaeboSkill(magicId) && magic != null)
+      return performMotaebo(player, skill, magic, requestedTarget, targetId);
     if (HitSpeed.isWarriorSkill(magicId))
       return rejectSpell(player, magicId, WorldEvent.SpellRejection.UNSUPPORTED_SKILL, "该技能尚未开放");
+
+    if (magic == null)
+      return rejectSpell(player, magicId, WorldEvent.SpellRejection.UNKNOWN_SKILL, "尚未学习该技能");
 
     if (magic.job() != MagicDefinition.ANY_JOB && magic.job() != player.job)
       return rejectSpell(player, magicId, WorldEvent.SpellRejection.WRONG_JOB, "当前职业无法使用该技能");
@@ -1800,6 +1809,308 @@ public final class WorldEngine implements AutoCloseable {
     }
     emit(player, new WorldEvent.SpellAccepted(player.id, magic.id()));
     return true;
+  }
+
+  /**
+   * {@code ClientSpellXY}'s 野蛮冲撞 branch (ObjBase.pas:9112-9145):
+   * <pre>
+   *   SKILL_MOOTEBO {27}:
+   *     begin //野蛮冲撞
+   *       Result := True;
+   *       if (GetTickCount - m_dwDoMotaeboTick) > 3 * 1000 then
+   *       begin
+   *         m_dwDoMotaeboTick := GetTickCount();
+   *         m_btDirection := nTargetX;
+   *         nSpellPoint := GetSpellPoint(UserMagic);
+   *         if m_WAbil.MP >= nSpellPoint then
+   *         begin
+   *           if nSpellPoint > 0 then
+   *           begin
+   *             DamageSpell(nSpellPoint);
+   *             HealthSpellChanged();
+   *           end;
+   *           if DoMotaebo(m_btDirection, UserMagic.btLevel) then
+   *           begin
+   *             if UserMagic.btLevel < 3 then
+   *             begin
+   *               if UserMagic.MagicInfo.TrainLevel[UserMagic.btLevel] < m_Abil.Level then
+   *               begin
+   *                 TrainSkill(UserMagic, Random(3) + 1);
+   *                 if not CheckMagicLevelup(UserMagic) then
+   *                 begin
+   *                   SendDelayMsg(Self, RM_MAGIC_LVEXP, 0, UserMagic.MagicInfo.wMagicId,
+   *                     UserMagic.btLevel, UserMagic.nTranPoint, '', 1000);
+   *                 end;
+   *               end;
+   *             end;
+   *           end;
+   *         end;
+   *       end;
+   *     end;
+   * </pre>
+   */
+  private boolean performMotaebo(
+      Player player, PlayerSkill skill, MagicDefinition magic, Position requestedTarget, int targetId) {
+    long now = clock.getAsLong();
+    player.lastSpellAt = now;
+    emit(player, new WorldEvent.SpellAccepted(player.id, magic.id()));
+
+    if (now - player.lastMotaeboAt <= MOTAEBO_INTERVAL_MILLIS) {
+      return true;
+    }
+    player.lastMotaeboAt = now;
+
+    Direction direction;
+    if (requestedTarget.y() == 0 && requestedTarget.x() >= 0 && requestedTarget.x() <= 7) {
+      direction = Direction.fromCode(requestedTarget.x());
+    } else if (!requestedTarget.equals(player.position)) {
+      try {
+        direction = Direction.toward(player.position, requestedTarget);
+      } catch (IllegalArgumentException e) {
+        direction = player.direction;
+      }
+    } else {
+      direction = player.direction;
+    }
+    player.direction = direction;
+
+    int mana = magic.manaCost(skill.level());
+    if (player.ability.mp() < mana) {
+      return true;
+    }
+    if (mana > 0) {
+      consumeSkillMana(player, magic.id());
+    }
+
+    if (doMotaebo(player, skill, magic, direction)) {
+      trainMotaeboSkill(player, skill, magic);
+    }
+    return true;
+  }
+
+  private void trainMotaeboSkill(Player player, PlayerSkill current, MagicDefinition magic) {
+    if (current.level() >= MagicDefinition.MAX_SKILL_LEVEL) return;
+    if (player.ability.level() <= magic.requiredLevel(current.level())) return;
+    int points = random.nextInt(WorldRandom.Stream.SKILL_TRAIN, 3) + 1;
+    PlayerSkill trained = current.train(magic, player.ability.level(), points);
+    if (trained.equals(current)) return;
+    player.skills.put(magic.id(), trained);
+    try {
+      persist(player);
+    } catch (RuntimeException failure) {
+      player.skills.put(magic.id(), current);
+      throw failure;
+    }
+    emit(player, new WorldEvent.SkillTrainingChanged(
+        player.id, new LearnedMagic(trained, magic)));
+  }
+
+  private boolean canMotaebo(Player player, WorldObject target, int magicLevel) {
+    if (target == null || !target.ability().alive()) return false;
+    if (target instanceof Npc) return false;
+    if (player.ability.level() <= target.ability().level()) return false;
+    if (player.map.isSafeZone(target.position())) return false;
+    int nC = player.ability.level() - target.ability().level();
+    int threshold = (magicLevel * 4) + 6 + nC;
+    if (random.nextInt(WorldRandom.Stream.ACCURACY, 20) < threshold) {
+      return isProperTarget(player, target);
+    }
+    return false;
+  }
+
+  private boolean isProperTarget(Player player, WorldObject target) {
+    if (target == null || !target.ability().alive() || target.map() != player.map) return false;
+    if (target.id() == player.id) return false;
+    if (target instanceof Npc) return false;
+    return true;
+  }
+
+  private int charPushed(WorldObject target, Direction direction) {
+    Position nextPos = target.position().translate(direction, 1);
+    if (!target.map().canWalk(nextPos)) {
+      return 0;
+    }
+    Position oldPos = target.position();
+    target.map().move(target.id(), oldPos, nextPos);
+    Direction backDir = direction.opposite();
+    if (target instanceof Player playerTarget) {
+      playerTarget.position = nextPos;
+      playerTarget.direction = backDir;
+      emitObjectPushed(playerTarget, oldPos, backDir);
+      try {
+        persist(playerTarget);
+      } catch (RuntimeException failure) {
+        // Ignored or logged
+      }
+    } else if (target instanceof Monster monsterTarget) {
+      monsterTarget.position = nextPos;
+      monsterTarget.direction = backDir;
+      monsterTarget.lastWalkAt = Math.max(monsterTarget.lastWalkAt, clock.getAsLong()) + 800;
+      emitObjectPushed(monsterTarget, oldPos, backDir);
+    }
+    return 1;
+  }
+
+  private boolean doMotaebo(
+      Player player, PlayerSkill skill, MagicDefinition magic, Direction direction) {
+    int magicLevel = skill.level();
+    int maxSteps = Math.max(2, magicLevel + 1) + 1;
+    int n24 = magicLevel + 1;
+    int n28 = n24;
+    boolean bo35 = true;
+    boolean result = false;
+    WorldObject lastPushedTarget = null;
+
+    Position initialFront = player.position.translate(direction, 1);
+    WorldObject poseCreate = objectAt(player.map, initialFront);
+
+    if (poseCreate != null) {
+      for (int i = 0; i < maxSteps; i++) {
+        Position currentFront = player.position.translate(direction, 1);
+        WorldObject frontObj = objectAt(player.map, currentFront);
+        if (frontObj == null) {
+          break;
+        }
+        n28 = 0;
+        if (!canMotaebo(player, frontObj, magicLevel)) {
+          break;
+        }
+        if (magicLevel >= 3) {
+          Position pos2 = player.position.translate(direction, 2);
+          WorldObject secondObj = objectAt(player.map, pos2);
+          if (secondObj != null && canMotaebo(player, secondObj, magicLevel)) {
+            charPushed(secondObj, direction);
+          }
+        }
+        lastPushedTarget = frontObj;
+        if (charPushed(frontObj, direction) != 1) {
+          break;
+        }
+        Position nextPos = player.position.translate(direction, 1);
+        if (player.map.canWalk(nextPos)) {
+          Position oldPos = player.position;
+          player.map.move(player.id, oldPos, nextPos);
+          player.position = nextPos;
+          player.direction = direction;
+          emitObjectRushed(player, oldPos, direction);
+          emitItemVisibilityChanges(player, oldPos, nextPos);
+          try {
+            persist(player);
+          } catch (RuntimeException failure) {
+            // Ignored
+          }
+          bo35 = false;
+          result = true;
+        }
+        n24--;
+      }
+    } else {
+      bo35 = false;
+      for (int i = 0; i < maxSteps; i++) {
+        Position nextPos = player.position.translate(direction, 1);
+        if (player.map.canWalk(nextPos)) {
+          Position oldPos = player.position;
+          player.map.move(player.id, oldPos, nextPos);
+          player.position = nextPos;
+          player.direction = direction;
+          emitObjectRushed(player, oldPos, direction);
+          emitItemVisibilityChanges(player, oldPos, nextPos);
+          try {
+            persist(player);
+          } catch (RuntimeException failure) {
+            // Ignored
+          }
+          result = true;
+          n28--;
+        } else {
+          if (player.map.isTerrainWalkable(nextPos)) {
+            n28 = 0;
+          } else {
+            bo35 = true;
+          }
+          break;
+        }
+      }
+    }
+
+    if (lastPushedTarget != null) {
+      int clamped24 = Math.max(0, n24);
+      int bound = (clamped24 + 1) * 10;
+      int baseDmg = random.nextInt(WorldRandom.Stream.DAMAGE, bound) + bound;
+      int def = randomBetween(lastPushedTarget.ability().minAc(), lastPushedTarget.ability().maxAc());
+      int struckDmg = applyMagicShield(lastPushedTarget, Math.max(0, baseDmg - def));
+      applyDamage(lastPushedTarget, player, struckDmg);
+    }
+
+    if (bo35) {
+      Position front = player.position.translate(player.direction, 1);
+      emitObjectRushFailed(player, front, player.direction);
+      emit(player, new WorldEvent.SystemMessage(player.id, "冲撞力不够..."));
+    }
+
+    if (n28 > 0) {
+      int clamped24 = Math.max(0, n24);
+      int bound = clamped24 * 10;
+      int rnd = bound > 0 ? random.nextInt(WorldRandom.Stream.DAMAGE, bound) : 0;
+      int baseDmg = rnd + (clamped24 + 1) * 3;
+      int def = randomBetween(player.ability.minAc(), player.ability.maxAc());
+      int struckDmg = applyMagicShield(player, Math.max(0, baseDmg - def));
+      applyDamage(player, player, struckDmg);
+    }
+
+    return result;
+  }
+
+  private void emitObjectRushed(WorldObject object, Position source, Direction direction) {
+    Set<Integer> visibleBefore = new LinkedHashSet<>(visibleIds(object.map(), source, object.id()));
+    Set<Integer> visibleAfter = new LinkedHashSet<>(visibleIds(object.map(), object.position(), object.id()));
+    Set<Integer> observers = new LinkedHashSet<>(visibleBefore);
+    observers.addAll(visibleAfter);
+    for (int observerId : observers) {
+      Player observer = players.get(observerId);
+      if (observer == null) continue;
+      if (visibleBefore.contains(observerId) && visibleAfter.contains(observerId)) {
+        emit(observer, new WorldEvent.ObjectRushed(object.snapshot(), source, direction));
+      } else if (visibleBefore.contains(observerId)) {
+        emit(observer, new WorldEvent.ObjectDisappeared(object.id()));
+      } else {
+        emit(observer, new WorldEvent.ObjectAppeared(object.snapshot()));
+      }
+    }
+    if (object instanceof Player player) {
+      emit(player, new WorldEvent.ObjectRushed(player.snapshot(), source, direction));
+    }
+  }
+
+  private void emitObjectPushed(WorldObject object, Position source, Direction direction) {
+    Set<Integer> visibleBefore = new LinkedHashSet<>(visibleIds(object.map(), source, object.id()));
+    Set<Integer> visibleAfter = new LinkedHashSet<>(visibleIds(object.map(), object.position(), object.id()));
+    Set<Integer> observers = new LinkedHashSet<>(visibleBefore);
+    observers.addAll(visibleAfter);
+    for (int observerId : observers) {
+      Player observer = players.get(observerId);
+      if (observer == null) continue;
+      if (visibleBefore.contains(observerId) && visibleAfter.contains(observerId)) {
+        emit(observer, new WorldEvent.ObjectPushed(object.snapshot(), source, direction));
+      } else if (visibleBefore.contains(observerId)) {
+        emit(observer, new WorldEvent.ObjectDisappeared(object.id()));
+      } else {
+        emit(observer, new WorldEvent.ObjectAppeared(object.snapshot()));
+      }
+    }
+    if (object instanceof Player player) {
+      emit(player, new WorldEvent.ObjectPushed(player.snapshot(), source, direction));
+      emitItemVisibilityChanges(player, source, player.position);
+    }
+  }
+
+  private void emitObjectRushFailed(Player player, Position targetCell, Direction direction) {
+    WorldEvent.ObjectRushFailed event =
+        new WorldEvent.ObjectRushFailed(player.snapshot(), targetCell, direction);
+    for (int viewerId : visibleIds(player.map, player.position, player.id)) {
+      emit(players.get(viewerId), event);
+    }
+    emit(player, event);
   }
 
   private boolean validSpellTarget(
@@ -4809,6 +5120,11 @@ public final class WorldEngine implements AutoCloseable {
      * and read by {@code TPlayObject.Run} for the 20 s expiry.
      */
     private long lastFireHitAt = Long.MIN_VALUE / 4;
+    /**
+     * {@code m_dwDoMotaeboTick} (ObjBase.pas:9114): stamped by {@code ClientSpellXY} when
+     * executing 野蛮冲撞 (the 3 s cooldown gate).
+     */
+    private long lastMotaeboAt = Long.MIN_VALUE / 4;
 
     private Player(
         int id,

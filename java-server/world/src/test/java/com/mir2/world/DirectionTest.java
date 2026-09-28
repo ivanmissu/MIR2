@@ -23,4 +23,16 @@ class DirectionTest {
     assertEquals(Direction.DOWN, Direction.toward(origin, new Position(10, 11)));
     assertThrows(IllegalArgumentException.class, () -> Direction.toward(origin, origin));
   }
+
+  @Test
+  void oppositeMatchesDelphiGetBackDir() {
+    assertEquals(Direction.DOWN, Direction.UP.opposite());
+    assertEquals(Direction.DOWN_LEFT, Direction.UP_RIGHT.opposite());
+    assertEquals(Direction.LEFT, Direction.RIGHT.opposite());
+    assertEquals(Direction.UP_LEFT, Direction.DOWN_RIGHT.opposite());
+    assertEquals(Direction.UP, Direction.DOWN.opposite());
+    assertEquals(Direction.UP_RIGHT, Direction.DOWN_LEFT.opposite());
+    assertEquals(Direction.RIGHT, Direction.LEFT.opposite());
+    assertEquals(Direction.DOWN_RIGHT, Direction.UP_LEFT.opposite());
+  }
 }
