@@ -91,11 +91,11 @@ CM	CM_SITDOWN	3012	yes	none	protocol-only	-	Grobal2.pas	坐下/挖掘动作
 CM	CM_RUN	3013	yes	gate-game	implemented	GameProtocolAdapterTest,WorldEngineTest	Grobal2.pas	跑步（单步两格）
 CM	CM_HIT	3014	yes	gate-game	implemented	GameCombatProtocolTest,WorldCombatTest	Grobal2.pas	单格近战，共享普攻间隔
 CM	CM_HEAVYHIT	3015	yes	gate-game	implemented	GameCombatProtocolTest,WorldCombatTest	Grobal2.pas	重击走普攻路径
-CM	CM_BIGHIT	3016	yes	gate-game	implemented	GameCombatProtocolTest,WorldCombatTest	Grobal2.pas	攻杀动作码走普攻路径；CM_POWERHIT 已于 W33 接入，CM_LONGHIT/WIDEHIT/FIREHIT 等特殊攻击形状仍未接入
+CM	CM_BIGHIT	3016	yes	gate-game	implemented	GameCombatProtocolTest,WorldCombatTest	Grobal2.pas	攻杀动作码走普攻路径；CM_POWERHIT(W33)/CM_LONGHIT/CM_WIDEHIT(W34) 已接入，CM_CRSHIT(双龙斩)/CM_FIREHIT 等特殊攻击形状仍未接入
 CM	CM_SPELL	3017	yes	gate-game	implemented	GameMagicProtocolTest,WorldMagicTest	Grobal2.pas	施法——W28 三技能最小切片已接线
 CM	CM_POWERHIT	3018	yes	gate-game	implemented	GameWarriorSkillProtocolTest,WorldWarriorSkillTest	Grobal2.pas	攻杀剑术砍击；W33 接入 wHitMode=3（ObjBase.pas:8848），命中时消费 m_boPowerHit 并加 m_nHitPlus，广播 SM_SPELL2
-CM	CM_LONGHIT	3019	yes	none	protocol-only	-	Grobal2.pas	刺杀剑术砍击——技能切片前置
-CM	CM_WIDEHIT	3024	yes	none	protocol-only	-	Grobal2.pas	半月弯刀砍击——技能切片前置
+CM	CM_LONGHIT	3019	yes	gate-game	implemented	GameSpecialAttackProtocolTest,WorldSpecialAttackSkillTest	Grobal2.pas	刺杀剑术砍击；W34 接入 wHitMode=4（ObjBase.pas:18790/22169），学会即可命中正前第 2 格追加目标（nSecPwr=Round(nPower/5*(level+2))），广播 SM_LONGHIT，未学退化 SM_HIT
+CM	CM_WIDEHIT	3024	yes	gate-game	implemented	GameSpecialAttackProtocolTest,WorldSpecialAttackSkillTest	Grobal2.pas	半月弯刀砍击；W34 接入 wHitMode=5（ObjBase.pas:18790/22185），学会且 MP>0 时挥出 dir-1/+1/+2 三格扇形（nSecPwr=Round(nPower/13*(level+2))）并先扣 3 MP，广播 SM_WIDEHIT，未学/无蓝退化 SM_HIT
 CM	CM_FIREHIT	3025	yes	none	protocol-only	-	Grobal2.pas	烈火剑法砍击——技能切片前置
 CM	CM_SAY	3030	yes	gate-game	implemented	WorldChatAndDayCycleTest,GameProtocolAdapterTest	Grobal2.pas	本地聊天/私聊/喊话/系统命令分发
 CM	CM_HORSERUN	3035	yes	none	protocol-only	-	Grobal2.pas	骑马（泄露源注释即标未知消息码）
@@ -122,12 +122,12 @@ SM	SM_HEAVYHIT	15	yes	gate-game	implemented	GameCombatProtocolTest,WorldCombatTe
 SM	SM_BIGHIT	16	yes	gate-game	implemented	GameCombatProtocolTest,WorldCombatTest	Grobal2.pas	攻杀动作广播
 SM	SM_SPELL	17	yes	gate-game	implemented	GameMagicProtocolTest,WorldMagicTest	Grobal2.pas	施法动作帧——W28 三技能最小切片已接线
 SM	SM_POWERHIT	18	yes	none	protocol-only	-	Grobal2.pas	攻杀动作帧——技能切片
-SM	SM_LONGHIT	19	yes	none	protocol-only	-	Grobal2.pas	刺杀动作帧——技能切片
+SM	SM_LONGHIT	19	yes	gate-game	implemented	GameSpecialAttackProtocolTest	Grobal2.pas	刺杀出招帧；AttackDir wHitMode=4 且已学 m_MagicErgumSkill 时替代 RM_HIT（ObjBase.pas:18845）
 SM	SM_DIGUP	20	yes	none	protocol-only	-	Grobal2.pas	挖掘动作帧（向上）
 SM	SM_DIGDOWN	21	yes	none	protocol-only	-	Grobal2.pas	挖掘动作帧（向下）
 SM	SM_FLYAXE	22	yes	none	protocol-only	-	Grobal2.pas	掷斧动作帧
 SM	SM_LIGHTING	23	yes	none	protocol-only	-	Grobal2.pas	亮灯/天亮动作帧
-SM	SM_WIDEHIT	24	yes	none	protocol-only	-	Grobal2.pas	半月动作帧——技能切片
+SM	SM_WIDEHIT	24	yes	gate-game	implemented	GameSpecialAttackProtocolTest	Grobal2.pas	半月出招帧；AttackDir wHitMode=5 且已学 m_MagicWideSkill 且 MP>0 时替代 RM_HIT（ObjBase.pas:18845）
 SM	SM_CRSHIT	25	yes	none	protocol-only	-	Grobal2.pas	未知动作帧
 SM	SM_TWINHIT	26	yes	none	protocol-only	-	Grobal2.pas	狂风斩动作帧
 SM	SM_ALIVE	27	yes	gate-game	implemented	GameLevelAndRevivalProtocolTest,WorldLevelAndDeathTest	Grobal2.pas	复活；param/tag 传格位而非 HP（Delphi 源语义，客户端注释与实际用法分歧按源复刻）
@@ -355,9 +355,9 @@ SKILL	SKILL_SHOOTLIGHTEN:taoist	10	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	�
 SKILL	SKILL_LIGHTENING:warrior	11	n/a	gate-game	implemented	WorldMagicTest	Grobal2.pas:SKILL_*	雷电术；GEEM2 Magic.DB 同名行 job=wizard learnable=no；W32 单体延迟伤害 + LA_UNDEAD 1.5x（Magic.pas:392，稻草人为已接线怪物中唯一 Undead=1 行）
 SKILL	SKILL_LIGHTENING:wizard	11	n/a	gate-game	implemented	WorldMagicTest	Grobal2.pas:SKILL_*	雷电术；GEEM2 Magic.DB 同名行 job=wizard learnable=yes；W32 单体延迟伤害 + LA_UNDEAD 1.5x（Magic.pas:392，稻草人为已接线怪物中唯一 Undead=1 行）
 SKILL	SKILL_LIGHTENING:taoist	11	n/a	gate-game	implemented	WorldMagicTest	Grobal2.pas:SKILL_*	雷电术；GEEM2 Magic.DB 同名行 job=wizard learnable=no；W32 单体延迟伤害 + LA_UNDEAD 1.5x（Magic.pas:392，稻草人为已接线怪物中唯一 Undead=1 行）
-SKILL	SKILL_ERGUM:warrior	12	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	刺杀剑术；GEEM2 Magic.DB 同名行 job=warrior learnable=yes
-SKILL	SKILL_ERGUM:wizard	12	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	刺杀剑术；GEEM2 Magic.DB 同名行 job=warrior learnable=no
-SKILL	SKILL_ERGUM:taoist	12	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	刺杀剑术；GEEM2 Magic.DB 同名行 job=warrior learnable=no
+SKILL	SKILL_ERGUM:warrior	12	n/a	gate-game	implemented	WorldSpecialAttackSkillTest,GameSpecialAttackProtocolTest	Grobal2.pas:SKILL_*	刺杀剑术；GEEM2 Magic.DB 同名行 job=warrior learnable=yes；W34 主动切换切片：ClientSpellXY 翻转 m_boUseThrusting 并回 +LNG/+ULNG（9037），ReadBook/登录自动启用（17377/16602），SwordLongAttack 命中正前第 2 格并按 TrainSkill(skill,1) 训练（22169）
+SKILL	SKILL_ERGUM:wizard	12	n/a	gate-game	implemented	WorldSpecialAttackSkillTest,GameSpecialAttackProtocolTest	Grobal2.pas:SKILL_*	刺杀剑术；GEEM2 Magic.DB 同名行 job=warrior learnable=no；W34 引擎按 magicId 通用接入，非战士无法学得，故切换/砍击路径不会触发
+SKILL	SKILL_ERGUM:taoist	12	n/a	gate-game	implemented	WorldSpecialAttackSkillTest,GameSpecialAttackProtocolTest	Grobal2.pas:SKILL_*	刺杀剑术；GEEM2 Magic.DB 同名行 job=warrior learnable=no；W34 引擎按 magicId 通用接入，非战士无法学得，故切换/砍击路径不会触发
 SKILL	SKILL_FIRECHARM:warrior	13	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	灵魂火符；GEEM2 Magic.DB 同名行 job=taoist learnable=no
 SKILL	SKILL_FIRECHARM:wizard	13	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	灵魂火符；GEEM2 Magic.DB 同名行 job=taoist learnable=no
 SKILL	SKILL_FIRECHARM:taoist	13	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	灵魂火符；GEEM2 Magic.DB 同名行 job=taoist learnable=yes
@@ -394,9 +394,9 @@ SKILL	SKILL_FIREBOOM:taoist	23	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	爆�
 SKILL	SKILL_LIGHTFLOWER:warrior	24	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	地狱雷光；GEEM2 Magic.DB 同名行 job=wizard learnable=no
 SKILL	SKILL_LIGHTFLOWER:wizard	24	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	地狱雷光；GEEM2 Magic.DB 同名行 job=wizard learnable=yes
 SKILL	SKILL_LIGHTFLOWER:taoist	24	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	地狱雷光；GEEM2 Magic.DB 同名行 job=wizard learnable=no
-SKILL	SKILL_BANWOL:warrior	25	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	半月弯刀；GEEM2 Magic.DB 同名行 job=warrior learnable=yes
-SKILL	SKILL_BANWOL:wizard	25	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	半月弯刀；GEEM2 Magic.DB 同名行 job=warrior learnable=no
-SKILL	SKILL_BANWOL:taoist	25	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	半月弯刀；GEEM2 Magic.DB 同名行 job=warrior learnable=no
+SKILL	SKILL_BANWOL:warrior	25	n/a	gate-game	implemented	WorldSpecialAttackSkillTest,GameSpecialAttackProtocolTest	Grobal2.pas:SKILL_*	半月弯刀；GEEM2 Magic.DB 同名行 job=warrior learnable=yes；W34 主动切换切片：ClientSpellXY 翻转 m_boUseHalfMoon 并回 +WID/+UWID（9066），ReadBook 自动启用但登录不自动启用（17377），SwordWideAttack 每挥先扣 3 MP 并扫 dir-1/+1/+2 三格，命中主目标 TrainSkill(skill,1)（22185）
+SKILL	SKILL_BANWOL:wizard	25	n/a	gate-game	implemented	WorldSpecialAttackSkillTest,GameSpecialAttackProtocolTest	Grobal2.pas:SKILL_*	半月弯刀；GEEM2 Magic.DB 同名行 job=warrior learnable=no；W34 引擎按 magicId 通用接入，非战士无法学得，故切换/砍击路径不会触发
+SKILL	SKILL_BANWOL:taoist	25	n/a	gate-game	implemented	WorldSpecialAttackSkillTest,GameSpecialAttackProtocolTest	Grobal2.pas:SKILL_*	半月弯刀；GEEM2 Magic.DB 同名行 job=warrior learnable=no；W34 引擎按 magicId 通用接入，非战士无法学得，故切换/砍击路径不会触发
 SKILL	SKILL_FIRESWORD:warrior	26	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	烈火剑法；GEEM2 Magic.DB 同名行 job=warrior learnable=yes
 SKILL	SKILL_FIRESWORD:wizard	26	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	烈火剑法；GEEM2 Magic.DB 同名行 job=warrior learnable=no
 SKILL	SKILL_FIRESWORD:taoist	26	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	烈火剑法；GEEM2 Magic.DB 同名行 job=warrior learnable=no

@@ -22,6 +22,14 @@ public sealed interface GameOutbound
   record Signal(String tag) implements GameOutbound {
     /** {@code '+PWR'} — 攻杀剑术 armed (ObjBase.pas:8867). */
     public static final Signal POWER_HIT = new Signal("+PWR");
+    /** {@code '+LNG'} — 刺杀剑术 enabled: send {@code CM_LONGHIT} (ObjBase.pas:9043). */
+    public static final Signal THRUSTING_ON = new Signal("+LNG");
+    /** {@code '+ULNG'} — 刺杀剑术 disabled: back to {@code CM_HIT} (ObjBase.pas:9048). */
+    public static final Signal THRUSTING_OFF = new Signal("+ULNG");
+    /** {@code '+WID'} — 半月弯刀 enabled: send {@code CM_WIDEHIT} (ObjBase.pas:9066). */
+    public static final Signal HALF_MOON_ON = new Signal("+WID");
+    /** {@code '+UWID'} — 半月弯刀 disabled: back to {@code CM_HIT} (ObjBase.pas:9071). */
+    public static final Signal HALF_MOON_OFF = new Signal("+UWID");
 
     public Signal {
       Objects.requireNonNull(tag, "tag");

@@ -28,6 +28,7 @@ public sealed interface WorldEvent
         WorldEvent.SpellAccepted,
         WorldEvent.SpellRejected,
         WorldEvent.PowerHitReady,
+        WorldEvent.WeaponSkillToggled,
         WorldEvent.SubAbilityChanged,
         WorldEvent.ObjectSpellCast,
         WorldEvent.MagicFired,
@@ -246,6 +247,22 @@ public sealed interface WorldEvent
   record PowerHitReady(int playerId) implements WorldEvent {
     public PowerHitReady {
       if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
+    }
+  }
+
+  /**
+   * {@code ThrustingOnOff}/{@code HalfMoonOnOff} flipped an active weapon-skill shape and sent
+   * its tag frame (ObjBase.pas:9041-9073): {@code +LNG}/{@code +ULNG} for 刺杀剑术
+   * ({@link HitSpeed#SKILL_ERGUM}) and {@code +WID}/{@code +UWID} for 半月弯刀
+   * ({@link HitSpeed#SKILL_BANWOL}). Like {@link PowerHitReady} this is a raw tag frame that
+   * tells the 1.76 client which special {@code CM_*HIT} ident to send on its next swing; the
+   * accompanying green {@link SystemMessage} carries the {@code SysMsg} hint (skipped on the
+   * login auto-enable, ObjBase.pas:16602).
+   */
+  record WeaponSkillToggled(int playerId, int magicId, boolean on) implements WorldEvent {
+    public WeaponSkillToggled {
+      if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
+      if (magicId < 1 || magicId > 0xffff) throw new IllegalArgumentException("magic id must be a Word");
     }
   }
 
