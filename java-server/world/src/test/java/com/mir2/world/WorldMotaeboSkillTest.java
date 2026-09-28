@@ -256,8 +256,8 @@ class WorldMotaeboSkillTest {
 
       assertEquals(new Position(8, 5), playerAfter.position());
       assertEquals(new Position(9, 5), monsterAfter.position());
-      // Monster's facing flipped to opposite (LEFT -> RIGHT).
-      assertEquals(Direction.RIGHT, monsterAfter.direction());
+      // Monster's facing flipped to opposite (Direction.RIGHT.opposite() = LEFT).
+      assertEquals(Direction.LEFT, monsterAfter.direction());
 
       // Target took collision damage.
       assertTrue(monsterAfter.ability().hp() < monster.ability().hp());

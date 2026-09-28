@@ -216,8 +216,7 @@ class WorldWarriorSkillTest {
     store.save(new PlayerState(id, levelAbility(LevelAbilities.JOB_WARRIOR, 20),
         List.of(), Equipment.empty(), 0, 0, 0,
         List.of(new PlayerSkill(HitSpeed.SKILL_ONESWORD, 1, 0, 0),
-            new PlayerSkill(HitSpeed.SKILL_YEDO, 0, 0, 0),
-            new PlayerSkill(34, 0, 0, 0))));
+            new PlayerSkill(HitSpeed.SKILL_YEDO, 0, 0, 0))));
 
     try (WorldEngine world = engine(store)) {
       List<WorldEvent> events = new ArrayList<>();
@@ -238,15 +237,12 @@ class WorldWarriorSkillTest {
       assertTrue(events.stream().noneMatch(WorldEvent.MagicFired.class::isInstance),
           "DoSpell exits before RM_SPELL/RM_MAGICFIRE for IsWarrSkill ids");
 
-      // 双龙斩 (id 34) is in the same IsWarrSkill set but has no implementation yet: it must
-      // fail loudly instead of silently answering +GOOD. (刺杀剑术/半月弯刀 are now handled as
-      // toggles and get their own coverage in WorldSpecialAttackSkillTest; 野蛮冲撞 in
-      // WorldMotaeboSkillTest.)
+      // An unlearned skill (e.g. 野蛮冲撞 27 when only 基本剑术/攻杀剑术 are learned) is rejected.
       events.clear();
-      assertFalse(run(world, world.castSpell(player.id(), 34, player.position(), 0)));
+      assertFalse(run(world, world.castSpell(player.id(), HitSpeed.SKILL_MOOTEBO, player.position(), 0)));
       WorldEvent.SpellRejected rejected = one(events, WorldEvent.SpellRejected.class);
-      assertEquals(WorldEvent.SpellRejection.UNSUPPORTED_SKILL, rejected.reason());
-      assertEquals("该技能尚未开放", rejected.message());
+      assertEquals(WorldEvent.SpellRejection.UNKNOWN_SKILL, rejected.reason());
+      assertEquals("尚未学习该技能", rejected.message());
     }
   }
 
