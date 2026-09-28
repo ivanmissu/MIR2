@@ -36,7 +36,18 @@ public enum AttackKind {
    * ({@code DamageSpell}) and only answers {@code RM_WIDEHIT} when the skill is learned and
    * {@code m_WAbil.MP > 0}; a manaless or unlearned CM_WIDEHIT degrades to a plain {@link #HIT}.
    */
-  WIDE_HIT;
+  WIDE_HIT,
+  /**
+   * 烈火剑法 swing (CM_FIREHIT → SM_FIREHIT). {@code ClientAttack} maps {@code CM_FIREHIT} to
+   * {@code wHitMode = 7} (ObjBase.pas:8857). Unlike 刺杀/半月 it has no extra geometry: the
+   * {@code _Attack} branch (ObjBase.pas:22128) consumes the armed {@code m_boFireHitSkill},
+   * restamps {@code m_dwLatestFireHitTick} and raises the single front blow by
+   * {@code Round(nPower / 100 * (m_nHitDouble * 10))}. {@code AttackDir} only answers
+   * {@code RM_FIREHIT} when the flag was armed at swing time; an unarmed CM_FIREHIT degrades to
+   * a plain {@link #HIT} (and still burns the flag if one was set — Jacky's 防止砍空刀刀烈火
+   * guard in the no-target branch, ObjBase.pas:22152).
+   */
+  FIRE_HIT;
 
   /** All melee variants share one cooldown in {@code TPlayObject.CheckActionInterval}. */
   public boolean sharesHitInterval() {

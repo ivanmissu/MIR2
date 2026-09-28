@@ -169,3 +169,31 @@ W34 接入 `SKILL_ERGUM`(12 刺杀剑术，`wHitMode=4`) 与 `SKILL_BANWOL`(25 �
 
 下一项：待 Magic.DB 目录扩到含 34/38 后接入 `CrsWideAttack`（十字）与狂风斩；或转向
 `SKILL_AMYOUNSUL`(6)/`SKILL_FIRECHARM`(13) 前先立项护身符消耗模型（`CheckAmulet`/`UseAmulet`）。
+
+### 技能逐项接入·第四批（W35）— 已完成：烈火剑法（一次性蓄力）
+
+W35 接入 `SKILL_FIRESWORD`(26 烈火剑法，`wHitMode=7`)——`IsWarrSkill` 九个 id 里的第三种形态：
+W33 的 3/4/7 是纯被动，W34 的 12/25 是开关，烈火是**一次性蓄力**，不引入任何新的攻击几何。
+
+- **蓄力**：`ClientSpellXY`(9092) → `AllowFireHitSkill`(9782) 的 `> 10s` 严格闸门置
+  `m_boFireHitSkill` 并盖时间戳，**先点旗后判蓝**，`GetSpellPoint` = Magic.DB id26 的固定 7 MP，
+  够蓝才扣并回 `+FIR`（蓝不够则旗亮而客户端不知情，quirk 照搬）；整个分支恒 `Result := True`，
+  冷却中按键也回 `+GOOD`，只有红字「召唤烈火精灵失败...」。
+- **消费**：`_Attack`(22128) 清旗 + 重新盖时间戳（禁止双烈火）并
+  `nPower += Round(nPower/100*(m_nHitDouble*10))`，`m_nHitDouble = 4 + 4·等级`(18622)；
+  砍空分支(22152)同样烧掉蓄力但不加伤；`AttackDir`(18841) 只在旗亮时广播 `SM_FIREHIT(8)`，
+  否则退化 `SM_HIT`。
+- **失效**：`TPlayObject.Run`(6427) 的 `> 20s` 清旗 + 红字 +`+UFIR`。
+- **训练**：守卫是 `wHitMode = 7` 而非旗，未蓄力的烈火刀穿透命中同样 `TrainSkill(skill,1)`(22354)。
+- 证据：`WorldFireSwordSkillTest`（6 用例）、`GameSpecialAttackProtocolTest`（扩展三个用例）；
+  矩阵 `SKILL_FIRESWORD` 三行 + `CM_FIREHIT`/`SM_FIREHIT` 升为 `implemented`。
+  详见 `docs/g0-evidence/2026-09-28-w35-skill-batch-firesword.md`。
+
+**本轮不做 / 显式延后**：`野蛮冲撞(27)`（`DoMotaebo` 位移撞墙，需要碰撞/击退模型）、
+`双龙斩(34)`/`狂风斩(38)`（Magic.DB 行超出 1..33 权威目录）、`m_boTwinHitSkill`/`CM_TWINHIT`；
+同样不加 shadowdiff 场景或门禁行。
+
+下一项：`SKILL_MOOTEBO`(27 野蛮冲撞) 需要先立项 `DoMotaebo`(ObjBase.pas:21703) 的
+「等级差 × 随机 20」判定与撞墙位移/眩晕模型（这是本服第一个位移类技能）；或转向
+`SKILL_AMYOUNSUL`(6 施毒术)/`SKILL_FIRECHARM`(13 灵魂火符)，两者仍需先梳理
+`CheckAmulet`/`UseAmulet` 的护身符消耗模型，不能简化成扣 MP。

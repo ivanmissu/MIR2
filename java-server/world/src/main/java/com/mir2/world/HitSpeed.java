@@ -38,7 +38,8 @@ import java.util.Collection;
  * never read back anywhere in the M2Server sources, so the quirk has no observable effect and is
  * recorded here rather than modelled.
  */
-public record HitSpeed(int hitPoint, int speedPoint, int hitPlus, int attackSkillCycle) {
+public record HitSpeed(
+    int hitPoint, int speedPoint, int hitPlus, int attackSkillCycle, int hitDouble) {
 
   /** {@code DEFHIT} (M2Share.pas:128). */
   public static final int DEF_HIT = 5;
@@ -61,6 +62,14 @@ public record HitSpeed(int hitPoint, int speedPoint, int hitPlus, int attackSkil
   /** 半月弯刀 {@code SKILL_BANWOL} — the {@code SwordWideAttack} fan (wHitMode 5). */
   public static final int SKILL_BANWOL = 25;
 
+  /**
+   * 烈火剑法 {@code SKILL_FIRESWORD} — the armed one-shot burst (wHitMode 7). Unlike the other
+   * two active shapes it has no geometry at all: {@code RecalcHitSpeed} (ObjBase.pas:18619) only
+   * caches {@code m_nHitDouble := 4 + btLevel * 4}, and {@code _Attack} spends the armed flag on
+   * the very next front swing for {@code +nPower / 100 * (m_nHitDouble * 10)} percent damage.
+   */
+  public static final int SKILL_FIRESWORD = 26;
+
   /** {@code Inc(m_btSpeedPoint, 3)} for 道士 (ObjBase.pas:18562). */
   private static final int TAOIST_SPEED_BONUS = 3;
 
@@ -68,6 +77,7 @@ public record HitSpeed(int hitPoint, int speedPoint, int hitPlus, int attackSkil
     if (hitPoint < 0 || speedPoint < 0) throw new IllegalArgumentException("points must not be negative");
     if (hitPlus < 0) throw new IllegalArgumentException("hit plus must not be negative");
     if (attackSkillCycle < 0) throw new IllegalArgumentException("cycle must not be negative");
+    if (hitDouble < 0) throw new IllegalArgumentException("hit double must not be negative");
   }
 
   /**
@@ -80,6 +90,7 @@ public record HitSpeed(int hitPoint, int speedPoint, int hitPlus, int attackSkil
     int speedPoint = DEF_SPEED + (job == LevelAbilities.JOB_TAOIST ? TAOIST_SPEED_BONUS : 0);
     int hitPlus = 0;
     int cycle = 0;
+    int hitDouble = 0;
     for (PlayerSkill skill : skills) {
       switch (skill.magicId()) {
         case SKILL_ONESWORD -> hitPoint += oneSwordHitBonus(skill.level());
@@ -91,13 +102,24 @@ public record HitSpeed(int hitPoint, int speedPoint, int hitPlus, int attackSkil
           hitPlus = DEF_HIT + skill.level();
           cycle = attackSkillCycle(skill.level());
         }
+        case SKILL_FIRESWORD -> hitDouble = fireSwordHitDouble(skill.level());
         default -> {
           // The remaining RecalcHitSpeed cases only cache a UserMagic pointer for skills this
           // batch does not implement (刺杀剑术/半月弯刀/烈火剑法/野蛮冲撞/逐日剑法/……).
         }
       }
     }
-    return new HitSpeed(hitPoint, speedPoint, hitPlus, cycle);
+    return new HitSpeed(hitPoint, speedPoint, hitPlus, cycle, hitDouble);
+  }
+
+  /**
+   * {@code m_nHitDouble := 4 + UserMagic.btLevel * 4} (ObjBase.pas:18622) — the 烈火剑法 burst
+   * multiplier, written outside any {@code btLevel > 0} guard, so a level-0 book already grants
+   * the 40% bonus and level 3 reaches 160%. Unlike 准确, it is a plain overwrite: the last
+   * 烈火剑法 entry of {@code m_MagicList} wins (there can only ever be one).
+   */
+  public static int fireSwordHitDouble(int level) {
+    return 4 + level * 4;
   }
 
   /** {@code Round(9 / 3 * btLevel)} — 基本剑术 is the strongest 准确 source of the three. */
@@ -129,8 +151,8 @@ public record HitSpeed(int hitPoint, int speedPoint, int hitPlus, int attackSkil
     return switch (magicId) {
       // 3 基本剑术, 4 精神力战法, 7 攻杀剑术, 12 刺杀剑术, 25 半月弯刀, 26 烈火剑法,
       // 27 野蛮冲撞, 34 双龙斩, 38 狂风斩 (Grobal2.pas:1272-1309).
-      case SKILL_ONESWORD, SKILL_ILKWANG, SKILL_YEDO, SKILL_ERGUM, SKILL_BANWOL,
-          26, 27, 34, 38 -> true;
+      case SKILL_ONESWORD, SKILL_ILKWANG, SKILL_YEDO, SKILL_ERGUM, SKILL_BANWOL, SKILL_FIRESWORD,
+          27, 34, 38 -> true;
       default -> false;
     };
   }
@@ -152,5 +174,15 @@ public record HitSpeed(int hitPoint, int speedPoint, int hitPlus, int attackSkil
    */
   public static boolean isToggledWeaponSkill(int magicId) {
     return magicId == SKILL_ERGUM || magicId == SKILL_BANWOL;
+  }
+
+  /**
+   * 烈火剑法: the third {@code IsWarrSkill} id with an active {@code ClientSpellXY} branch
+   * (ObjBase.pas:9092). It is neither passive nor a toggle — the press <em>arms</em> a one-shot
+   * flag through {@code AllowFireHitSkill} (10 s re-arm gate) and pays {@code GetSpellPoint} mana
+   * for the {@code +FIR} tag, and the flag expires 20 s later ({@code +UFIR}).
+   */
+  public static boolean isFireSwordSkill(int magicId) {
+    return magicId == SKILL_FIRESWORD;
   }
 }

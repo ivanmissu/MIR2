@@ -28,6 +28,10 @@ public sealed interface GameOutbound
     public static final Signal THRUSTING_OFF = new Signal("+ULNG");
     /** {@code '+WID'} — 半月弯刀 enabled: send {@code CM_WIDEHIT} (ObjBase.pas:9066). */
     public static final Signal HALF_MOON_ON = new Signal("+WID");
+    /** {@code '+FIR'} — 烈火剑法 armed: send {@code CM_FIREHIT} next swing (ObjBase.pas:9103). */
+    public static final Signal FIRE_SWORD_ON = new Signal("+FIR");
+    /** {@code '+UFIR'} — the 20 s 烈火剑法 charge lapsed (ObjBase.pas:6431). */
+    public static final Signal FIRE_SWORD_OFF = new Signal("+UFIR");
     /** {@code '+UWID'} — 半月弯刀 disabled: back to {@code CM_HIT} (ObjBase.pas:9071). */
     public static final Signal HALF_MOON_OFF = new Signal("+UWID");
 
