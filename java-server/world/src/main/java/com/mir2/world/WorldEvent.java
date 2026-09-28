@@ -26,6 +26,8 @@ public sealed interface WorldEvent
         WorldEvent.SkillsSent,
         WorldEvent.SpellAccepted,
         WorldEvent.SpellRejected,
+        WorldEvent.PowerHitReady,
+        WorldEvent.SubAbilityChanged,
         WorldEvent.ObjectSpellCast,
         WorldEvent.MagicFired,
         WorldEvent.ExperienceGained,
@@ -217,6 +219,20 @@ public sealed interface WorldEvent
     public SpellAccepted {
       if (playerId <= 0 || magicId <= 0)
         throw new IllegalArgumentException("player and magic ids must be positive");
+    }
+  }
+
+  /**
+   * {@code SendSocket(nil, '+PWR')} (ObjBase.pas:8867): the 攻杀剑术 cadence armed
+   * {@code m_boPowerHit}, and the client has to be told so its next swing goes out as
+   * {@code CM_POWERHIT} ({@code g_boNextTimePowerHit}, ClMain.pas:3620).
+   *
+   * <p>It is a raw tag frame, not a {@code TDefaultMessage} — the same channel
+   * {@code +GOOD}/{@code +FAIL} travel on.
+   */
+  record PowerHitReady(int playerId) implements WorldEvent {
+    public PowerHitReady {
+      if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
     }
   }
 
@@ -594,6 +610,31 @@ public sealed interface WorldEvent
    * refresh together; the repair path syncs the wallet through SM_USERREPAIRITEM_OK instead,
    * exactly as the original does.
    */
+  /**
+   * {@code RM_SUBABILITY -> SM_SUBABILITY} (ObjBase.pas:5601, sent immediately after every
+   * {@code SM_ABILITY}, and again standalone from the {@code RM_SUBABILITY} handler at 6151).
+   * The four header words carry everything the 1.76 character panel shows below the main
+   * ability block: {@code MakeLong(MakeWord(m_nAntiMagic, 0), 0)},
+   * {@code MakeWord(m_btHitPoint, m_btSpeedPoint)},
+   * {@code MakeWord(m_btAntiPoison, m_nPoisonRecover)} and
+   * {@code MakeWord(m_nHealthRecover, m_nSpellRecover)}; the body is empty.
+   *
+   * <p>W33 only has real values for the 准确/敏捷 pair — the four resistance/recovery
+   * accumulators are still zero because no gear column feeds them yet, which is exactly what
+   * a naked Delphi character reports.
+   */
+  record SubAbilityChanged(
+      int playerId, int antiMagic, int hitPoint, int speedPoint,
+      int antiPoison, int poisonRecover, int healthRecover, int spellRecover)
+      implements WorldEvent {
+    public SubAbilityChanged {
+      if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
+      if (antiMagic < 0 || hitPoint < 0 || speedPoint < 0 || antiPoison < 0
+          || poisonRecover < 0 || healthRecover < 0 || spellRecover < 0)
+        throw new IllegalArgumentException("sub-ability values must not be negative");
+    }
+  }
+
   record GoldChanged(int playerId, long gold) implements WorldEvent {
     public GoldChanged {
       if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");

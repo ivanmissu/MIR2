@@ -118,7 +118,9 @@ class WorldCombatTest {
       events.clear();
 
       boolean struck = false;
-      for (int tick = 0; tick < 40 && !struck; tick++) {
+      // W33: the orc's Monster.DB HIT of 6 is checked against the character's DEFSPEED of 15,
+      // so roughly every other swing is dodged and the chase needs a longer observation window.
+      for (int tick = 0; tick < 120 && !struck; tick++) {
         advance(1_000);
         world.tickOnce();
         struck = events.stream().anyMatch(event ->

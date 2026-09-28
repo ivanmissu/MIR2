@@ -90,7 +90,20 @@ public final class WireMessageCodec {
   public static void writeGameOutbound(OutputStream out, GameOutbound outbound) throws IOException {
     switch (outbound) {
       case GameOutbound.Status status -> writeStatus(out, status);
+      case GameOutbound.Signal signal -> writeSignal(out, signal);
       case GameOutbound.Packet packet -> writePacket(out, packet.packet());
+    }
+  }
+
+  /**
+   * Writes a bare {@code SendSocket(nil, '+PWR')}-style tag frame. Unlike {@code +GOOD/} it
+   * carries no tick suffix — the client only compares the three letters after the {@code '+'}.
+   */
+  public static void writeSignal(OutputStream out, GameOutbound.Signal signal) throws IOException {
+    byte[] frame = ("#" + signal.tag() + "!").getBytes(StandardCharsets.US_ASCII);
+    synchronized (out) {
+      out.write(frame);
+      out.flush();
     }
   }
 

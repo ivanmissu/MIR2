@@ -91,9 +91,9 @@ CM	CM_SITDOWN	3012	yes	none	protocol-only	-	Grobal2.pas	坐下/挖掘动作
 CM	CM_RUN	3013	yes	gate-game	implemented	GameProtocolAdapterTest,WorldEngineTest	Grobal2.pas	跑步（单步两格）
 CM	CM_HIT	3014	yes	gate-game	implemented	GameCombatProtocolTest,WorldCombatTest	Grobal2.pas	单格近战，共享普攻间隔
 CM	CM_HEAVYHIT	3015	yes	gate-game	implemented	GameCombatProtocolTest,WorldCombatTest	Grobal2.pas	重击走普攻路径
-CM	CM_BIGHIT	3016	yes	gate-game	implemented	GameCombatProtocolTest,WorldCombatTest	Grobal2.pas	攻杀动作码走普攻路径；CM_POWERHIT/LONGHIT/WIDEHIT/FIREHIT 技能砍击未接入（技能切片前置）
+CM	CM_BIGHIT	3016	yes	gate-game	implemented	GameCombatProtocolTest,WorldCombatTest	Grobal2.pas	攻杀动作码走普攻路径；CM_POWERHIT 已于 W33 接入，CM_LONGHIT/WIDEHIT/FIREHIT 等特殊攻击形状仍未接入
 CM	CM_SPELL	3017	yes	gate-game	implemented	GameMagicProtocolTest,WorldMagicTest	Grobal2.pas	施法——W28 三技能最小切片已接线
-CM	CM_POWERHIT	3018	yes	none	protocol-only	-	Grobal2.pas	攻杀剑术砍击——技能切片前置
+CM	CM_POWERHIT	3018	yes	gate-game	implemented	GameWarriorSkillProtocolTest,WorldWarriorSkillTest	Grobal2.pas	攻杀剑术砍击；W33 接入 wHitMode=3（ObjBase.pas:8848），命中时消费 m_boPowerHit 并加 m_nHitPlus，广播 SM_SPELL2
 CM	CM_LONGHIT	3019	yes	none	protocol-only	-	Grobal2.pas	刺杀剑术砍击——技能切片前置
 CM	CM_WIDEHIT	3024	yes	none	protocol-only	-	Grobal2.pas	半月弯刀砍击——技能切片前置
 CM	CM_FIREHIT	3025	yes	none	protocol-only	-	Grobal2.pas	烈火剑法砍击——技能切片前置
@@ -155,7 +155,7 @@ SM	SM_GROUPMESSAGE	101	yes	none	protocol-only	-	Grobal2.pas	组队频道聊天�
 SM	SM_CRY	102	yes	none	protocol-only	-	Grobal2.pas	挖掘/哭动作帧
 SM	SM_WHISPER	103	yes	gate-game	implemented	WorldChatAndDayCycleTest,GameProtocolAdapterTest	Grobal2.pas	私聊
 SM	SM_GUILDMESSAGE	104	yes	none	protocol-only	-	Grobal2.pas	行会聊天——见 GUILD 区
-SM	SM_SPELL2	117	yes	none	protocol-only	-	Grobal2.pas	施法扩展帧——技能切片
+SM	SM_SPELL2	117	yes	gate-game	implemented	GameWarriorSkillProtocolTest	Grobal2.pas	攻杀剑术出招帧；AttackDir wHitMode=3 且 m_boPowerHit 为真时替代 RM_HIT（ObjBase.pas:18847）
 SM	SM_ADDITEM	200	yes	gate-game	needs-client-check	ClientItemCodecTest,GameItemProtocolTest	Grobal2.pas	76B TClientItem 体逐位单测已过；Delphi 字节级 golden 需真实客户端对拍（translation-map 挂账）
 SM	SM_BAGITEMS	201	yes	gate-game	needs-client-check	ClientItemCodecTest,GameItemProtocolTest	Grobal2.pas	同上；空包静默 quirk 已复刻
 SM	SM_DELITEM	202	yes	none	protocol-only	-	Grobal2.pas	单物品删除（批量走 SM_DELITEMS）
@@ -267,7 +267,7 @@ SM	SM_MAKEDRUG_FAIL	714	yes	none	protocol-only	-	Grobal2.pas	制药失败
 SM	SM_716	716	yes	none	protocol-only	-	Grobal2.pas	占位编号
 SM	SM_CHANGEGUILDNAME	750	yes	none	protocol-only	-	Grobal2.pas	行会改名——见 GUILD 区
 SM	SM_SENDUSERSTATE	751	yes	none	protocol-only	-	Grobal2.pas	玩家详情窗（CM_QUERYUSERSTATE 应答）
-SM	SM_SUBABILITY	752	yes	none	protocol-only	-	Grobal2.pas	附加属性（加点/状态）
+SM	SM_SUBABILITY	752	yes	gate-game	implemented	GameWarriorSkillProtocolTest,GameProtocolAdapterTest	Grobal2.pas	附加属性；W33 随每个 SM_ABILITY 出站（ObjBase.pas:5601），Param=MakeWord(准确,敏捷)，其余四项无装备来源仍为 0
 SM	SM_OPENGUILDDLG	753	yes	none	protocol-only	-	Grobal2.pas	开行会窗——见 GUILD 区
 SM	SM_OPENGUILDDLG_FAIL	754	yes	none	protocol-only	-	Grobal2.pas	开行会窗失败——见 GUILD 区
 SM	SM_SENDGUILDMEMBERLIST	756	yes	none	protocol-only	-	Grobal2.pas	行会成员列表——见 GUILD 区
@@ -328,21 +328,21 @@ SKILL	SKILL_FIREBALL:taoist	1	n/a	gate-game	implemented	WorldMagicTest	Grobal2.p
 SKILL	SKILL_HEALLING:warrior	2	n/a	gate-game	implemented	WorldMagicTest	Grobal2.pas:SKILL_*	治愈术；GEEM2 Magic.DB 同名行 job=taoist learnable=no；W28 已实现职业门禁与权威效果
 SKILL	SKILL_HEALLING:wizard	2	n/a	gate-game	implemented	WorldMagicTest	Grobal2.pas:SKILL_*	治愈术；GEEM2 Magic.DB 同名行 job=taoist learnable=no；W28 已实现职业门禁与权威效果
 SKILL	SKILL_HEALLING:taoist	2	n/a	gate-game	implemented	WorldMagicTest	Grobal2.pas:SKILL_*	治愈术；GEEM2 Magic.DB 同名行 job=taoist learnable=yes；W28 已实现职业门禁与权威效果
-SKILL	SKILL_ONESWORD:warrior	3	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	基本剑术；GEEM2 Magic.DB 同名行 job=warrior learnable=yes
-SKILL	SKILL_ONESWORD:wizard	3	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	基本剑术；GEEM2 Magic.DB 同名行 job=warrior learnable=no
-SKILL	SKILL_ONESWORD:taoist	3	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	基本剑术；GEEM2 Magic.DB 同名行 job=warrior learnable=no
-SKILL	SKILL_ILKWANG:warrior	4	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	精神力战法；GEEM2 Magic.DB 同名行 job=taoist learnable=no
-SKILL	SKILL_ILKWANG:wizard	4	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	精神力战法；GEEM2 Magic.DB 同名行 job=taoist learnable=no
-SKILL	SKILL_ILKWANG:taoist	4	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	精神力战法；GEEM2 Magic.DB 同名行 job=taoist learnable=yes
+SKILL	SKILL_ONESWORD:warrior	3	n/a	gate-game	implemented	WorldWarriorSkillTest	Grobal2.pas:SKILL_*	基本剑术；GEEM2 Magic.DB 同名行 job=warrior learnable=yes；W33 被动接入：RecalcHitSpeed 加 Round(9/3*level) 准确（ObjBase.pas:18591），ClientSpellXY 空实现回 +GOOD
+SKILL	SKILL_ONESWORD:wizard	3	n/a	gate-game	implemented	WorldWarriorSkillTest	Grobal2.pas:SKILL_*	基本剑术；GEEM2 Magic.DB 同名行 job=warrior learnable=no；W33 被动接入：RecalcHitSpeed 加 Round(9/3*level) 准确（ObjBase.pas:18591），ClientSpellXY 空实现回 +GOOD
+SKILL	SKILL_ONESWORD:taoist	3	n/a	gate-game	implemented	WorldWarriorSkillTest	Grobal2.pas:SKILL_*	基本剑术；GEEM2 Magic.DB 同名行 job=warrior learnable=no；W33 被动接入：RecalcHitSpeed 加 Round(9/3*level) 准确（ObjBase.pas:18591），ClientSpellXY 空实现回 +GOOD
+SKILL	SKILL_ILKWANG:warrior	4	n/a	gate-game	implemented	WorldWarriorSkillTest	Grobal2.pas:SKILL_*	精神力战法；GEEM2 Magic.DB 同名行 job=taoist learnable=no；W33 被动接入：RecalcHitSpeed 加 Round(8/3*level) 准确（ObjBase.pas:18627），ClientSpellXY 空实现回 +GOOD
+SKILL	SKILL_ILKWANG:wizard	4	n/a	gate-game	implemented	WorldWarriorSkillTest	Grobal2.pas:SKILL_*	精神力战法；GEEM2 Magic.DB 同名行 job=taoist learnable=no；W33 被动接入：RecalcHitSpeed 加 Round(8/3*level) 准确（ObjBase.pas:18627），ClientSpellXY 空实现回 +GOOD
+SKILL	SKILL_ILKWANG:taoist	4	n/a	gate-game	implemented	WorldWarriorSkillTest	Grobal2.pas:SKILL_*	精神力战法；GEEM2 Magic.DB 同名行 job=taoist learnable=yes；W33 被动接入：RecalcHitSpeed 加 Round(8/3*level) 准确（ObjBase.pas:18627），ClientSpellXY 空实现回 +GOOD
 SKILL	SKILL_FIREBALL2:warrior	5	n/a	gate-game	implemented	WorldMagicTest	Grobal2.pas:SKILL_*	大火球；GEEM2 Magic.DB 同名行 job=wizard learnable=no；W32 复用 SKILL_FIREBALL 的单体延迟伤害链（Magic.pas:280 两者共用同一 case 分支）
 SKILL	SKILL_FIREBALL2:wizard	5	n/a	gate-game	implemented	WorldMagicTest	Grobal2.pas:SKILL_*	大火球；GEEM2 Magic.DB 同名行 job=wizard learnable=yes；W32 复用 SKILL_FIREBALL 的单体延迟伤害链（Magic.pas:280 两者共用同一 case 分支）
 SKILL	SKILL_FIREBALL2:taoist	5	n/a	gate-game	implemented	WorldMagicTest	Grobal2.pas:SKILL_*	大火球；GEEM2 Magic.DB 同名行 job=wizard learnable=no；W32 复用 SKILL_FIREBALL 的单体延迟伤害链（Magic.pas:280 两者共用同一 case 分支）
 SKILL	SKILL_AMYOUNSUL:warrior	6	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	施毒术；GEEM2 Magic.DB 同名行 job=taoist learnable=no
 SKILL	SKILL_AMYOUNSUL:wizard	6	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	施毒术；GEEM2 Magic.DB 同名行 job=taoist learnable=no
 SKILL	SKILL_AMYOUNSUL:taoist	6	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	施毒术；GEEM2 Magic.DB 同名行 job=taoist learnable=yes
-SKILL	SKILL_YEDO:warrior	7	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	攻杀剑术；GEEM2 Magic.DB 同名行 job=warrior learnable=yes
-SKILL	SKILL_YEDO:wizard	7	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	攻杀剑术；GEEM2 Magic.DB 同名行 job=warrior learnable=no
-SKILL	SKILL_YEDO:taoist	7	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	攻杀剑术；GEEM2 Magic.DB 同名行 job=warrior learnable=no
+SKILL	SKILL_YEDO:warrior	7	n/a	gate-game	implemented	WorldWarriorSkillTest	Grobal2.pas:SKILL_*	攻杀剑术；GEEM2 Magic.DB 同名行 job=warrior learnable=yes；W33 被动接入：Round(3/3*level) 准确 + m_nHitPlus=DEFHIT+level + 7-level 出招节拍与 +PWR/CM_POWERHIT 闭环（ObjBase.pas:18605/8861）
+SKILL	SKILL_YEDO:wizard	7	n/a	gate-game	implemented	WorldWarriorSkillTest	Grobal2.pas:SKILL_*	攻杀剑术；GEEM2 Magic.DB 同名行 job=warrior learnable=no；W33 被动接入：Round(3/3*level) 准确 + m_nHitPlus=DEFHIT+level + 7-level 出招节拍与 +PWR/CM_POWERHIT 闭环（ObjBase.pas:18605/8861）
+SKILL	SKILL_YEDO:taoist	7	n/a	gate-game	implemented	WorldWarriorSkillTest	Grobal2.pas:SKILL_*	攻杀剑术；GEEM2 Magic.DB 同名行 job=warrior learnable=no；W33 被动接入：Round(3/3*level) 准确 + m_nHitPlus=DEFHIT+level + 7-level 出招节拍与 +PWR/CM_POWERHIT 闭环（ObjBase.pas:18605/8861）
 SKILL	SKILL_FIREWIND:warrior	8	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	抗拒火环；GEEM2 Magic.DB 同名行 job=wizard learnable=no
 SKILL	SKILL_FIREWIND:wizard	8	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	抗拒火环；GEEM2 Magic.DB 同名行 job=wizard learnable=yes
 SKILL	SKILL_FIREWIND:taoist	8	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	抗拒火环；GEEM2 Magic.DB 同名行 job=wizard learnable=no
