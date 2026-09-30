@@ -148,7 +148,7 @@ class GameProtocolAdapterTest {
       // ObjBase.pas:5601 — the RM_ABILITY handler always chases SM_ABILITY with SM_SUBABILITY.
       WirePacket subAbility = ((GameOutbound.Packet) output.removeFirst()).packet();
       assertEquals(ProtocolConstants.SM_SUBABILITY, subAbility.message().ident());
-      assertEquals(0, subAbility.message().recog(), "m_nAntiMagic is still zero without gear");
+      assertEquals(1, subAbility.message().recog(), "RecalcAbilitys seeds m_nAntiMagic to 1 without gear");
       assertEquals(HitSpeed.DEF_HIT, subAbility.message().param() & 0xff, "准确 = DEFHIT");
       assertEquals(HitSpeed.DEF_SPEED, (subAbility.message().param() >>> 8) & 0xff, "敏捷 = DEFSPEED");
       assertEquals(0, subAbility.message().tag());

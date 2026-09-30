@@ -271,6 +271,37 @@ class WorldLinePiercingSkillTest {
   }
 
   @Test
+  void beamHonoursPlayerAntiMagicBeforeQueuingMagStruck() {
+    RecordingStore store = new RecordingStore();
+    UUID wizardId = UUID.randomUUID();
+    UUID victimId = UUID.randomUUID();
+    store.save(state(wizardId, LevelAbilities.JOB_WIZARD, 16, SKILL_FIRE));
+    store.save(new PlayerState(victimId, levelAbility(LevelAbilities.JOB_WARRIOR, 20),
+        List.of(), Equipment.empty(), 0, 0, 0));
+
+    try (WorldEngine world = deterministicEngine(store)) {
+      List<WorldEvent> events = new ArrayList<>();
+      WorldObjectSnapshot wizard = enter(world, wizardId, "法师", 5, 5,
+          LevelAbilities.JOB_WIZARD, events);
+      WorldObjectSnapshot victim = enter(world, victimId, "抗性人", 7, 5,
+          LevelAbilities.JOB_WARRIOR, new ArrayList<>());
+      int hp = victim.ability().hp();
+      events.clear();
+
+      // MagPassThroughMagic rolls Random(10) >= m_nAntiMagic per proper target. A naked player
+      // has anti-magic 1, so FixedRandom's zero draw resists the beam even though RM_MAGICFIRE
+      // still names the clicked object.
+      assertTrue(run(world, world.castSpell(wizard.id(), SKILL_FIRE, victim.position(), victim.id())));
+      assertEquals(victim.id(), one(events, WorldEvent.MagicFired.class).targetId());
+      now.addAndGet(600);
+      world.tickOnce();
+      assertEquals(hp, run(world, world.snapshot(victim.id())).ability().hp());
+      assertTrue(events.stream().noneMatch(WorldEvent.ObjectStruck.class::isInstance));
+      assertTrue(events.stream().noneMatch(WorldEvent.SkillTrainingChanged.class::isInstance));
+    }
+  }
+
+  @Test
   void aHitTrainsTheSkillAndThePointsSurviveRelog() {
     RecordingStore store = new RecordingStore();
     UUID id = UUID.randomUUID();

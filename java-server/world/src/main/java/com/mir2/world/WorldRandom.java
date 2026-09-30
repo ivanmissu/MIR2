@@ -68,16 +68,14 @@ public final class WorldRandom {
     SKILL_TRAIN,
     /**
      * {@code Random(TargeTBaseObject.m_btAntiPoison + 7) &lt;= 6} (Magic.pas:333/345): the 施毒术
-     * resist gate. No target currently carries a non-zero AntiPoison stat, so the draw always
-     * resolves the same way, but it is kept on its own stream so wiring the real stat later only
-     * changes the bound, not the draw order of every other magic roll.
+     * resist gate. The bound now comes from the victim's RecalcAbilitys anti-poison accumulator;
+     * the stream stays isolated so resistance gear does not perturb ordinary magic power rolls.
      */
     POISON_RESIST,
     /**
-     * {@code Random(10) >= BaseObject.m_nAntiMagic} (ObjBase.pas:2547): the per-cell resist roll
-     * of {@code MagPassThroughMagic} (地狱火/疾光电影). No wired entity carries a non-zero
-     * AntiMagic stat yet (未导入), so the draw always passes; it lives on its own stream — same
-     * arrangement as {@link #POISON_RESIST}, and appended last so old seeded streams do not move.
+     * {@code Random(10) >= BaseObject.m_nAntiMagic}: the magic-resist roll used by single-target
+     * hostile bolts and {@code MagPassThroughMagic}. The target's anti-magic accumulator supplies
+     * the threshold; keeping it on its own stream preserves existing damage-roll determinism.
      */
     MAGIC_RESIST
   }

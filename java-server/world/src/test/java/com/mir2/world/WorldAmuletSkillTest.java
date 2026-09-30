@@ -144,6 +144,51 @@ class WorldAmuletSkillTest {
   }
 
   @Test
+  void amyounsulHonoursTheTargetsAntiPoisonAccumulator() {
+    RecordingStore store = new RecordingStore();
+    UUID casterId = UUID.randomUUID();
+    UUID targetId = UUID.randomUUID();
+    StdItem grayPowder = StdItemsDb.byName("灰色药粉(少量)").orElseThrow();
+    StdItem antiPoisonRing = accessory("抗毒戒指", 23, 1, 0);
+    store.save(new PlayerState(casterId, levelAbility(LevelAbilities.JOB_TAOIST, 30), List.of(),
+        new Equipment(Map.of(EquipmentSlot.CHARM_AMULET, BackpackItem.of(grayPowder, 611))),
+        0, 0, 0, List.of(PlayerSkill.learned(SKILL_AMYOUNSUL))));
+    store.save(new PlayerState(targetId, levelAbility(LevelAbilities.JOB_WARRIOR, 30),
+        List.of(), new Equipment(Map.of(EquipmentSlot.RING_LEFT, BackpackItem.of(antiPoisonRing, 612))),
+        0, 0, 0));
+
+    try (WorldEngine world = engine(store, new MaxRandom())) {
+      List<WorldEvent> casterEvents = new ArrayList<>();
+      List<WorldEvent> targetEvents = new ArrayList<>();
+      WorldObjectSnapshot taoist = enter(world, casterId, "道士", 5, 5,
+          LevelAbilities.JOB_TAOIST, casterEvents);
+      WorldObjectSnapshot warrior = enter(world, targetId, "抗毒战", 6, 5,
+          LevelAbilities.JOB_WARRIOR, targetEvents);
+      int targetHp = warrior.ability().hp();
+      casterEvents.clear();
+      targetEvents.clear();
+
+      // With StdMode 23 AC2 = 1 the gate is Random(8) <= 6. MaxRandom returns 7, so Delphi's
+      // case body is skipped: the powder charge and RM_MAGICFIRE are still visible, but no
+      // MakePosion status or sYouPoisoned hint follows.
+      assertTrue(run(world, world.castSpell(taoist.id(), SKILL_AMYOUNSUL,
+          warrior.position(), warrior.id())));
+      assertEquals(1, casterEvents.stream().filter(WorldEvent.MagicFired.class::isInstance).count());
+
+      now.addAndGet(1_000);
+      world.tickOnce();
+      assertFalse(targetEvents.stream().filter(WorldEvent.SystemMessage.class::isInstance)
+          .map(WorldEvent.SystemMessage.class::cast)
+          .anyMatch(message -> message.message().contains("你中毒了")));
+
+      now.addAndGet(2_500);
+      world.tickOnce();
+      assertEquals(targetHp, run(world, world.snapshot(warrior.id())).ability().hp(),
+          "a resisted poison queues no DECHEALTH tick");
+    }
+  }
+
+  @Test
   void amyounsulDamageArmorMultipliesEveryLandedHitBy1Point2x() {
     // SKILL_AMYOUNSUL (job=道士) and SKILL_FIREBALL (job=法师) can never be learned by the same
     // character, so the poison and the measuring blow come from two different casters here —
@@ -261,6 +306,12 @@ class WorldAmuletSkillTest {
     return LevelAbilities.forLevel(job, level, Ability.defaultPlayer()).restored();
   }
 
+  private static StdItem accessory(String name, int stdMode, int acMax, int macMax) {
+    return new StdItem(name, stdMode, 0, 1, 0, 0, 0, 0, 0, 1_000,
+        StdItem.packedRange(0, acMax), StdItem.packedRange(0, macMax),
+        0, 0, 0, 0, 0, 0);
+  }
+
   private WorldObjectSnapshot enter(WorldEngine world, UUID id, String name, int x, int y,
       int job, List<WorldEvent> events) {
     return run(world, world.enterPlayer(id, name, "0", new Position(x, y), Direction.DOWN,
@@ -268,18 +319,19 @@ class WorldAmuletSkillTest {
   }
 
   private WorldEngine engine(PlayerStateStore store) {
+    return engine(store, new Random(20260928L));
+  }
+
+  private WorldEngine engine(PlayerStateStore store, Random random) {
     WorldEngine.Config config =
         new WorldEngine.Config(Duration.ofMillis(50), 12, 1_000, 900, 5_000, 180_000);
     return new WorldEngine(config, List.of(GameMap.empty("0", "PoC", 30, 30)), now::get,
-        new Random(20260928L), store, ItemDatabase.of(StdItemsDb.all()));
+        random, store, ItemDatabase.of(StdItemsDb.all()));
   }
 
   /** Same wiring as {@link #engine}, but every random draw collapses to its range minimum. */
   private WorldEngine deterministicEngine(PlayerStateStore store) {
-    WorldEngine.Config config =
-        new WorldEngine.Config(Duration.ofMillis(50), 12, 1_000, 900, 5_000, 180_000);
-    return new WorldEngine(config, List.of(GameMap.empty("0", "PoC", 30, 30)), now::get,
-        new FixedRandom(), store, ItemDatabase.of(StdItemsDb.all()));
+    return engine(store, new FixedRandom());
   }
 
   /** {@code nextInt(bound)} always answers 0, so every {@code WorldRandom} draw is the range's
@@ -288,6 +340,14 @@ class WorldAmuletSkillTest {
     @Override
     public int nextInt(int bound) {
       return 0;
+    }
+  }
+
+  /** {@code nextInt(bound)} always answers {@code bound - 1}, forcing resistance gates high. */
+  private static final class MaxRandom extends Random {
+    @Override
+    public int nextInt(int bound) {
+      return bound - 1;
     }
   }
 

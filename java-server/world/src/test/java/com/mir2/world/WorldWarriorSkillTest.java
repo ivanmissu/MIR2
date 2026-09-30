@@ -92,8 +92,9 @@ class WorldWarriorSkillTest {
       // 5 + Round(9/3*3) + Round(3/3*1) = 5 + 9 + 1
       assertEquals(15, warrior.hitPoint());
       assertEquals(HitSpeed.DEF_SPEED, warrior.speedPoint());
-      // No gear column feeds the other four accumulators yet, exactly as a naked TPlayObject.
-      assertEquals(0, warrior.antiMagic());
+      // RecalcAbilitys seeds m_nAntiMagic to 1 even with no gear; the remaining fields stay
+      // zero until a worn template feeds them.
+      assertEquals(1, warrior.antiMagic());
       assertEquals(0, warrior.antiPoison());
       assertEquals(0, warrior.healthRecover());
       assertEquals(0, warrior.spellRecover());
@@ -103,6 +104,30 @@ class WorldWarriorSkillTest {
       WorldEvent.SubAbilityChanged taoist = one(taoistEvents, WorldEvent.SubAbilityChanged.class);
       assertEquals(HitSpeed.DEF_HIT + 8, taoist.hitPoint());
       assertEquals(HitSpeed.DEF_SPEED + 3, taoist.speedPoint());
+    }
+  }
+
+  @Test
+  void resistanceGearFeedsTheSubAbilityPanel() {
+    UUID id = UUID.randomUUID();
+    StdItem antiMagicNecklace = accessory("抗魔项链", 19, 3, 0);
+    StdItem antiPoisonRing = accessory("抗毒戒指", 23, 4, 2);
+    Equipment equipment = Equipment.empty()
+        .with(EquipmentSlot.NECKLACE, BackpackItem.of(antiMagicNecklace, 901))
+        .with(EquipmentSlot.RING_LEFT, BackpackItem.of(antiPoisonRing, 902));
+    RecordingStore store = new RecordingStore();
+    store.save(new PlayerState(id, levelAbility(LevelAbilities.JOB_WARRIOR, 20),
+        List.of(), equipment, 0, 0, 0));
+
+    try (WorldEngine world = engine(store)) {
+      List<WorldEvent> events = new ArrayList<>();
+      enter(world, id, "抗性战", 5, 5, LevelAbilities.JOB_WARRIOR, events);
+      WorldEvent.SubAbilityChanged changed = one(events, WorldEvent.SubAbilityChanged.class);
+      assertEquals(1 + 3, changed.antiMagic(), "ObjBase.pas:2855 seeds 1, then StdMode 19 adds AC2");
+      assertEquals(4, changed.antiPoison(), "StdMode 23 AC2 feeds m_btAntiPoison");
+      assertEquals(2, changed.poisonRecover(), "StdMode 23 MAC2 feeds m_nPoisonRecover");
+      assertEquals(HitSpeed.DEF_HIT, changed.hitPoint());
+      assertEquals(HitSpeed.DEF_SPEED, changed.speedPoint());
     }
   }
 
@@ -264,6 +289,12 @@ class WorldWarriorSkillTest {
 
   private static Ability levelAbility(int job, int level) {
     return LevelAbilities.forLevel(job, level, Ability.defaultPlayer()).restored();
+  }
+
+  private static StdItem accessory(String name, int stdMode, int acMax, int macMax) {
+    return new StdItem(name, stdMode, 0, 1, 0, 0, 0, 0, 0, 1_000,
+        StdItem.packedRange(0, acMax), StdItem.packedRange(0, macMax),
+        0, 0, 0, 0, 0, 0);
   }
 
   private WorldObjectSnapshot enter(WorldEngine world, UUID id, String name, int x, int y,

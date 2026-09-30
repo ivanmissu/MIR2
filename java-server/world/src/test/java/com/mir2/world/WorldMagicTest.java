@@ -112,6 +112,37 @@ class WorldMagicTest {
   }
 
   @Test
+  void playerAntiMagicCanResistSingleTargetBoltsAtCastTime() {
+    RecordingStore store = new RecordingStore();
+    UUID wizardId = UUID.randomUUID();
+    UUID targetId = UUID.randomUUID();
+    store.save(state(wizardId, LevelAbilities.JOB_WIZARD, 7, 1));
+    store.save(new PlayerState(targetId, levelAbility(LevelAbilities.JOB_WARRIOR, 20),
+        List.of(), Equipment.empty(), 0, 0, 0));
+
+    try (WorldEngine world = deterministicEngine(store)) {
+      List<WorldEvent> events = new ArrayList<>();
+      WorldObjectSnapshot wizard = enter(world, wizardId, "法师", 5, 5,
+          LevelAbilities.JOB_WIZARD, events);
+      WorldObjectSnapshot target = enter(world, targetId, "抗性人", 7, 5,
+          LevelAbilities.JOB_WARRIOR, new ArrayList<>());
+      int targetHp = target.ability().hp();
+      events.clear();
+
+      // RecalcAbilitys gives even a naked player m_nAntiMagic = 1; with Random(10)=0 the
+      // Delphi gate `m_nAntiMagic <= Random(10)` fails before any delayed hit is queued.
+      assertTrue(run(world, world.castSpell(wizard.id(), 1, target.position(), target.id())));
+      WorldEvent.MagicFired fired = one(events, WorldEvent.MagicFired.class);
+      assertEquals(0, fired.targetId(), "fireball nils TargeTBaseObject when anti-magic resists");
+
+      now.addAndGet(600);
+      world.tickOnce();
+      assertEquals(targetHp, run(world, world.snapshot(target.id())).ability().hp());
+      assertTrue(events.stream().noneMatch(WorldEvent.ObjectStruck.class::isInstance));
+    }
+  }
+
+  @Test
   void fireball2SharesTheFireballDelayedDamageChain() {
     // Magic.pas:280 — SKILL_FIREBALL and SKILL_FIREBALL2 are literally the same case branch;
     // 大火球 only differs from 火球术 in its own Magic.DB power/level columns.
