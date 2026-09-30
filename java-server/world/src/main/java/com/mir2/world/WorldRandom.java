@@ -72,7 +72,14 @@ public final class WorldRandom {
      * resolves the same way, but it is kept on its own stream so wiring the real stat later only
      * changes the bound, not the draw order of every other magic roll.
      */
-    POISON_RESIST
+    POISON_RESIST,
+    /**
+     * {@code Random(10) >= BaseObject.m_nAntiMagic} (ObjBase.pas:2547): the per-cell resist roll
+     * of {@code MagPassThroughMagic} (地狱火/疾光电影). No wired entity carries a non-zero
+     * AntiMagic stat yet (未导入), so the draw always passes; it lives on its own stream — same
+     * arrangement as {@link #POISON_RESIST}, and appended last so old seeded streams do not move.
+     */
+    MAGIC_RESIST
   }
 
   private static final Stream[] STREAMS = Stream.values();

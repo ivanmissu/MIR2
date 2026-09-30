@@ -240,7 +240,38 @@ W37 接入 `SKILL_AMYOUNSUL`(6 施毒术)/`SKILL_FIRECHARM`(13 灵魂火符)，�
 
 **环境限制**：本轮开发沙箱无 Maven/JDK 预装，且出网仅放行 pypi/GitHub/npm 域名，无法访问 Maven
 Central 解析测试依赖，因此本轮改动未能在本地跑通 `mvn -f java-server/pom.xml verify`——已对每个
-新增/修改方法逐一核对真实签名/字段名，但请在有 Maven Central 出网权限的环境中尽快补跑验证。
+新增/修改方法逐一核对真实签名/字段名，但请在有 Maven Central 出网权限的环境中尽快补跑验证
+（**已解决**：W38 收尾时离线测试工具链打通，本批用例实际执行并全部通过，详见 W37 证据文档追记）。
 
 下一项：待 `AntiPoison`/`AntiMagic` 属性接入后回填真实抵抗判定；或转向法师多格穿透/群体魔法
 （`SKILL_FIRE`(9 地狱火)/`SKILL_SHOOTLIGHTEN`(10 疾光电影)）。
+
+### 技能逐项接入·第七批（W38）— 已完成：法师多格直线穿透魔法 SKILL_FIRE(9)/SKILL_SHOOTLIGHTEN(10)
+
+W38 接入官方 1..33 权威目录中最后两项法师直线穿透魔法：`SKILL_FIRE`(9 地狱火，射程 5 格) 与
+`SKILL_SHOOTLIGHTEN`(10 疾光电影，射程 8 格)。两者共用 Delphi 的穿透链：
+`Magic.pas:TabStruck` 沿方向逐格收集 `IsProperTarget`，`ObjBase.pas:2546 MagPassThroughMagic`
+逐目标独立掷骰结算；疾光电影对每个命中目标过 `LA_UNDEAD 1.5x`，且按 ObjBase.pas:2550 的怪癖
+**就地写回复利**（含活体目标，逐级取整连锁而非每格重算）。
+
+- **光束终点广播**：`SM_MAGICFIRE` param/tag 是光束穿过的最后一个格子坐标，非点击坐标；
+  地图边界时截到最后一个图内格；方向出图的点击仍扣蓝、按原始点击坐标广播、命中链为空且不训。
+- **点击吸附**：±1 格内具名怪物才进 `SM_MAGICFIRE` 包体（4 字节小端 targetId），
+  否则包体恒 0；被点中的物体不改变光束方向；命中判定跟随受害者本人而非格子
+  （`PIERCING_DAMAGE`，positionBound=false，与雷电术单体链同源）。
+- **地形/NPC**：被阻挡地形与 NPC 格不吸收光束、不产生 `ObjectStruck`。
+- **编码事实**：series = `(effectType&0xff)|((effect&0xff)<<8)`（id=9 时为 1797）。
+- **测试工具链**：离线 JUnit 替身 + ECJ 3.38 批编译器打通（ECJ `assertEquals` 重载歧义经
+  泛型 `(T,T)` 改造绕开）；**全部测试结果本轮首次真实执行**：world 238/238、gate 124/124、
+  protocol 5/5、character 3/3、auth 2/2，共 372 全通过——含 W37 此前从未执行的批次；
+  另修复 `DirectionTest#getNextDirectionKeepsTheM2ShareSnapQuirks` 的期望值错误（非引擎改动）。
+- 证据：`WorldLinePiercingSkillTest`（9 用例）、`GameLinePiercingProtocolTest`（2 用例）；
+  矩阵 `SKILL_FIRE`/`SKILL_SHOOTLIGHTEN` 各三行升为 `implemented+gate-game`。
+  详见 `docs/g0-evidence/2026-09-30-w38-skill-batch-fire-shootlighten.md`。
+
+**本轮不做 / 显式延后**：
+- 其余法师群体魔法、shadowdiff 场景/门禁行本轮不新增（全部技能批次完成后统一立项）。
+- G4 门禁整体仍未签署，本批只翻矩阵行。
+
+下一项：`AntiPoison`/`AntiMagic` 属性接线与施毒术真实抵抗回填；法师群体魔法（地狱火/疾光电影
+已接外剩余项）；或按矩阵缺口继续推进。

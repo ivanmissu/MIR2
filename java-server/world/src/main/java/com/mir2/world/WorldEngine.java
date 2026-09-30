@@ -173,11 +173,29 @@ public final class WorldEngine implements AutoCloseable {
   private static final int SKILL_HEALING = 2;
   private static final int SKILL_FIREBALL2 = 5;
   private static final int SKILL_AMYOUNSUL = 6;
+  private static final int SKILL_FIRE = 9;
+  private static final int SKILL_SHOOTLIGHTEN = 10;
   private static final int SKILL_LIGHTENING = 11;
   private static final int SKILL_FIRECHARM = 13;
   private static final int SKILL_MAGIC_SHIELD = 31;
   /** Magic.pas:437 {@code TargeTBaseObject.m_btLifeAttrib = LA_UNDEAD} lightning multiplier. */
   private static final double LIGHTENING_UNDEAD_MULTIPLIER = 1.5;
+  /** Beam reach of 地狱火: the {@code GetNextPosition(..., 5, ...)} end cell (Magic.pas:389). */
+  private static final int FIRE_BEAM_REACH = 5;
+  /** Beam reach of 疾光电影: the {@code GetNextPosition(..., 8, ...)} end cell (Magic.pas:399). */
+  private static final int SHOOT_LIGHTEN_BEAM_REACH = 8;
+  /** {@code for i := 0 to 12} walking cells per beam (ObjBase.pas:2539). */
+  private static final int MAG_PASS_THROUGH_MAX_STEPS = 13;
+  /** {@code SendDelayMsg(..., RM_MAGSTRUCK, ..., 600)} (ObjBase.pas:2554). */
+  private static final long PIERCING_IMPACT_DELAY_MILLIS = 600;
+  /** {@code magpwr := Round(magpwr * 1.5)} for 疾光电影 per proper target (ObjBase.pas:2550). */
+  private static final double MAGSTRUCK_UNDEAD_MULTIPLIER = 1.5;
+  /**
+   * {@code Random(10) >= BaseObject.m_nAntiMagic} (ObjBase.pas:2547): no wired entity carries a
+   * non-zero AntiMagic stat yet (未导入), so this constant stands in for it — the draw always
+   * passes until the real stat ships. Same arrangement as {@link #POISON_RESIST_ANTIPOISON_DEFAULT}.
+   */
+  private static final int MAGIC_RESIST_ANTIMAGIC_DEFAULT = 0;
   /** {@code SendDelayMsg(..., 1200)} ahead of 灵魂火符's {@code RM_DELAYMAGIC} (Magic.pas:439). */
   private static final long FIRECHARM_IMPACT_DELAY_MILLIS = 1_200;
   /** {@code SendDelayMsg(..., 1000)} ahead of 施毒术's {@code RM_POISON} (Magic.pas:333/345). */
@@ -1649,6 +1667,9 @@ public final class WorldEngine implements AutoCloseable {
    * {@code SKILL_FIREBALL} case branch verbatim）and 雷电术（{@code SKILL_LIGHTENING},
    * Magic.pas:392 — same single-target bolt shape, no adjacency-to-caster gate, and a
    * {@code LA_UNDEAD} 1.5x multiplier resolved against the live target at cast time）.
+   * W38 added the two line-piercing bolts 地狱火（{@code SKILL_FIRE}, Magic.pas:387）and
+   * 疾光电影（{@code SKILL_SHOOTLIGHTEN}, Magic.pas:397）via {@code MagPassThroughMagic}
+   * (ObjBase.pas:2536) — the engine's first no-target, ground-click wizard skills.
    */
   private boolean castPlayerSpell(int playerId, int magicId, Position requestedTarget, int targetId) {
     Player player = requirePlayer(playerId);
@@ -1691,7 +1712,8 @@ public final class WorldEngine implements AutoCloseable {
       return rejectSpell(player, magicId, WorldEvent.SpellRejection.WRONG_JOB, "当前职业无法使用该技能");
     if (player.ability.level() < magic.requiredLevel(skill.level()))
       return rejectSpell(player, magicId, WorldEvent.SpellRejection.LEVEL_TOO_LOW, "等级不足，无法使用该技能");
-    if (!isDamageBolt(magicId) && magicId != SKILL_HEALING && magicId != SKILL_MAGIC_SHIELD)
+    if (!isDamageBolt(magicId) && !isLinePiercingSkill(magicId)
+        && magicId != SKILL_HEALING && magicId != SKILL_MAGIC_SHIELD)
       return rejectSpell(player, magicId, WorldEvent.SpellRejection.UNSUPPORTED_SKILL, "该技能尚未开放");
 
     Position target = magicId == SKILL_MAGIC_SHIELD ? player.position : requestedTarget;
@@ -1713,7 +1735,11 @@ public final class WorldEngine implements AutoCloseable {
     } else {
       targetObject = findObject(targetId);
     }
-    if (!validSpellTarget(player, targetObject, target, magicId))
+    // 地狱火/疾光电影 need no target object at all (Magic.pas:387/397 only read the click
+    // coordinates): the client may cast on empty ground with targetId = 0, so the shared
+    // single-target gate is skipped and the beam itself filters objects on its cells.
+    if (!isLinePiercingSkill(magicId)
+        && !validSpellTarget(player, targetObject, target, magicId))
       return rejectSpell(player, magicId, WorldEvent.SpellRejection.INVALID_TARGET, "施法目标无效");
 
     long now = clock.getAsLong();
@@ -1745,6 +1771,13 @@ public final class WorldEngine implements AutoCloseable {
     // never gets the projectile broadcast at all (see castAmuletGatedSpell).
     if (magicId == SKILL_FIRECHARM || magicId == SKILL_AMYOUNSUL) {
       castAmuletGatedSpell(player, magicId, skill, magic, target, targetId, now);
+      return true;
+    }
+
+    // Magic.pas:387/397: the two line-piercing bolts emit their own RM_MAGICFIRE with the beam
+    // end Delphi wrote back into nTargetX/nTargetY (see castLinePiercingSpell).
+    if (isLinePiercingSkill(magicId)) {
+      castLinePiercingSpell(player, skill, magic, target, targetId, now);
       return true;
     }
 
@@ -2315,6 +2348,144 @@ public final class WorldEngine implements AutoCloseable {
     int point = (int) Math.rint(skill.level() / 3.0 * (power / (double) AMYOUNSUL_POINT_DIVISOR));
     pendingMagicImpacts.add(new PendingMagicImpact(
         now + POISON_APPLY_DELAY_MILLIS, kind, player.id, targetId, target, power, point));
+  }
+
+  /** Magic.DB rows 9/10 — 地狱火/疾光电影: the two line-piercing wizard bolts of W38. */
+  private static boolean isLinePiercingSkill(int magicId) {
+    return magicId == SKILL_FIRE || magicId == SKILL_SHOOTLIGHTEN;
+  }
+
+  /**
+   * {@code SKILL_FIRE}(9, 地狱火, Magic.pas:387) and {@code SKILL_SHOOTLIGHTEN}(10, 疾光电影,
+   * Magic.pas:397): both branches share one shape — walk from one step ahead of the caster to
+   * the beam end (5 cells for 地狱火, 8 for 疾光电影) through {@link #magPassThroughMagic},
+   * rolling the exact fireball power formula
+   * ({@code GetAttackPower(GetPower(MPow(UserMagic)) + LoWord(MC), HiWord(MC)-LoWord(MC)+1)},
+   * which {@link #rollFireballPower} already ports). The branches write the beam end back into
+   * {@code nTargetX}/{@code nTargetY} (var parameters), so the trailing RM_MAGICFIRE broadcast
+   * carries the <em>end of the beam</em> rather than the click — a mutation kept verbatim here.
+   *
+   * <p>{@code ClientSpellXY}'s {@code CretInNearXY} (ObjBase.pas:16854) first snaps the click
+   * onto the referenced object when it stands within one cell; a snapped-but-dead object still
+   * steers the beam, yet {@code DoSpell} nils it before the RM_MAGICFIRE target id is encoded
+   * (Magic.pas:273), so the packet then carries 0.
+   */
+  private void castLinePiercingSpell(
+      Player player, PlayerSkill skill, MagicDefinition magic, Position requestedTarget,
+      int targetId, long now) {
+    int reach = magic.id() == SKILL_FIRE ? FIRE_BEAM_REACH : SHOOT_LIGHTEN_BEAM_REACH;
+    boolean undeadAttack = magic.id() == SKILL_SHOOTLIGHTEN;
+
+    WorldObject clicked = targetId != 0 ? findObject(targetId) : null;
+    boolean snapped = clicked != null && clicked.map() == player.map
+        && chebyshev(clicked.position(), requestedTarget) <= 1;
+    Position target = snapped ? clicked.position() : requestedTarget;
+    int firedTargetId = snapped && clicked.ability().alive() ? clicked.id() : 0;
+
+    Direction beam = Direction.getNextDirection(player.position, target);
+    Optional<Position> first = nextQuirkyPosition(player.map, player.position, beam, 1);
+    if (first.isPresent()) {
+      // A foreshortened GetNextPosition leaves Delphi's var parameters untouched, so the
+      // mutated pair only advances as far as the edge of the map allows.
+      Position end = nextQuirkyPosition(player.map, player.position, beam, reach).orElse(target);
+      if (magPassThroughMagic(player, first.get(), end,
+          rollFireballPower(player, skill, magic), undeadAttack, now) > 0) {
+        trainSpellSkill(player, skill, magic);
+      }
+      target = end;
+    }
+    emitToObserversAndSelf(player, new WorldEvent.MagicFired(player.id, target, firedTargetId, magic));
+  }
+
+  /**
+   * {@code TBaseObject.MagPassThroughMagic} (ObjBase.pas:2536): walks cell by cell from
+   * {@code start} (one step ahead of the caster) toward {@code end}, striking the first living
+   * moving object on each cell — with no wall check and no stop-on-hit; the walk only ends on
+   * the beam end, after {@link #MAG_PASS_THROUGH_MAX_STEPS} iterations, or when {@link
+   * #nextQuirkyPosition} refuses to leave the map. Each proper victim answers the
+   * {@code Random(10) >= m_nAntiMagic} resist (AntiMagic still unwired, see {@link
+   * #MAGIC_RESIST_ANTIMAGIC_DEFAULT}) and is then queued a 600 ms-delayed {@code RM_MAGSTRUCK}
+   * bound to the <em>object</em> — Delphi has no “walked out of the beam in time” escape, which
+   * is exactly what {@link MagicImpactKind#PIERCING_DAMAGE} models. For 疾光电影
+   * ({@code undeadAttack}) the power variable itself is multiplied by 1.5 <em>once per proper
+   * target</em> and stays mutated for every later cell (ObjBase.pas:2550) — a quirk reproduced
+   * verbatim here.
+   *
+   * @return the Delphi {@code tCount}: how many targets survived the resist roll — the
+   *     {@code boTrain} signal of the calling case branch.
+   */
+  private int magPassThroughMagic(
+      Player caster, Position start, Position end, int power, boolean undeadAttack, long now) {
+    int hits = 0;
+    int cellPower = power;
+    Position current = start;
+    for (int step = 0; step < MAG_PASS_THROUGH_MAX_STEPS; step++) {
+      WorldObject victim = objectAt(caster.map, current);
+      // IsProperTarget: the same hostility slice this port keeps everywhere — alive, not self,
+      // and never an NPC (IsAttackTarget is False for TNormNpc/TMerchant, ObjNpc.pas).
+      if (victim != null && !(victim instanceof Npc) && victim.id() != caster.id
+          && victim.ability().alive()
+          && random.nextInt(WorldRandom.Stream.MAGIC_RESIST, 10) >= MAGIC_RESIST_ANTIMAGIC_DEFAULT) {
+        if (undeadAttack) cellPower = (int) Math.rint(cellPower * MAGSTRUCK_UNDEAD_MULTIPLIER);
+        pendingMagicImpacts.add(new PendingMagicImpact(
+            now + PIERCING_IMPACT_DELAY_MILLIS, MagicImpactKind.PIERCING_DAMAGE,
+            caster.id(), victim.id(), victim.position(), cellPower));
+        hits++;
+      }
+      if (current.equals(end)) break;
+      Optional<Position> next = nextQuirkyPosition(
+          caster.map, current, Direction.getNextDirection(current, end), 1);
+      if (next.isEmpty()) break;
+      current = next.get();
+    }
+    return hits;
+  }
+
+  /**
+   * {@code TEnvirnoment.GetNextPosition} (Envir.pas:1110): pure geometry with map-edge failure,
+   * never a walkability check — a beam keeps punching through blocked terrain. The original
+   * {@code case} carries copy-paste bound mixups that stay observable on non-square maps and
+   * are kept verbatim: {@code DR_DOWN} bounds Y by the map <em>width</em> (not height), and
+   * {@code DR_UPRIGHT}/{@code DR_DOWNLEFT} each test the two swapped edges.
+   */
+  private static Optional<Position> nextQuirkyPosition(
+      GameMap map, Position from, Direction direction, int steps) {
+    int x = from.x();
+    int y = from.y();
+    switch (direction) {
+      case UP -> { if (y > steps - 1) y -= steps; }
+      case DOWN -> { if (y < map.width() - steps) y += steps; }
+      case LEFT -> { if (x > steps - 1) x -= steps; }
+      case RIGHT -> { if (x < map.width() - steps) x += steps; }
+      case UP_LEFT -> { if (x > steps - 1 && y > steps - 1) { x -= steps; y -= steps; } }
+      case UP_RIGHT -> { if (x > steps - 1 && y < map.height() - steps) { x += steps; y -= steps; } }
+      case DOWN_LEFT -> { if (x < map.width() - steps && y > steps - 1) { x -= steps; y += steps; } }
+      case DOWN_RIGHT -> { if (x < map.width() - steps && y < map.height() - steps) { x += steps; y += steps; } }
+    }
+    return x == from.x() && y == from.y() ? Optional.empty() : Optional.of(new Position(x, y));
+  }
+
+  /**
+   * The DoSpell training tail (Magic.pas:700): with {@code btLevel < 3} and at least one struck
+   * target ({@code boTrain}), Delphi runs {@code TrainSkill(Random(3) + 1)} plus one
+   * {@code CheckMagicLevelup} pass. {@link PlayerSkill#train} applies the
+   * {@code TrainLevel[btLevel] <= Level} gate and keeps the remainder in {@code nTranPoint};
+   * the event follows the W33 semantic shape, leaving the RM_MAGIC_LVEXP wire timing to the gate.
+   */
+  private void trainSpellSkill(Player player, PlayerSkill current, MagicDefinition magic) {
+    if (current.level() >= MagicDefinition.MAX_SKILL_LEVEL) return;
+    int points = random.nextInt(WorldRandom.Stream.SKILL_TRAIN, 3) + 1;
+    PlayerSkill trained = current.train(magic, player.ability.level(), points);
+    if (trained.equals(current)) return;
+    player.skills.put(magic.id(), trained);
+    try {
+      persist(player);
+    } catch (RuntimeException failure) {
+      player.skills.put(magic.id(), current);
+      throw failure;
+    }
+    emit(player, new WorldEvent.SkillTrainingChanged(
+        player.id, new LearnedMagic(trained, magic)));
   }
 
   private int rollMagicShieldSeconds(Player player, PlayerSkill skill, MagicDefinition magic) {
@@ -3538,9 +3709,14 @@ public final class WorldEngine implements AutoCloseable {
       pendingMagicImpacts.remove(index);
       WorldObject caster = findObject(impact.casterId());
       WorldObject target = findObject(impact.targetId());
+      // RM_MAGSTRUCK (ObjBase.pas:2554) binds its victim at cast time and is delivered to the
+      // object directly — unlike the RM_DELAYMAGIC bolts, whose `abs(nTargetX-x) <= nRage`
+      // arrival check (ObjBase.pas:4579) is what the one-cell escape below models (W28).
+      boolean positionBound = impact.kind() != MagicImpactKind.PIERCING_DAMAGE;
       if (caster == null || target == null || !caster.ability().alive() || !target.ability().alive()
-          || caster.map() != target.map() || chebyshev(target.position(), impact.target()) > 1) continue;
-      if (impact.kind() == MagicImpactKind.DAMAGE) {
+          || caster.map() != target.map()
+          || (positionBound && chebyshev(target.position(), impact.target()) > 1)) continue;
+      if (impact.kind() == MagicImpactKind.DAMAGE || impact.kind() == MagicImpactKind.PIERCING_DAMAGE) {
         int defence = random.between(WorldRandom.Stream.MAGIC,
             target.ability().minMac(), target.ability().maxMac());
         int damage = applyMagicShield(target, Math.max(0, impact.power() - defence));
@@ -5190,7 +5366,7 @@ public final class WorldEngine implements AutoCloseable {
     while ((pending = commands.poll()) != null) pending.cancel();
   }
 
-  private enum MagicImpactKind { DAMAGE, HEAL, POISON_DECHEALTH, POISON_DAMAGEARMOR }
+  private enum MagicImpactKind { DAMAGE, PIERCING_DAMAGE, HEAL, POISON_DECHEALTH, POISON_DAMAGEARMOR }
 
   private record PendingMagicImpact(
       long dueAt, MagicImpactKind kind, int casterId, int targetId, Position target, int power,

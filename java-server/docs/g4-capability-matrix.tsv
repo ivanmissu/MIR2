@@ -346,12 +346,13 @@ SKILL	SKILL_YEDO:taoist	7	n/a	gate-game	implemented	WorldWarriorSkillTest	Grobal
 SKILL	SKILL_FIREWIND:warrior	8	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	抗拒火环；GEEM2 Magic.DB 同名行 job=wizard learnable=no
 SKILL	SKILL_FIREWIND:wizard	8	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	抗拒火环；GEEM2 Magic.DB 同名行 job=wizard learnable=yes
 SKILL	SKILL_FIREWIND:taoist	8	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	抗拒火环；GEEM2 Magic.DB 同名行 job=wizard learnable=no
-SKILL	SKILL_FIRE:warrior	9	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	地狱火；GEEM2 Magic.DB 同名行 job=wizard learnable=no
-SKILL	SKILL_FIRE:wizard	9	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	地狱火；GEEM2 Magic.DB 同名行 job=wizard learnable=yes
-SKILL	SKILL_FIRE:taoist	9	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	地狱火；GEEM2 Magic.DB 同名行 job=wizard learnable=no
-SKILL	SKILL_SHOOTLIGHTEN:warrior	10	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	疾光电影；GEEM2 Magic.DB 同名行 job=wizard learnable=no
-SKILL	SKILL_SHOOTLIGHTEN:wizard	10	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	疾光电影；GEEM2 Magic.DB 同名行 job=wizard learnable=yes
-SKILL	SKILL_SHOOTLIGHTEN:taoist	10	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	疾光电影；GEEM2 Magic.DB 同名行 job=wizard learnable=no
+SKILL	SKILL_FIRE:warrior	9	n/a	gate-game	implemented	WorldLinePiercingSkillTest,GameLinePiercingProtocolTest	Grobal2.pas:SKILL_*	地狱火；GEEM2 Magic.DB 同名行 job=wizard learnable=no；W38 直线穿透魔法接入（Magic.pas:TabStruck 多格目标链、ObjBase.pas:2546 MagPassThroughMagic 终点半径），非法师无法学得
+SKILL	SKILL_FIRE:wizard	9	n/a	gate-game	implemented	WorldLinePiercingSkillTest,GameLinePiercingProtocolTest	Grobal2.pas:SKILL_*	地狱火；GEEM2 Magic.DB 同名行 job=wizard learnable=yes；W38 直线穿透魔法接入（Magic.pas:TabStruck 多格目标链、ObjBase.pas:2546 MagPassThroughMagic 终点半径），越界施法仍耗蓝并以原始点击坐标广播 SM_MAGICFIRE，点击吸附仅 ±1 格
+SKILL	SKILL_FIRE:taoist	9	n/a	gate-game	implemented	WorldLinePiercingSkillTest,GameLinePiercingProtocolTest	Grobal2.pas:SKILL_*	地狱火；GEEM2 Magic.DB 同名行 job=wizard learnable=no；W38 直线穿透魔法接入（Magic.pas:TabStruck 多格目标链、ObjBase.pas:2546 MagPassThroughMagic 终点半径），非法师无法学得
+
+SKILL	SKILL_SHOOTLIGHTEN:warrior	10	n/a	gate-game	implemented	WorldLinePiercingSkillTest,GameLinePiercingProtocolTest	Grobal2.pas:SKILL_*	疾光电影；GEEM2 Magic.DB 同名行 job=wizard learnable=no；W38 直线穿透魔法接入（同 SKILL_FIRE 共享穿透链），非法师无法学得
+SKILL	SKILL_SHOOTLIGHTEN:wizard	10	n/a	gate-game	implemented	WorldLinePiercingSkillTest,GameLinePiercingProtocolTest	Grobal2.pas:SKILL_*	疾光电影；GEEM2 Magic.DB 同名行 job=wizard learnable=yes；W38 直线穿透魔法接入（同 SKILL_FIRE 共享穿透链），LA_UNDEAD 1.5x 对每个真目标逐次复利（ObjBase.pas:2550 伤害就地写回，含活体目标）
+SKILL	SKILL_SHOOTLIGHTEN:taoist	10	n/a	gate-game	implemented	WorldLinePiercingSkillTest,GameLinePiercingProtocolTest	Grobal2.pas:SKILL_*	疾光电影；GEEM2 Magic.DB 同名行 job=wizard learnable=no；W38 直线穿透魔法接入（同 SKILL_FIRE 共享穿透链），非法师无法学得
 SKILL	SKILL_LIGHTENING:warrior	11	n/a	gate-game	implemented	WorldMagicTest	Grobal2.pas:SKILL_*	雷电术；GEEM2 Magic.DB 同名行 job=wizard learnable=no；W32 单体延迟伤害 + LA_UNDEAD 1.5x（Magic.pas:392，稻草人为已接线怪物中唯一 Undead=1 行）
 SKILL	SKILL_LIGHTENING:wizard	11	n/a	gate-game	implemented	WorldMagicTest	Grobal2.pas:SKILL_*	雷电术；GEEM2 Magic.DB 同名行 job=wizard learnable=yes；W32 单体延迟伤害 + LA_UNDEAD 1.5x（Magic.pas:392，稻草人为已接线怪物中唯一 Undead=1 行）
 SKILL	SKILL_LIGHTENING:taoist	11	n/a	gate-game	implemented	WorldMagicTest	Grobal2.pas:SKILL_*	雷电术；GEEM2 Magic.DB 同名行 job=wizard learnable=no；W32 单体延迟伤害 + LA_UNDEAD 1.5x（Magic.pas:392，稻草人为已接线怪物中唯一 Undead=1 行）
