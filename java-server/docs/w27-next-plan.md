@@ -233,7 +233,7 @@ W37 接入 `SKILL_AMYOUNSUL`(6 施毒术)/`SKILL_FIRECHARM`(13 灵魂火符)，�
   详见 `docs/g0-evidence/2026-09-30-w37-skill-batch-amyounsul-firecharm.md`。
 
 **本轮不做 / 显式延后**：
-- `AntiPoison`/`AntiMagic` 属性本身仍未接入装备/怪物数据，抵抗判定目前是恒定结果的占位实现。
+- `AntiPoison`/`AntiMagic` 属性本身当时仍未接入装备/怪物数据，抵抗判定还是恒定结果的占位实现（W39 已回填，见下文）。
 - `SKILL_HANGMAJINBUB`(14 幽灵盾) 的 MP 吸收分支仍 `unimplemented`；`applyPoisonDamage` 只实现了
   `DamageHealth` 的 HP-only 分支。
 - 护甲磨损掷骰、shadowdiff 场景/门禁行本轮不新增。
@@ -273,5 +273,32 @@ W38 接入官方 1..33 权威目录中最后两项法师直线穿透魔法：`SK
 - 其余法师群体魔法、shadowdiff 场景/门禁行本轮不新增（全部技能批次完成后统一立项）。
 - G4 门禁整体仍未签署，本批只翻矩阵行。
 
-下一项：`AntiPoison`/`AntiMagic` 属性接线与施毒术真实抵抗回填；法师群体魔法（地狱火/疾光电影
-已接外剩余项）；或按矩阵缺口继续推进。
+### 技能逐项接入·第八批（W39）— 已完成：AntiPoison/AntiMagic 属性接线与真实抵抗
+
+W39 收口 W37/W38 留下的抗性占位：把 `RecalcAbilitys` 中已经由 `EquipmentBonus` 解析出来的
+`wAntiMagic`/`wAntiPoison`/三类恢复值真正挂到运行时对象与 `SM_SUBABILITY`，并让施毒术、单体伤害
+魔法和直线穿透魔法读取目标抗性。
+
+- **附加属性出站**：玩家 `m_nAntiMagic` 按 Delphi `RecalcAbilitys` 裸身基线从 `1` 开始，再叠加
+  `StdMode=19/53` 的 `AC2`；`m_btAntiPoison` 叠加 `StdMode=23` 的 `AC2`，`m_nPoisonRecover` 叠加
+  `MAC2`，其余恢复值也随 `SM_SUBABILITY` 出站。裸身角色不再把 Recog 报为 0。
+- **施毒术真实抵抗**：`SKILL_AMYOUNSUL` 改为 `Random(target.m_btAntiPoison + 7) <= 6`；抵抗时仍消耗
+  药粉并广播 `RM_MAGICFIRE`，但不排队 `RM_POISON`，因此没有 `sYouPoisoned` 与后续 DoT/破防状态。
+- **AntiMagic 抵抗**：火球/大火球/雷电术在排队 `RM_DELAYMAGIC` 前执行目标 `m_nAntiMagic` 门；抵抗
+  火球/雷电时保持 Delphi 的 `TargeTBaseObject := nil` 语义，`SM_MAGICFIRE` 包体目标为 0。灵魂火符消耗
+  护身符后同样过抗魔门，但保留原分支“不 nil 目标”的包体行为。
+- **直线穿透魔法**：`MagPassThroughMagic` 对每个真目标独立执行 `Random(10) >= m_nAntiMagic`，被抵抗
+  的格子不排队 `RM_MAGSTRUCK`，也不触发训练计数。
+- **证据**：新增/更新 `WorldWarriorSkillTest`（抗性出站）、`WorldMagicTest`（单体抗魔）、
+  `WorldAmuletSkillTest`（抗毒抵抗）、`WorldLinePiercingSkillTest`（光束抗魔）以及 gate 的
+  `GameProtocolAdapterTest` 默认 `SM_SUBABILITY` 断言；矩阵同步更新 `SM_SUBABILITY` 与相关技能说明。
+  详见 `docs/g0-evidence/2026-09-30-w39-antipoison-antimagic-resist.md`。
+
+**本轮不做 / 显式延后**：
+- 未接入怪物特殊子类中手写的超高 `m_btAntiPoison`（当前首批 10 种怪物仍保持 `Initialize` 默认 0）。
+- `m_nPoisonRecover`/`m_nHealthRecover`/`m_nSpellRecover` 目前只按原版出站；源码中未发现本服运行逻辑消费点，
+  暂不引入推测效果。
+- shadowdiff 技能场景/发布门禁行仍留待技能批次统一补齐。
+
+下一项：继续按矩阵缺口推进法师剩余群体魔法；或在技能批次收口后统一补充 shadowdiff 场景与
+`g4-release-gate.tsv` 门禁行。

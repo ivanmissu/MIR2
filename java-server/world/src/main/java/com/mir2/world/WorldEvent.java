@@ -701,9 +701,9 @@ public sealed interface WorldEvent
    * {@code MakeWord(m_btAntiPoison, m_nPoisonRecover)} and
    * {@code MakeWord(m_nHealthRecover, m_nSpellRecover)}; the body is empty.
    *
-   * <p>W33 only has real values for the 准确/敏捷 pair — the four resistance/recovery
-   * accumulators are still zero because no gear column feeds them yet, which is exactly what
-   * a naked Delphi character reports.
+   * <p>W39 wires the resistance/recovery accumulators through the same worn-set
+   * {@code RecalcAbilitys} pass as 准确/敏捷: a naked player reports {@code m_nAntiMagic = 1},
+   * while AntiPoison and the three recovery fields remain zero until gear contributes them.
    */
   record SubAbilityChanged(
       int playerId, int antiMagic, int hitPoint, int speedPoint,

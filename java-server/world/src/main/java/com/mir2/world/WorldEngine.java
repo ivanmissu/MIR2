@@ -191,11 +191,11 @@ public final class WorldEngine implements AutoCloseable {
   /** {@code magpwr := Round(magpwr * 1.5)} for 疾光电影 per proper target (ObjBase.pas:2550). */
   private static final double MAGSTRUCK_UNDEAD_MULTIPLIER = 1.5;
   /**
-   * {@code Random(10) >= BaseObject.m_nAntiMagic} (ObjBase.pas:2547): no wired entity carries a
-   * non-zero AntiMagic stat yet (未导入), so this constant stands in for it — the draw always
-   * passes until the real stat ships. Same arrangement as {@link #POISON_RESIST_ANTIPOISON_DEFAULT}.
+   * {@code RecalcAbilitys} seeds every player at {@code m_nAntiMagic := 1} before adding
+   * equipment bonuses (ObjBase.pas:2855/3400). Monsters keep the {@code Initialize} default
+   * zero unless a subclass writes something else; none of the currently wired first-ten mobs do.
    */
-  private static final int MAGIC_RESIST_ANTIMAGIC_DEFAULT = 0;
+  private static final int PLAYER_ANTIMAGIC_BASE = 1;
   /** {@code SendDelayMsg(..., 1200)} ahead of 灵魂火符's {@code RM_DELAYMAGIC} (Magic.pas:439). */
   private static final long FIRECHARM_IMPACT_DELAY_MILLIS = 1_200;
   /** {@code SendDelayMsg(..., 1000)} ahead of 施毒术's {@code RM_POISON} (Magic.pas:333/345). */
@@ -206,12 +206,8 @@ public final class WorldEngine implements AutoCloseable {
   private static final double POISON_DAMAGEARMOR_MULTIPLIER = 1.2;
   /** {@code g_Config.nAmyOunsulPoint} (M2Share.pas:2069): divides the 施毒术 point formula. */
   private static final int AMYOUNSUL_POINT_DIVISOR = 10;
-  /**
-   * {@code Random(m_btAntiPoison + 7) &lt;= 6} (Magic.pas:333): no target currently carries a
-   * non-zero AntiPoison stat (未导入), so this constant stands in for it — the draw always
-   * succeeds until the real stat ships.
-   */
-  private static final int POISON_RESIST_ANTIPOISON_DEFAULT = 0;
+  /** {@code RecalcAbilitys} seeds {@code m_btAntiPoison := 0} before worn rings add to it. */
+  private static final int PLAYER_ANTIPOISON_BASE = 0;
   /** {@code TStdItem.StdMode} for the 护身符/药粉 family consumed by {@code CheckAmulet}. */
   private static final int AMULET_STD_MODE = 25;
   /** {@code CheckAmulet}/{@code UseAmulet} charge unit: one charge costs 100 raw durability. */
@@ -1770,7 +1766,7 @@ public final class WorldEngine implements AutoCloseable {
     // RM_SPELL cast pose above already went out unconditionally, but a caster with no charm
     // never gets the projectile broadcast at all (see castAmuletGatedSpell).
     if (magicId == SKILL_FIRECHARM || magicId == SKILL_AMYOUNSUL) {
-      castAmuletGatedSpell(player, magicId, skill, magic, target, targetId, now);
+      castAmuletGatedSpell(player, magicId, skill, magic, target, targetId, targetObject, now);
       return true;
     }
 
@@ -1781,7 +1777,11 @@ public final class WorldEngine implements AutoCloseable {
       return true;
     }
 
-    emitToObserversAndSelf(player, new WorldEvent.MagicFired(player.id, target, targetId, magic));
+    boolean resisted = (magicId == SKILL_FIREBALL || magicId == SKILL_FIREBALL2
+        || magicId == SKILL_LIGHTENING) && !passesMagicResist(targetObject);
+    emitToObserversAndSelf(player, new WorldEvent.MagicFired(
+        player.id, target, resisted ? 0 : targetId, magic));
+    if (resisted) return true;
 
     if (magicId == SKILL_FIREBALL || magicId == SKILL_FIREBALL2) {
       int power = rollFireballPower(player, skill, magic);
@@ -2298,7 +2298,7 @@ public final class WorldEngine implements AutoCloseable {
    * played.
    */
   private void castAmuletGatedSpell(Player player, int magicId, PlayerSkill skill,
-      MagicDefinition magic, Position target, int targetId, long now) {
+      MagicDefinition magic, Position target, int targetId, WorldObject targetObject, long now) {
     int amuletType = magicId == SKILL_FIRECHARM ? 1 : 2;
     Optional<AmuletCharge> amulet = findAmulet(player, amuletType, 1);
     if (amulet.isEmpty()) {
@@ -2308,18 +2308,19 @@ public final class WorldEngine implements AutoCloseable {
     consumeAmulet(player, amulet.get(), 1);
     emitToObserversAndSelf(player, new WorldEvent.MagicFired(player.id, target, targetId, magic));
     if (magicId == SKILL_FIRECHARM) {
-      castFireCharm(player, skill, magic, target, targetId, now);
+      if (targetObject != null && passesMagicResist(targetObject)) {
+        castFireCharm(player, skill, magic, target, targetId, now);
+      }
     } else {
-      castAmyounsul(player, skill, magic, amulet.get().shape(), target, targetId, now);
+      castAmyounsul(player, skill, magic, amulet.get().shape(), target, targetId, targetObject, now);
     }
   }
 
   /**
-   * {@code SKILL_FIRECHARM} (Magic.pas:436): once the charm is spent, this is the same delayed
-   * single-target bolt shape as fireball/lightning — adjacency-to-target and hostility were
-   * already enforced by {@link #validSpellTarget} before the amulet check ran. Like every other
-   * bolt in this port (W32), the {@code m_nAntiMagic} dodge roll is skipped because no target
-   * currently carries a non-zero value.
+   * {@code SKILL_FIRECHARM} (Magic.pas:436): once the charm is spent and the target has not
+   * resisted through {@code m_nAntiMagic}, this is the same delayed single-target bolt shape as
+   * fireball/lightning — adjacency-to-target and hostility were already enforced by {@link
+   * #validSpellTarget} before the amulet check ran.
    */
   private void castFireCharm(
       Player player, PlayerSkill skill, MagicDefinition magic, Position target, int targetId, long now) {
@@ -2338,9 +2339,8 @@ public final class WorldEngine implements AutoCloseable {
    * so nothing distinguishes a resisted cast from one that simply missed on the wire.
    */
   private void castAmyounsul(Player player, PlayerSkill skill, MagicDefinition magic,
-      int amuletShape, Position target, int targetId, long now) {
-    if (random.nextInt(WorldRandom.Stream.POISON_RESIST, POISON_RESIST_ANTIPOISON_DEFAULT + 7) > 6)
-      return;
+      int amuletShape, Position target, int targetId, WorldObject targetObject, long now) {
+    if (targetObject == null || !passesPoisonResist(targetObject)) return;
     MagicImpactKind kind = amuletShape == 1
         ? MagicImpactKind.POISON_DECHEALTH : MagicImpactKind.POISON_DAMAGEARMOR;
     int base = amuletShape == 1 ? 40 : 30;
@@ -2348,6 +2348,17 @@ public final class WorldEngine implements AutoCloseable {
     int point = (int) Math.rint(skill.level() / 3.0 * (power / (double) AMYOUNSUL_POINT_DIVISOR));
     pendingMagicImpacts.add(new PendingMagicImpact(
         now + POISON_APPLY_DELAY_MILLIS, kind, player.id, targetId, target, power, point));
+  }
+
+  /** {@code Random(10) >= target.m_nAntiMagic}: true when a hostile magic effect lands. */
+  private boolean passesMagicResist(WorldObject target) {
+    return target != null && random.nextInt(WorldRandom.Stream.MAGIC_RESIST, 10) >= target.antiMagic();
+  }
+
+  /** {@code Random(target.m_btAntiPoison + 7) <= 6}: true when 施毒术 is not resisted. */
+  private boolean passesPoisonResist(WorldObject target) {
+    return target != null
+        && random.nextInt(WorldRandom.Stream.POISON_RESIST, target.antiPoison() + 7) <= 6;
   }
 
   /** Magic.DB rows 9/10 — 地狱火/疾光电影: the two line-piercing wizard bolts of W38. */
@@ -2403,8 +2414,7 @@ public final class WorldEngine implements AutoCloseable {
    * moving object on each cell — with no wall check and no stop-on-hit; the walk only ends on
    * the beam end, after {@link #MAG_PASS_THROUGH_MAX_STEPS} iterations, or when {@link
    * #nextQuirkyPosition} refuses to leave the map. Each proper victim answers the
-   * {@code Random(10) >= m_nAntiMagic} resist (AntiMagic still unwired, see {@link
-   * #MAGIC_RESIST_ANTIMAGIC_DEFAULT}) and is then queued a 600 ms-delayed {@code RM_MAGSTRUCK}
+   * {@code Random(10) >= m_nAntiMagic} resist and is then queued a 600 ms-delayed {@code RM_MAGSTRUCK}
    * bound to the <em>object</em> — Delphi has no “walked out of the beam in time” escape, which
    * is exactly what {@link MagicImpactKind#PIERCING_DAMAGE} models. For 疾光电影
    * ({@code undeadAttack}) the power variable itself is multiplied by 1.5 <em>once per proper
@@ -2425,7 +2435,7 @@ public final class WorldEngine implements AutoCloseable {
       // and never an NPC (IsAttackTarget is False for TNormNpc/TMerchant, ObjNpc.pas).
       if (victim != null && !(victim instanceof Npc) && victim.id() != caster.id
           && victim.ability().alive()
-          && random.nextInt(WorldRandom.Stream.MAGIC_RESIST, 10) >= MAGIC_RESIST_ANTIMAGIC_DEFAULT) {
+          && passesMagicResist(victim)) {
         if (undeadAttack) cellPower = (int) Math.rint(cellPower * MAGSTRUCK_UNDEAD_MULTIPLIER);
         pendingMagicImpacts.add(new PendingMagicImpact(
             now + PIERCING_IMPACT_DELAY_MILLIS, MagicImpactKind.PIERCING_DAMAGE,
@@ -3230,6 +3240,11 @@ public final class WorldEngine implements AutoCloseable {
         base.experience(),
         base.maxExperience());
     player.bonus = bonus;
+    player.antiPoison = PLAYER_ANTIPOISON_BASE + bonus.antiPoison();
+    player.poisonRecover = bonus.poisonRecover();
+    player.healthRecover = bonus.healthRecover();
+    player.spellRecover = bonus.spellRecover();
+    player.antiMagic = PLAYER_ANTIMAGIC_BASE + bonus.antiMagic();
     recalculateHitSpeed(player, bonus);
     player.revival = equipmentGrantsRevival(player.equipment);
     // The same RecalcAbilitys pass rebuilds the three death-penalty flags.
@@ -3281,13 +3296,13 @@ public final class WorldEngine implements AutoCloseable {
 
   /**
    * The {@code SM_SUBABILITY} that Delphi sends on the heels of every {@code SM_ABILITY}
-   * (ObjBase.pas:5601). Only the 准确/敏捷 pair is non-zero for now — {@code m_nAntiMagic},
-   * {@code m_btAntiPoison} and the three recovery accumulators have no gear column feeding
-   * them yet, which is what a naked character reports in the original too.
+   * (ObjBase.pas:5601): the anti-magic base value, 准确/敏捷 and every worn-set
+   * resistance/recovery accumulator rebuilt by {@code RecalcAbilitys}.
    */
   private void emitSubAbility(Player player) {
     emit(player, new WorldEvent.SubAbilityChanged(
-        player.id, 0, player.hitPoint, player.speedPoint, 0, 0, 0, 0));
+        player.id, player.antiMagic, player.hitPoint, player.speedPoint,
+        player.antiPoison, player.poisonRecover, player.healthRecover, player.spellRecover));
   }
 
   /**
@@ -5445,6 +5460,12 @@ public final class WorldEngine implements AutoCloseable {
     /** {@code m_btSpeedPoint} — 敏捷: the defender side of the same check. */
     int speedPoint();
 
+    /** {@code m_nAntiMagic}: the target-side {@code Random(10) >= value} spell-resist gate. */
+    int antiMagic();
+
+    /** {@code m_btAntiPoison}: the target-side {@code Random(value + 7) <= 6} poison gate. */
+    int antiPoison();
+
     /** {@code m_wStatusTimeArr[POISON_DECHEALTH]}/{@code [POISON_DAMAGEARMOR]} timers. */
     PoisonStatus poison();
   }
@@ -5562,6 +5583,14 @@ public final class WorldEngine implements AutoCloseable {
     private int speedPoint = HitSpeed.DEF_SPEED;
     /** {@code m_nHitPlus}: the flat damage 攻杀剑术 adds when a power hit is consumed. */
     private int hitPlus;
+    /** {@code m_nAntiMagic}: starts at 1 in RecalcAbilitys, then gear adds AC2 from StdMode 19. */
+    private int antiMagic = PLAYER_ANTIMAGIC_BASE;
+    /** {@code m_btAntiPoison}: gear-added poison resistance (StdMode 23 AC2). */
+    private int antiPoison = PLAYER_ANTIPOISON_BASE;
+    /** The three remaining SM_SUBABILITY accumulators; currently wire-visible only. */
+    private int poisonRecover;
+    private int healthRecover;
+    private int spellRecover;
     /** {@code m_btAttackSkillCount}: swings left in the current 攻杀 cycle. */
     private int attackSkillCount;
     /** {@code m_btAttackSkillPointCount}: the swing of the cycle that arms the power hit. */
@@ -5788,6 +5817,16 @@ public final class WorldEngine implements AutoCloseable {
       return speedPoint;
     }
 
+    @Override
+    public int antiMagic() {
+      return antiMagic;
+    }
+
+    @Override
+    public int antiPoison() {
+      return antiPoison;
+    }
+
     private final PoisonStatus poison = new PoisonStatus();
 
     @Override
@@ -5866,6 +5905,18 @@ public final class WorldEngine implements AutoCloseable {
       return template.speedPoint();
     }
 
+    /** The first-ten wired monsters keep TBaseObject.Initialize's m_nAntiMagic = 0. */
+    @Override
+    public int antiMagic() {
+      return 0;
+    }
+
+    /** The first-ten wired monsters keep TBaseObject.Initialize's m_btAntiPoison = 0. */
+    @Override
+    public int antiPoison() {
+      return 0;
+    }
+
     @Override
     public PoisonStatus poison() {
       return poison;
@@ -5940,6 +5991,16 @@ public final class WorldEngine implements AutoCloseable {
 
     @Override
     public int speedPoint() {
+      return 0;
+    }
+
+    @Override
+    public int antiMagic() {
+      return 0;
+    }
+
+    @Override
+    public int antiPoison() {
       return 0;
     }
 
