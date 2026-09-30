@@ -106,3 +106,10 @@ W37 接入官方 1..33 权威目录中最后两项道士主动技能：`SKILL_AM
 
 下一项：待 `AntiPoison`/`AntiMagic` 属性接入后回填施毒术/灵魂火符的真实抵抗判定；或转向法师
 多格穿透/群体魔法（`SKILL_FIRE`(9 地狱火)/`SKILL_SHOOTLIGHTEN`(10 疾光电影)）。
+
+## 追记（2026-09-30，W38 收尾时）
+
+W38 收尾阶段打通了离线测试工具链（JUnit 最小替身 + ECJ 3.38 批编译器，详见
+`2026-09-30-w38-skill-batch-fire-shootlighten.md` 的「测试执行情况」），本批全部用例已实际
+执行并通过：`WorldAmuletSkillTest`（5/5）、`GameAmuletProtocolTest`（2/2）包含在
+world 238/238、gate 124/124 的全绿结果内。上节「环境限制说明」所述风险就此消除。
