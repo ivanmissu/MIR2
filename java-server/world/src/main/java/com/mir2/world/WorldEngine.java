@@ -177,7 +177,14 @@ public final class WorldEngine implements AutoCloseable {
   private static final int SKILL_SHOOTLIGHTEN = 10;
   private static final int SKILL_LIGHTENING = 11;
   private static final int SKILL_FIRECHARM = 13;
+  private static final int SKILL_BIGHEALLING = 29;
   private static final int SKILL_MAGIC_SHIELD = 31;
+  /**
+   * {@code GetMapBaseObjects(m_PEnvir, nX, nY, 1, ...)} (Magic.pas:180): 群体治愈术 collects the
+   * inclusive 3x3 square around the click — the constant is hard-coded, not a config value and
+   * not scaled by the skill level.
+   */
+  private static final int BIG_HEALING_RANGE = 1;
   /** Magic.pas:437 {@code TargeTBaseObject.m_btLifeAttrib = LA_UNDEAD} lightning multiplier. */
   private static final double LIGHTENING_UNDEAD_MULTIPLIER = 1.5;
   /** Beam reach of 地狱火: the {@code GetNextPosition(..., 5, ...)} end cell (Magic.pas:389). */
@@ -1708,7 +1715,7 @@ public final class WorldEngine implements AutoCloseable {
       return rejectSpell(player, magicId, WorldEvent.SpellRejection.WRONG_JOB, "当前职业无法使用该技能");
     if (player.ability.level() < magic.requiredLevel(skill.level()))
       return rejectSpell(player, magicId, WorldEvent.SpellRejection.LEVEL_TOO_LOW, "等级不足，无法使用该技能");
-    if (!isDamageBolt(magicId) && !isLinePiercingSkill(magicId)
+    if (!isDamageBolt(magicId) && !isLinePiercingSkill(magicId) && !isAreaHealingSkill(magicId)
         && magicId != SKILL_HEALING && magicId != SKILL_MAGIC_SHIELD)
       return rejectSpell(player, magicId, WorldEvent.SpellRejection.UNSUPPORTED_SKILL, "该技能尚未开放");
 
@@ -1734,7 +1741,9 @@ public final class WorldEngine implements AutoCloseable {
     // 地狱火/疾光电影 need no target object at all (Magic.pas:387/397 only read the click
     // coordinates): the client may cast on empty ground with targetId = 0, so the shared
     // single-target gate is skipped and the beam itself filters objects on its cells.
-    if (!isLinePiercingSkill(magicId)
+    // 群体治愈术 shares the ground-click shape: MagBigHealing (Magic.pas:172) only reads
+    // nTargetX/nTargetY, so a click on empty ground with targetId = 0 is a legal cast.
+    if (!isLinePiercingSkill(magicId) && !isAreaHealingSkill(magicId)
         && !validSpellTarget(player, targetObject, target, magicId))
       return rejectSpell(player, magicId, WorldEvent.SpellRejection.INVALID_TARGET, "施法目标无效");
 
@@ -1774,6 +1783,13 @@ public final class WorldEngine implements AutoCloseable {
     // end Delphi wrote back into nTargetX/nTargetY (see castLinePiercingSpell).
     if (isLinePiercingSkill(magicId)) {
       castLinePiercingSpell(player, skill, magic, target, targetId, now);
+      return true;
+    }
+
+    // Magic.pas:532 — 群体治愈术 heals a square of friends instead of a single target, so it
+    // leaves the single-target resist/impact chain below entirely (see castAreaHealing).
+    if (isAreaHealingSkill(magicId)) {
+      castAreaHealing(player, skill, magic, target, targetId, now);
       return true;
     }
 
@@ -2359,6 +2375,90 @@ public final class WorldEngine implements AutoCloseable {
   private boolean passesPoisonResist(WorldObject target) {
     return target != null
         && random.nextInt(WorldRandom.Stream.POISON_RESIST, target.antiPoison() + 7) <= 6;
+  }
+
+  /** Magic.DB row 29 — 群体治愈术: the engine's first area-of-effect spell (W40). */
+  private static boolean isAreaHealingSkill(int magicId) {
+    return magicId == SKILL_BIGHEALLING;
+  }
+
+  /**
+   * {@code SKILL_BIGHEALLING}(29, 群体治愈术, Magic.pas:532 → {@code MagBigHealing},
+   * Magic.pas:172):
+   *
+   * <pre>
+   *   nPower := GetAttackPower(GetPower(MPow(UserMagic)) + LoWord(SC) * 2,
+   *                            SmallInt(HiWord(SC) - LoWord(SC)) * 2 + 1);
+   *   GetMapBaseObjects(m_PEnvir, nX, nY, 1, BaseObjectList);   // inclusive 3x3 square
+   *   for i := 0 to BaseObjectList.Count - 1 do
+   *     if IsProperFriend(BaseObject) then
+   *       if BaseObject.m_WAbil.HP &lt; BaseObject.m_WAbil.MaxHP then
+   *         BaseObject.SendDelayMsg(PlayObject, RM_MAGHEALING, 0, nPower, 0, 0, '', 800);
+   * </pre>
+   *
+   * <p>The power roll is the single-target 治愈术 formula ({@link #rollHealingPower}), rolled
+   * <em>once</em> and shared by every target — targets do not re-roll. Full-health objects are
+   * skipped at cast time (which is also what makes {@code boTrain} false when nobody needed the
+   * heal), and the actual HP only moves 800 ms later, when {@code RM_MAGHEALING} arrives.
+   *
+   * <p>Two deliberate scope decisions, both documented in the W40 plan:
+   *
+   * <ul>
+   *   <li>{@code IsProperFriend} (ObjBase.pas:24091) branches on the caster's attack mode, which
+   *       this port does not model yet. The engine therefore uses the strictest arm —
+   *       {@code HAM_GROUP}: the caster plus live party members, never a stranger, a monster or
+   *       an NPC. Widening it needs CM_CHANGEATTACKMODE first.
+   *   <li>Delphi never re-checks the relationship when the delayed message lands. Because the
+   *       friend rule here <em>is</em> party membership, which can change inside those 800 ms,
+   *       {@link MagicImpactKind#AREA_HEAL} re-confirms it on arrival instead of healing a
+   *       player who already left the party.
+   * </ul>
+   *
+   * <p>{@code CretInNearXY} (ObjBase.pas:16854) still snaps the click onto the named object when
+   * it stands within one cell, so the square — and the trailing RM_MAGICFIRE — center on the
+   * object's cell rather than the raw click.
+   */
+  private void castAreaHealing(
+      Player player, PlayerSkill skill, MagicDefinition magic, Position requestedTarget,
+      int targetId, long now) {
+    WorldObject clicked = targetId != 0 ? findObject(targetId) : null;
+    boolean snapped = clicked != null && clicked.map() == player.map
+        && chebyshev(clicked.position(), requestedTarget) <= 1;
+    Position center = snapped ? clicked.position() : requestedTarget;
+    int firedTargetId = snapped && clicked.ability().alive() ? clicked.id() : 0;
+
+    int power = rollHealingPower(player, skill, magic);
+    List<WorldObject> candidates = new ArrayList<>();
+    for (int id : player.map.objectsInSquare(center, BIG_HEALING_RANGE)) {
+      WorldObject candidate = findObject(id);
+      if (candidate != null) candidates.add(candidate);
+    }
+    List<AreaHealing.Result> healed = AreaHealing.resolve(center, BIG_HEALING_RANGE, power,
+        candidates, target -> isAreaHealFriend(player, target),
+        target -> target.ability().hp(), target -> target.ability().maxHp());
+    for (AreaHealing.Result result : healed) {
+      WorldObject target = findObject(result.objectId());
+      if (target == null) continue;
+      pendingMagicImpacts.add(new PendingMagicImpact(
+          now + HEAL_IMPACT_DELAY_MILLIS, MagicImpactKind.AREA_HEAL,
+          player.id, target.id(), target.position(), power));
+    }
+
+    emitToObserversAndSelf(player, new WorldEvent.MagicFired(player.id, center, firedTargetId, magic));
+    // boTrain is only set when at least one friend was actually below max HP (Magic.pas:186).
+    if (!healed.isEmpty()) trainSpellSkill(player, skill, magic);
+  }
+
+  /**
+   * The {@code HAM_GROUP} arm of {@code IsProperFriend} (ObjBase.pas:24143): {@code cret = Self}
+   * or {@code IsGroupMember(cret)}, and only for {@code RC_PLAYOBJECT} — a monster or NPC on the
+   * square is never a friend, and neither is an unaffiliated player.
+   */
+  private static boolean isAreaHealFriend(Player caster, WorldObject candidate) {
+    if (!(candidate instanceof Player target) || !target.ability.alive()
+        || target.map != caster.map) return false;
+    if (target.id == caster.id) return true;
+    return caster.group != null && caster.group == target.group && caster.group.contains(target.id);
   }
 
   /** Magic.DB rows 9/10 — 地狱火/疾光电影: the two line-piercing wizard bolts of W38. */
@@ -3727,16 +3827,23 @@ public final class WorldEngine implements AutoCloseable {
       // RM_MAGSTRUCK (ObjBase.pas:2554) binds its victim at cast time and is delivered to the
       // object directly — unlike the RM_DELAYMAGIC bolts, whose `abs(nTargetX-x) <= nRage`
       // arrival check (ObjBase.pas:4579) is what the one-cell escape below models (W28).
-      boolean positionBound = impact.kind() != MagicImpactKind.PIERCING_DAMAGE;
+      // RM_MAGHEALING of 群体治愈术 is likewise addressed to the object (Magic.pas:185), so a
+      // healed friend who stepped away inside the 800 ms window still receives it.
+      boolean positionBound = impact.kind() != MagicImpactKind.PIERCING_DAMAGE
+          && impact.kind() != MagicImpactKind.AREA_HEAL;
       if (caster == null || target == null || !caster.ability().alive() || !target.ability().alive()
           || caster.map() != target.map()
           || (positionBound && chebyshev(target.position(), impact.target()) > 1)) continue;
+      // The party relationship is re-confirmed on arrival — see castAreaHealing.
+      if (impact.kind() == MagicImpactKind.AREA_HEAL
+          && (!(caster instanceof Player healer) || !isAreaHealFriend(healer, target))) continue;
       if (impact.kind() == MagicImpactKind.DAMAGE || impact.kind() == MagicImpactKind.PIERCING_DAMAGE) {
         int defence = random.between(WorldRandom.Stream.MAGIC,
             target.ability().minMac(), target.ability().maxMac());
         int damage = applyMagicShield(target, Math.max(0, impact.power() - defence));
         applyDamage(target, caster, damage);
-      } else if (impact.kind() == MagicImpactKind.HEAL) {
+      } else if (impact.kind() == MagicImpactKind.HEAL
+          || impact.kind() == MagicImpactKind.AREA_HEAL) {
         Ability before = target.ability();
         Ability healed = before.withHp(before.hp() + impact.power());
         if (healed.equals(before)) continue;
@@ -5381,7 +5488,9 @@ public final class WorldEngine implements AutoCloseable {
     while ((pending = commands.poll()) != null) pending.cancel();
   }
 
-  private enum MagicImpactKind { DAMAGE, PIERCING_DAMAGE, HEAL, POISON_DECHEALTH, POISON_DAMAGEARMOR }
+  private enum MagicImpactKind {
+    DAMAGE, PIERCING_DAMAGE, HEAL, AREA_HEAL, POISON_DECHEALTH, POISON_DAMAGEARMOR
+  }
 
   private record PendingMagicImpact(
       long dueAt, MagicImpactKind kind, int casterId, int targetId, Position target, int power,
