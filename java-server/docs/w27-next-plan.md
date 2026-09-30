@@ -209,3 +209,38 @@ W36 接入 `SKILL_MOOTEBO`(27 野蛮冲撞)——官方 1.76 基线（1..33）�
 
 下一项：转向道士符箓消耗模型（`CheckAmulet`/`UseAmulet`）与 `SKILL_FIRECHARM`(13 灵魂火符)/`SKILL_AMYOUNSUL`(6 施毒术)；
 或法师多格穿透/群体魔法（`SKILL_FIRE`(9 地狱火)/`SKILL_SHOOTLIGHTEN`(10 疾光电影)）。
+
+### 技能逐项接入·第六批（W37）— 已完成：护身符充能门（CheckAmulet/UseAmulet）+ 施毒术/灵魂火符
+
+W37 接入 `SKILL_AMYOUNSUL`(6 施毒术)/`SKILL_FIRECHARM`(13 灵魂火符)，一并立项两者共用的
+`CheckAmulet`/`UseAmulet`（Magic.pas:81/134）护身符充能门——官方 1..33 权威目录中最后两项道士
+主动技能，全部收口。
+
+- **充能门**：`U_ARMRINGL`→`U_BUJUK` 顺序扫描 `StdMode=25` 且 `Shape` 匹配的消耗品，
+  `ROUND(Dura/100)>=1` 才算命中，命中后 `UseAmulet` 耗 100 耐久（复用既有 `damageEquipment`）。
+  未命中时法力已扣、`RM_SPELL` 已播，但 `RM_MAGICFIRE` 永不广播，只应答裸 `SM_MAGICFIRE_FAIL`——
+  与既有 `SpellRejected`（不扣蓝、不播姿势、`+FAIL`）是不同的失败形状，新增
+  `WorldEvent.SpellFizzled` 承载。
+- **灵魂火符**：护身符（`Shape=5`）命中后是与火球/雷电共用的单体延迟伤害链，用「道术 SC」顶替
+  「魔法 MC」且只加一次（不二倍），1200ms 延迟。
+- **施毒术**：药粉（`Shape<=2`）命中后先过 `Random(AntiPoison+7)<=6` 抵抗判定（`AntiPoison` 属性
+  未接入前恒为真，单独拆到 `WorldRandom.Stream.POISON_RESIST`）；`Shape=1` 灰色药粉→
+  `POISON_DECHEALTH`（`GetPower13(40)+GetRPow(SC)*2` 秒 DoT，该值同时是持续时间秒数，每 2.5 秒
+  `DamageHealth(point+1)`）；`Shape=2` 黄色药粉→`POISON_DAMAGEARMOR`（受到任意伤害 ×1.2）；
+  `MakePosion` 取更长剩余时间而非叠加；`sYouPoisoned` 只提示玩家目标。
+- 证据：`WorldAmuletSkillTest`（5 用例）、`GameAmuletProtocolTest`（2 用例）；矩阵
+  `SKILL_AMYOUNSUL`/`SKILL_FIRECHARM` 各三行升为 `implemented+gate-game`。
+  详见 `docs/g0-evidence/2026-09-30-w37-skill-batch-amyounsul-firecharm.md`。
+
+**本轮不做 / 显式延后**：
+- `AntiPoison`/`AntiMagic` 属性本身仍未接入装备/怪物数据，抵抗判定目前是恒定结果的占位实现。
+- `SKILL_HANGMAJINBUB`(14 幽灵盾) 的 MP 吸收分支仍 `unimplemented`；`applyPoisonDamage` 只实现了
+  `DamageHealth` 的 HP-only 分支。
+- 护甲磨损掷骰、shadowdiff 场景/门禁行本轮不新增。
+
+**环境限制**：本轮开发沙箱无 Maven/JDK 预装，且出网仅放行 pypi/GitHub/npm 域名，无法访问 Maven
+Central 解析测试依赖，因此本轮改动未能在本地跑通 `mvn -f java-server/pom.xml verify`——已对每个
+新增/修改方法逐一核对真实签名/字段名，但请在有 Maven Central 出网权限的环境中尽快补跑验证。
+
+下一项：待 `AntiPoison`/`AntiMagic` 属性接入后回填真实抵抗判定；或转向法师多格穿透/群体魔法
+（`SKILL_FIRE`(9 地狱火)/`SKILL_SHOOTLIGHTEN`(10 疾光电影)）。

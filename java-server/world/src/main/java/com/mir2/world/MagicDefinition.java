@@ -84,6 +84,20 @@ public record MagicDefinition(
     return bankersRound(rawPower / 4.0 * (skillLevel + 1));
   }
 
+  /**
+   * {@code GetPower13} (Magic.pas:59): a second power-scaling shape used by 施毒术, which splits
+   * a literal constant into thirds — one third is flat, the other two thirds scale with skill
+   * level exactly like {@link #scalePower} (again against the hard-coded {@code btTrainLv = 3}).
+   * Delphi's {@code /} is real division throughout, so the split itself is fractional before the
+   * final {@code ROUND}.
+   */
+  int scalePower13(int rawValue, int skillLevel) {
+    checkSkillLevel(skillLevel);
+    double flatThird = rawValue / 3.0;
+    double scaledThirds = rawValue - flatThird;
+    return bankersRound(scaledThirds / 4.0 * (skillLevel + 1) + flatThird);
+  }
+
   private static int bankersRound(double value) {
     return (int) Math.rint(value);
   }
