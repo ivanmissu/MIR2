@@ -222,6 +222,15 @@ public final class GameProtocolAdapter implements WorldEventSink {
           sendStatus(false);
         }
       }
+      // RM_MAGICFIREFAIL only: mana was already spent and +GOOD already answered (SpellAccepted
+      // fired earlier in the same cast), so this does not touch sendStatus/SysMsg — the missing
+      // charm is silent on the wire in Delphi too (Magic.pas:415-497 has no SysMsg branch here).
+      case WorldEvent.SpellFizzled fizzled -> {
+        if (fizzled.casterId() == playerId) {
+          output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_MAGICFIRE_FAIL,
+              fizzled.casterId(), 0, 0, 0, "")));
+        }
+      }
       case WorldEvent.ObjectSpellCast cast -> {
         // Delphi suppresses RM_SPELL for the caster; the local client already animated it.
         if (cast.caster().id() != playerId) {

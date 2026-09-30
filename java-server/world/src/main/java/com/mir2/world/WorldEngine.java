@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Random;
 import java.util.Set;
 import java.util.UUID;
@@ -171,10 +172,34 @@ public final class WorldEngine implements AutoCloseable {
   private static final int SKILL_FIREBALL = 1;
   private static final int SKILL_HEALING = 2;
   private static final int SKILL_FIREBALL2 = 5;
+  private static final int SKILL_AMYOUNSUL = 6;
   private static final int SKILL_LIGHTENING = 11;
+  private static final int SKILL_FIRECHARM = 13;
   private static final int SKILL_MAGIC_SHIELD = 31;
   /** Magic.pas:437 {@code TargeTBaseObject.m_btLifeAttrib = LA_UNDEAD} lightning multiplier. */
   private static final double LIGHTENING_UNDEAD_MULTIPLIER = 1.5;
+  /** {@code SendDelayMsg(..., 1200)} ahead of 灵魂火符's {@code RM_DELAYMAGIC} (Magic.pas:439). */
+  private static final long FIRECHARM_IMPACT_DELAY_MILLIS = 1_200;
+  /** {@code SendDelayMsg(..., 1000)} ahead of 施毒术's {@code RM_POISON} (Magic.pas:333/345). */
+  private static final long POISON_APPLY_DELAY_MILLIS = 1_000;
+  /** {@code g_Config.dwPosionDecHealthTime} (M2Share.pas:2073): the 灰色药粉 damage cadence. */
+  private static final long POISON_DECHEALTH_TICK_MILLIS = 2_500;
+  /** {@code g_Config.nPosionDamagarmor} (M2Share.pas:2074): 12 / 10 = 1.2x incoming damage. */
+  private static final double POISON_DAMAGEARMOR_MULTIPLIER = 1.2;
+  /** {@code g_Config.nAmyOunsulPoint} (M2Share.pas:2069): divides the 施毒术 point formula. */
+  private static final int AMYOUNSUL_POINT_DIVISOR = 10;
+  /**
+   * {@code Random(m_btAntiPoison + 7) &lt;= 6} (Magic.pas:333): no target currently carries a
+   * non-zero AntiPoison stat (未导入), so this constant stands in for it — the draw always
+   * succeeds until the real stat ships.
+   */
+  private static final int POISON_RESIST_ANTIPOISON_DEFAULT = 0;
+  /** {@code TStdItem.StdMode} for the 护身符/药粉 family consumed by {@code CheckAmulet}. */
+  private static final int AMULET_STD_MODE = 25;
+  /** {@code CheckAmulet}/{@code UseAmulet} charge unit: one charge costs 100 raw durability. */
+  private static final int AMULET_CHARGE_UNITS = 100;
+  /** {@code sYouPoisoned} (M2Share.pas:2972). */
+  private static final String POISONED_MESSAGE = "你中毒了[时间:%d秒，点数:%d点].";
 
   /**
    * {@code g_Config.nSwordLongPowerRate} (M2Share.pas:2076): the percentage 刺杀剑术 keeps of
@@ -1369,6 +1394,7 @@ public final class WorldEngine implements AutoCloseable {
   private void runTickBody() {
     resolvePendingMagicImpacts();
     expireSkillBuffs();
+    tickPoison();
     regenSpawners();
     updateMonsters();
     decayPkPoints();
@@ -1713,6 +1739,15 @@ public final class WorldEngine implements AutoCloseable {
     emitToObserversAndSelf(player, new WorldEvent.HealthChanged(player.snapshot()));
     WorldEvent cast = new WorldEvent.ObjectSpellCast(player.snapshot(), target, magic);
     for (int viewerId : visibleIds(player.map, player.position, player.id)) emit(players.get(viewerId), cast);
+
+    // Magic.pas:415-497: 灵魂火符/施毒术 gate RM_MAGICFIRE behind a spent 护身符 charge — the
+    // RM_SPELL cast pose above already went out unconditionally, but a caster with no charm
+    // never gets the projectile broadcast at all (see castAmuletGatedSpell).
+    if (magicId == SKILL_FIRECHARM || magicId == SKILL_AMYOUNSUL) {
+      castAmuletGatedSpell(player, magicId, skill, magic, target, targetId, now);
+      return true;
+    }
+
     emitToObserversAndSelf(player, new WorldEvent.MagicFired(player.id, target, targetId, magic));
 
     if (magicId == SKILL_FIREBALL || magicId == SKILL_FIREBALL2) {
@@ -2121,9 +2156,15 @@ public final class WorldEngine implements AutoCloseable {
     return target instanceof Player;
   }
 
-  /** {@code SKILL_FIREBALL}/{@code SKILL_FIREBALL2}/{@code SKILL_LIGHTENING}: single hostile bolt. */
+  /**
+   * {@code SKILL_FIREBALL}/{@code SKILL_FIREBALL2}/{@code SKILL_LIGHTENING}/
+   * {@code SKILL_FIRECHARM}/{@code SKILL_AMYOUNSUL}: every hostile single-target bolt, including
+   * the two 护身符-gated skills — they still need a live, non-self, non-NPC target before the
+   * amulet is even checked (Magic.pas's shared {@code IsProperTarget} gate).
+   */
   private static boolean isDamageBolt(int magicId) {
-    return magicId == SKILL_FIREBALL || magicId == SKILL_FIREBALL2 || magicId == SKILL_LIGHTENING;
+    return magicId == SKILL_FIREBALL || magicId == SKILL_FIREBALL2 || magicId == SKILL_LIGHTENING
+        || magicId == SKILL_FIRECHARM || magicId == SKILL_AMYOUNSUL;
   }
 
   /** {@code TargeTBaseObject.m_btLifeAttrib = LA_UNDEAD} (Monster.DB {@code Undead} column). */
@@ -2153,6 +2194,127 @@ public final class WorldEngine implements AutoCloseable {
         + player.ability.minSc() * 2;
     return base + random.nextInt(WorldRandom.Stream.MAGIC,
         (player.ability.maxSc() - player.ability.minSc()) * 2 + 1);
+  }
+
+  /**
+   * {@code GetAttackPower(GetPower(MPow(UserMagic)) + LoWord(m_WAbil.SC), ...)}: 灵魂火符's
+   * power roll (Magic.pas:439) is the fireball/healing shape with 道术 (SC) standing in for the
+   * usual 魔法 (MC)/双倍 SC pairing — a single, un-doubled SC contribution.
+   */
+  private int rollFireCharmPower(Player player, PlayerSkill skill, MagicDefinition magic) {
+    int base = getMagicPower(magic, skill.level(), rollExclusive(magic.power(), magic.maxPower()))
+        + player.ability.minSc();
+    return base + random.nextInt(WorldRandom.Stream.MAGIC,
+        player.ability.maxSc() - player.ability.minSc() + 1);
+  }
+
+  /**
+   * {@code GetPower13(40)}/{@code GetPower13(30)} plus {@code GetRPow(SC) * 2} (Magic.pas:335,
+   * 340): 施毒术's power roll doubles as the poison's duration in seconds — a quirk kept
+   * verbatim, see {@link #castAmyounsul}.
+   */
+  private int rollAmyounsulPower(Player player, PlayerSkill skill, MagicDefinition magic, int base) {
+    int power = magic.scalePower13(base, skill.level())
+        + rollExclusive(magic.defPower(), magic.defMaxPower());
+    return power + random.between(WorldRandom.Stream.MAGIC,
+        player.ability.minSc(), player.ability.maxSc()) * 2;
+  }
+
+  /** {@code CheckAmulet}'s result (Magic.pas:81): the slot and instance that will pay a charge. */
+  private record AmuletCharge(EquipmentSlot slot, BackpackItem item) {
+    /** The charm template's {@code Shape}: 5 for 护身符, 1/2 for 灰色/黄色药粉. */
+    int shape() {
+      return item.item().shape();
+    }
+  }
+
+  /**
+   * {@code CheckAmulet} (Magic.pas:81): scans {@code U_ARMRINGL} then {@code U_BUJUK} for a
+   * {@code StdMode = 25} charm whose {@code Shape} matches {@code nType} (1 → 护身符 family,
+   * Shape 5; 2 → 药粉 family, Shape &lt;= 2) and still has at least {@code nCount} charges —
+   * {@code ROUND(Dura / 100) &gt;= nCount}, banker's rounding like every other Delphi
+   * {@code Round}. The first eligible slot wins; charges are never combined across slots.
+   */
+  private Optional<AmuletCharge> findAmulet(Player player, int type, int count) {
+    for (EquipmentSlot slot : List.of(EquipmentSlot.ARM_RING_LEFT, EquipmentSlot.CHARM_AMULET)) {
+      BackpackItem worn = player.equipment.at(slot).orElse(null);
+      if (worn == null || worn.item().stdMode() != AMULET_STD_MODE) continue;
+      boolean shapeMatches = type == 1 ? worn.item().shape() == 5 : worn.item().shape() <= 2;
+      if (!shapeMatches) continue;
+      if (Math.rint(worn.dura() / (double) AMULET_CHARGE_UNITS) < count) continue;
+      return Optional.of(new AmuletCharge(slot, worn));
+    }
+    return Optional.empty();
+  }
+
+  /**
+   * {@code UseAmulet} (Magic.pas:134): spends {@code nCount} charges (100 durability apiece),
+   * destroying the charm outright once it can no longer pay — {@link #damageEquipment} already
+   * implements exactly this "drain to zero, then delete" shape for worn-item wear.
+   */
+  private void consumeAmulet(Player player, AmuletCharge amulet, int count) {
+    damageEquipment(player, amulet.slot(), count * AMULET_CHARGE_UNITS);
+  }
+
+  /**
+   * {@code SKILL_FIRECHARM}(13)/{@code SKILL_AMYOUNSUL}(6) share one 护身符 gate (Magic.pas:
+   * 415-497): {@code boSpellFail} starts {@code True} and only flips once {@code CheckAmulet}
+   * finds a charge to spend. A caster with none never gets {@code RM_MAGICFIRE} — the outer
+   * {@code ClientSpellXY} answers with {@code RM_MAGICFIREFAIL} instead ({@link
+   * WorldEvent.SpellFizzled}) even though mana was already spent and the cast pose already
+   * played.
+   */
+  private void castAmuletGatedSpell(Player player, int magicId, PlayerSkill skill,
+      MagicDefinition magic, Position target, int targetId, long now) {
+    int amuletType = magicId == SKILL_FIRECHARM ? 1 : 2;
+    Optional<AmuletCharge> amulet = findAmulet(player, amuletType, 1);
+    if (amulet.isEmpty()) {
+      emit(player, new WorldEvent.SpellFizzled(player.id, magicId));
+      return;
+    }
+    consumeAmulet(player, amulet.get(), 1);
+    emitToObserversAndSelf(player, new WorldEvent.MagicFired(player.id, target, targetId, magic));
+    if (magicId == SKILL_FIRECHARM) {
+      castFireCharm(player, skill, magic, target, targetId, now);
+    } else {
+      castAmyounsul(player, skill, magic, amulet.get().shape(), target, targetId, now);
+    }
+  }
+
+  /**
+   * {@code SKILL_FIRECHARM} (Magic.pas:436): once the charm is spent, this is the same delayed
+   * single-target bolt shape as fireball/lightning — adjacency-to-target and hostility were
+   * already enforced by {@link #validSpellTarget} before the amulet check ran. Like every other
+   * bolt in this port (W32), the {@code m_nAntiMagic} dodge roll is skipped because no target
+   * currently carries a non-zero value.
+   */
+  private void castFireCharm(
+      Player player, PlayerSkill skill, MagicDefinition magic, Position target, int targetId, long now) {
+    int power = rollFireCharmPower(player, skill, magic);
+    pendingMagicImpacts.add(new PendingMagicImpact(
+        now + FIRECHARM_IMPACT_DELAY_MILLIS, MagicImpactKind.DAMAGE,
+        player.id, targetId, target, power));
+  }
+
+  /**
+   * {@code SKILL_AMYOUNSUL} (Magic.pas:318): the charm's {@code Shape} selects which poison
+   * lands — 1 (灰色药粉) is {@code POISON_DECHEALTH}, periodic HP drain; 2 (黄色药粉) is
+   * {@code POISON_DAMAGEARMOR}, a flat incoming-damage multiplier. Both roll the same resist
+   * gate first ({@code Random(m_btAntiPoison + 7) &lt;= 6}); on a resist, the charm is still
+   * spent and {@code RM_MAGICFIRE} still fires (Delphi silently drops the {@code case} body),
+   * so nothing distinguishes a resisted cast from one that simply missed on the wire.
+   */
+  private void castAmyounsul(Player player, PlayerSkill skill, MagicDefinition magic,
+      int amuletShape, Position target, int targetId, long now) {
+    if (random.nextInt(WorldRandom.Stream.POISON_RESIST, POISON_RESIST_ANTIPOISON_DEFAULT + 7) > 6)
+      return;
+    MagicImpactKind kind = amuletShape == 1
+        ? MagicImpactKind.POISON_DECHEALTH : MagicImpactKind.POISON_DAMAGEARMOR;
+    int base = amuletShape == 1 ? 40 : 30;
+    int power = rollAmyounsulPower(player, skill, magic, base);
+    int point = (int) Math.rint(skill.level() / 3.0 * (power / (double) AMYOUNSUL_POINT_DIVISOR));
+    pendingMagicImpacts.add(new PendingMagicImpact(
+        now + POISON_APPLY_DELAY_MILLIS, kind, player.id, targetId, target, power, point));
   }
 
   private int rollMagicShieldSeconds(Player player, PlayerSkill skill, MagicDefinition magic) {
@@ -3383,7 +3545,7 @@ public final class WorldEngine implements AutoCloseable {
             target.ability().minMac(), target.ability().maxMac());
         int damage = applyMagicShield(target, Math.max(0, impact.power() - defence));
         applyDamage(target, caster, damage);
-      } else {
+      } else if (impact.kind() == MagicImpactKind.HEAL) {
         Ability before = target.ability();
         Ability healed = before.withHp(before.hp() + impact.power());
         if (healed.equals(before)) continue;
@@ -3397,8 +3559,110 @@ public final class WorldEngine implements AutoCloseable {
           }
         }
         emitToObserversAndSelf(target, new WorldEvent.HealthChanged(target.snapshot()));
+      } else {
+        applyPoisonStatus(target, caster, impact.kind(), impact.power(), impact.extra());
       }
     }
+  }
+
+  /**
+   * {@code MakePosion} (ObjBase.pas:22730), applied {@link #POISON_APPLY_DELAY_MILLIS} after a
+   * successful 施毒术 cast. Delphi keeps the <em>longer</em> of the remaining and incoming
+   * duration rather than stacking them, and only a player victim gets the red 「你中毒了」 hint
+   * (the {@code RC_PLAYOBJECT} gate at ObjBase.pas:22752) — a poisoned monster gets neither a
+   * message nor any other visible cue beyond the periodic damage/multiplier itself.
+   *
+   * <p>{@code m_btGreenPoisoningPoint} is one shared field in Delphi, so a second poison of the
+   * other shape landing on the same victim would silently overwrite the first one's point value.
+   * This port keeps the two shapes' points independent instead — a deliberate simplification,
+   * since replicating the cross-shape overwrite only matters if both are active on the same
+   * target simultaneously.
+   */
+  private void applyPoisonStatus(
+      WorldObject target, WorldObject caster, MagicImpactKind kind, int durationSeconds, int point) {
+    PoisonStatus status = target.poison();
+    long now = clock.getAsLong();
+    long candidate = now + durationSeconds * 1_000L;
+    if (kind == MagicImpactKind.POISON_DECHEALTH) {
+      if (candidate > status.decHealthUntil) {
+        status.decHealthUntil = candidate;
+        status.decHealthPoint = point;
+        status.decHealthCasterId = caster.id();
+        status.nextDecHealthTickAt = now + POISON_DECHEALTH_TICK_MILLIS;
+      }
+    } else if (candidate > status.damageArmorUntil) {
+      status.damageArmorUntil = candidate;
+    }
+    if (target instanceof Player player) {
+      emit(player, new WorldEvent.SystemMessage(
+          player.id, String.format(POISONED_MESSAGE, durationSeconds, point)));
+    }
+  }
+
+  /**
+   * The periodic half of 施毒术's 灰色药粉 shape: {@code DamageHealth(m_btGreenPoisoningPoint +
+   * 1)} every {@link #POISON_DECHEALTH_TICK_MILLIS} while the timer is active (ObjBase.pas:4258).
+   * Delphi's {@code DamageHealth} is a lighter path than {@code StruckDamage}/{@code applyDamage}
+   * — no PK flag, no armour wear, no struck flinch broadcast — so this mirrors that instead of
+   * reusing {@link #applyDamage}. If the original caster is no longer resolvable the tick is
+   * simply skipped for this interval (the duration itself keeps counting down regardless).
+   */
+  private void tickPoisonDecHealth(WorldObject victim, long now) {
+    PoisonStatus status = victim.poison();
+    if (status.decHealthUntil <= now) {
+      status.decHealthUntil = 0;
+      return;
+    }
+    if (now < status.nextDecHealthTickAt) return;
+    status.nextDecHealthTickAt = now + POISON_DECHEALTH_TICK_MILLIS;
+    if (!victim.ability().alive()) return;
+    WorldObject caster = findObject(status.decHealthCasterId);
+    if (caster == null) return;
+    applyPoisonDamage(victim, caster, status.decHealthPoint + 1);
+  }
+
+  /**
+   * {@code TBaseObject.DamageHealth} (ObjBase.pas:2451), the HP-only half relevant once the
+   * 幽灵盾 MP-absorption branch is out of scope (that skill is still unimplemented). On death the
+   * last-known poison caster is credited as the killer, matching {@code m_LastHiter} having been
+   * set once at the original {@code RM_POISON} dispatch.
+   */
+  private void applyPoisonDamage(WorldObject victim, WorldObject caster, int amount) {
+    if (amount <= 0 || !victim.ability().alive()) return;
+    Ability before = victim.ability();
+    Ability updated = before.withHp(before.hp() - amount);
+    victim.setAbility(updated);
+    if (victim instanceof Player player) {
+      try {
+        persist(player);
+      } catch (RuntimeException failure) {
+        player.setAbility(before);
+        throw failure;
+      }
+    }
+    if (updated.alive()) {
+      emitToObserversAndSelf(victim, new WorldEvent.HealthChanged(victim.snapshot()));
+    } else {
+      handleDeath(victim, caster);
+    }
+  }
+
+  /**
+   * Ticks every live player/monster's poison timers once per world tick. Split from {@link
+   * #resolvePendingMagicImpacts} because a poison, once applied, outlives the pending-impact
+   * queue entry that started it.
+   */
+  private void tickPoison() {
+    long now = clock.getAsLong();
+    for (Player player : players.values()) tickPoisonDecHealth(player, now);
+    for (Monster monster : monsters.values()) tickPoisonDecHealth(monster, now);
+    for (Player player : players.values()) expirePoisonDamageArmor(player, now);
+    for (Monster monster : monsters.values()) expirePoisonDamageArmor(monster, now);
+  }
+
+  private void expirePoisonDamageArmor(WorldObject victim, long now) {
+    PoisonStatus status = victim.poison();
+    if (status.damageArmorUntil != 0 && status.damageArmorUntil <= now) status.damageArmorUntil = 0;
   }
 
   /**
@@ -3433,6 +3697,12 @@ public final class WorldEngine implements AutoCloseable {
     // zero-damage SM_STRUCK here, which only ever fired on the rare full-absorb case and is
     // now corrected — otherwise every dodged swing would repaint the victim.
     if (damage <= 0) return;
+    // StruckDamage (ObjBase.pas:22472): while 施毒术's 黄色药粉 (POISON_DAMAGEARMOR) is active,
+    // every hit the victim takes — melee or magic alike, since both funnel through this method —
+    // is scaled up by g_Config.nPosionDamagarmor / 10.
+    if (victim.poison().damageArmorUntil > clock.getAsLong()) {
+      damage = (int) Math.rint(damage * POISON_DAMAGEARMOR_MULTIPLIER);
+    }
     // RM_STRUCK handling (ObjBase.pas:5477) sets the attacker's PK flag before the damage is
     // applied, so even a non-lethal blow between players repaints the aggressor's name.
     setPkFlag(victim, attacker);
@@ -4920,15 +5190,22 @@ public final class WorldEngine implements AutoCloseable {
     while ((pending = commands.poll()) != null) pending.cancel();
   }
 
-  private enum MagicImpactKind { DAMAGE, HEAL }
+  private enum MagicImpactKind { DAMAGE, HEAL, POISON_DECHEALTH, POISON_DAMAGEARMOR }
 
   private record PendingMagicImpact(
-      long dueAt, MagicImpactKind kind, int casterId, int targetId, Position target, int power) {
+      long dueAt, MagicImpactKind kind, int casterId, int targetId, Position target, int power,
+      int extra) {
     private PendingMagicImpact {
       Objects.requireNonNull(kind, "kind");
       Objects.requireNonNull(target, "target");
-      if (casterId <= 0 || targetId <= 0 || power < 0)
+      if (casterId <= 0 || targetId <= 0 || power < 0 || extra < 0)
         throw new IllegalArgumentException("invalid pending magic impact");
+    }
+
+    /** Compatibility constructor for DAMAGE/HEAL impacts, which never use {@code extra}. */
+    PendingMagicImpact(
+        long dueAt, MagicImpactKind kind, int casterId, int targetId, Position target, int power) {
+      this(dueAt, kind, casterId, targetId, target, power, 0);
     }
   }
 
@@ -4991,6 +5268,28 @@ public final class WorldEngine implements AutoCloseable {
 
     /** {@code m_btSpeedPoint} — 敏捷: the defender side of the same check. */
     int speedPoint();
+
+    /** {@code m_wStatusTimeArr[POISON_DECHEALTH]}/{@code [POISON_DAMAGEARMOR]} timers. */
+    PoisonStatus poison();
+  }
+
+  /**
+   * The two 施毒术 status timers a {@link WorldObject} can carry (Common/Grobal2.pas
+   * {@code POISON_DECHEALTH = 0}/{@code POISON_DAMAGEARMOR = 1}), modelled as absolute
+   * "until" timestamps rather than Delphi's per-second countdown — consistent with every other
+   * timed buff already in this engine (魔法盾, 烈火剑法, ...).
+   */
+  private static final class PoisonStatus {
+    /** {@code m_wStatusTimeArr[POISON_DECHEALTH] > 0}: 0 when inactive. */
+    long decHealthUntil;
+    /** {@code m_btGreenPoisoningPoint} for the DECHEALTH shape specifically (see W37 notes). */
+    int decHealthPoint;
+    /** {@code m_LastHiter} at the moment DECHEALTH was applied; who the periodic tick credits. */
+    int decHealthCasterId;
+    /** Next {@link WorldEngine#POISON_DECHEALTH_TICK_MILLIS} boundary. */
+    long nextDecHealthTickAt;
+    /** {@code m_wStatusTimeArr[POISON_DAMAGEARMOR] > 0}: 0 when inactive. */
+    long damageArmorUntil;
   }
 
   private static final class Player implements WorldObject {
@@ -5312,6 +5611,13 @@ public final class WorldEngine implements AutoCloseable {
     public int speedPoint() {
       return speedPoint;
     }
+
+    private final PoisonStatus poison = new PoisonStatus();
+
+    @Override
+    public PoisonStatus poison() {
+      return poison;
+    }
   }
 
   private static final class Monster implements WorldObject {
@@ -5319,6 +5625,7 @@ public final class WorldEngine implements AutoCloseable {
     private final MonsterTemplate template;
     private final GameMap map;
     private final List<Integer> droppedItemIds = new ArrayList<>();
+    private final PoisonStatus poison = new PoisonStatus();
     private Position position;
     private Direction direction;
     private Ability ability;
@@ -5381,6 +5688,11 @@ public final class WorldEngine implements AutoCloseable {
     @Override
     public int speedPoint() {
       return template.speedPoint();
+    }
+
+    @Override
+    public PoisonStatus poison() {
+      return poison;
     }
   }
 
@@ -5453,6 +5765,14 @@ public final class WorldEngine implements AutoCloseable {
     @Override
     public int speedPoint() {
       return 0;
+    }
+
+    /** NPCs are never {@code IsProperTarget}, so this timer pair is never consulted either. */
+    private static final PoisonStatus NEVER_POISONED = new PoisonStatus();
+
+    @Override
+    public PoisonStatus poison() {
+      return NEVER_POISONED;
     }
   }
 }

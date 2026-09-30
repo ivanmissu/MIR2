@@ -30,6 +30,7 @@ public sealed interface WorldEvent
         WorldEvent.SkillsSent,
         WorldEvent.SpellAccepted,
         WorldEvent.SpellRejected,
+        WorldEvent.SpellFizzled,
         WorldEvent.PowerHitReady,
         WorldEvent.WeaponSkillToggled,
         WorldEvent.SubAbilityChanged,
@@ -308,6 +309,21 @@ public sealed interface WorldEvent
       if (playerId <= 0) throw new IllegalArgumentException("player id must be positive");
       Objects.requireNonNull(reason, "reason");
       Objects.requireNonNull(message, "message");
+    }
+  }
+
+  /**
+   * {@code RM_MAGICFIREFAIL} (ObjBase.pas:9234, sent when {@code TPlayObject.DoSpell} returns
+   * {@code False}): the caster already paid mana and showed the {@code RM_SPELL} cast pose —
+   * {@code ClientSpellXY}'s non-warrior branch always answers {@code +GOOD} — but the symbol-
+   * consuming skill ({@code SKILL_AMYOUNSUL}/{@code SKILL_FIRECHARM}) had no charm to spend, so
+   * the {@code RM_MAGICFIRE} projectile never went out. Distinct from {@link SpellRejected},
+   * which additionally reverts the cast and answers {@code +FAIL}.
+   */
+  record SpellFizzled(int casterId, int magicId) implements WorldEvent {
+    public SpellFizzled {
+      if (casterId <= 0 || magicId <= 0)
+        throw new IllegalArgumentException("caster and magic ids must be positive");
     }
   }
 

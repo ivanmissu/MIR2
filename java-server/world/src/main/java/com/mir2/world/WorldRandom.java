@@ -65,7 +65,14 @@ public final class WorldRandom {
      */
     POWER_HIT,
     /** {@code TrainSkill}: the classic {@code Random(3) + 1} weapon-skill gain. */
-    SKILL_TRAIN
+    SKILL_TRAIN,
+    /**
+     * {@code Random(TargeTBaseObject.m_btAntiPoison + 7) &lt;= 6} (Magic.pas:333/345): the 施毒术
+     * resist gate. No target currently carries a non-zero AntiPoison stat, so the draw always
+     * resolves the same way, but it is kept on its own stream so wiring the real stat later only
+     * changes the bound, not the draw order of every other magic roll.
+     */
+    POISON_RESIST
   }
 
   private static final Stream[] STREAMS = Stream.values();
