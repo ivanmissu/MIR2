@@ -300,5 +300,5 @@ W39 收口 W37/W38 留下的抗性占位：把 `RecalcAbilitys` 中已经由 `Eq
   暂不引入推测效果。
 - shadowdiff 技能场景/发布门禁行仍留待技能批次统一补齐。
 
-下一项：继续按矩阵缺口推进法师剩余群体魔法；或在技能批次收口后统一补充 shadowdiff 场景与
+下一项：按 `docs/w40-next-plan.md` 推进群体魔法最小切片，先完成 `SKILL_BIGHEALLING` 的范围选择与逐目标治疗，再视 Delphi 语义证据决定是否接入 `SKILL_FIREBOOM`；随后统一补充技能 shadowdiff 场景与
 `g4-release-gate.tsv` 门禁行。
