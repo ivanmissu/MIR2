@@ -7,8 +7,10 @@
 - [x] `AreaTargetSelector`：方形范围、Chebyshev 距离、合法目标过滤、稳定排序。
 - [x] `WorldObject` 适配：Player/Monster/Npc 可作为范围目标。
 - [x] `AreaHealing` 纯计算层：逐目标治疗、最大 HP 钳制、满血目标过滤。
-- [ ] `WorldEngine` 接入 `SKILL_BIGHEALLING=29`。
-- [ ] gate 协议测试与技能 shadowdiff。
+- [x] `WorldEngine` 接入 `SKILL_BIGHEALLING=29`（`castAreaHealing` + `MagicImpactKind.AREA_HEAL`）。
+- [x] gate 协议测试（`GameAreaHealingProtocolTest`）与世界验收测试（`WorldAreaHealingTest`）。
+- [x] 能力矩阵 `SKILL_BIGHEALLING:{warrior,wizard,taoist}` 由 `unimplemented` 更新为 `implemented`。
+- [ ] 技能 shadowdiff 场景与 `shadowdiff-skills` 门禁行（shadowdiff 目前没有任何施法 op，见 w41 计划）。
 
 ## 下一步：接入 SKILL_BIGHEALLING（P0）
 
