@@ -5441,8 +5441,13 @@ public final class WorldEngine implements AutoCloseable {
   }
 
   /** Common state of every solid object tracked by the map occupancy index. */
-  private sealed interface WorldObject permits Player, Monster, Npc {
+  private sealed interface WorldObject extends AreaTargetSelector.AreaTarget permits Player, Monster, Npc {
     int id();
+
+    @Override
+    default int objectId() {
+      return id();
+    }
 
     GameMap map();
 
