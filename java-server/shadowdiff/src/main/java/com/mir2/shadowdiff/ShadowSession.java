@@ -190,6 +190,17 @@ final class ShadowSession implements AutoCloseable {
       case SAY -> game.sendPacket(message(ProtocolConstants.CM_SAY, 0, 0, 0, 0), op.text());
       // The W26 group protocol: param carries the CM_GROUPMODE switch, the other three put
       // the target player's name in the body exactly like ObjBase.pas does.
+      case SPELL -> {
+        String[] fields = op.text().split("\\s+");
+        int magicId = Integer.parseInt(fields[0]);
+        int x = Integer.parseInt(fields[1]);
+        int y = Integer.parseInt(fields[2]);
+        long target = fields.length == 4 ? Long.parseUnsignedLong(fields[3]) : 0;
+        int targetLow = (int) (target & 0xffff);
+        int targetHigh = (int) ((target >>> 16) & 0xffff);
+        game.sendPacket(message(ProtocolConstants.CM_SPELL,
+            packed(new Position(x, y)), targetLow, magicId, targetHigh), "");
+      }
       case GROUPMODE -> game.sendPacket(message(ProtocolConstants.CM_GROUPMODE,
           0, "1".equals(op.text()) ? 1 : 0, 0, 0), "");
       case GROUPCREATE -> game.sendPacket(message(ProtocolConstants.CM_CREATEGROUP,

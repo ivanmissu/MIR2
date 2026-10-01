@@ -593,7 +593,7 @@ public final class ShadowDiffMain {
         --script FILE          操作脚本（每行一个 op，# 注释；缺省用内置冒烟脚本）。
                                op: turn/walk/run/hit/heavyhit/bighit <dir 0..7>,
                                    pickup, bag, say <text>, drop/eat/takeon/takeoff <物品名>,
-                                   groupmode <0|1>, groupcreate/groupadd/groupdel <玩家名>,
+                                   spell <magicId> <x> <y> [targetId], groupmode <0|1>, groupcreate/groupadd/groupdel <玩家名>,
                                    sleep <ms>, tick <N>, relog
                                行首可加 p1 / p2 前缀指定双人对拍中的执行会话（W30），
                                无前缀 = p1；{p1}/{p2} 占位符在 duo 模式下替换为账号名。
