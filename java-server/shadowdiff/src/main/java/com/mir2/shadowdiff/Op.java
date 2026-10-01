@@ -51,6 +51,8 @@ public record Op(Kind kind, Direction direction, String text, long millis, Strin
     TAKEON,
     /** {@code CM_TAKEOFFITEM} by item name. */
     TAKEOFF,
+    /** {@code CM_SPELL}: real client spell request, encoded from script operands. */
+    SPELL,
     /**
      * {@code CM_GROUPMODE} (658): param 1 allows group invitations, param 0 refuses them
      * (and leaves the current party). W26.
@@ -184,6 +186,7 @@ public record Op(Kind kind, Direction direction, String text, long millis, Strin
       case "eat" -> withText(Kind.EAT, requireText(argument, "eat"));
       case "takeon" -> withText(Kind.TAKEON, requireText(argument, "takeon"));
       case "takeoff" -> withText(Kind.TAKEOFF, requireText(argument, "takeoff"));
+      case "spell" -> withText(Kind.SPELL, requireSpell(argument));
       case "groupmode" -> withText(Kind.GROUPMODE, requireGroupMode(argument));
       case "groupcreate" -> withText(Kind.GROUPCREATE, requireText(argument, "groupcreate"));
       case "groupadd" -> withText(Kind.GROUPADD, requireText(argument, "groupadd"));
@@ -193,6 +196,22 @@ public record Op(Kind kind, Direction direction, String text, long millis, Strin
       case "relog" -> of(Kind.RELOG);
       default -> throw new IllegalArgumentException("unknown op: " + keyword);
     };
+  }
+
+  private static String requireSpell(String argument) {
+    String value = requireText(argument, "spell");
+    String[] fields = value.split("\\s+");
+    if (fields.length < 3 || fields.length > 4)
+      throw new IllegalArgumentException("spell requires <magicId> <x> <y> [targetId]");
+    for (int index = 0; index < fields.length; index++) {
+      long number = Long.parseLong(fields[index]);
+      long maximum = index < 3 ? 0xffffL : 0xffff_ffffL;
+      if (number < 0 || number > maximum)
+        throw new IllegalArgumentException(index < 3
+            ? "magicId/x/y must be unsigned 16-bit integers"
+            : "targetId must be an unsigned 32-bit integer");
+    }
+    return value;
   }
 
   private static String requireGroupMode(String argument) {

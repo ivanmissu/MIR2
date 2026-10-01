@@ -28,10 +28,12 @@ class OpTest {
         eat 金创药(小量)
         takeon 木剑
         takeoff 木剑
+        spell 29 20 20
+        spell 23 21 22 4294967295
         sleep 250
         relog
         """);
-    assertEquals(15, ops.size());
+    assertEquals(17, ops.size());
     assertEquals(Op.Kind.TURN, ops.get(0).kind());
     assertEquals(Direction.DOWN_RIGHT, ops.get(0).direction());
     assertEquals(Direction.UP, ops.get(1).direction());
@@ -39,8 +41,11 @@ class OpTest {
     assertEquals("hello world", ops.get(8).text());
     assertEquals("木剑", ops.get(9).text());
     assertEquals("金创药(小量)", ops.get(10).text());
-    assertEquals(250, ops.get(13).millis());
-    assertEquals(Op.Kind.RELOG, ops.get(14).kind());
+    assertEquals(Op.Kind.SPELL, ops.get(13).kind());
+    assertEquals("29 20 20", ops.get(13).text());
+    assertEquals("23 21 22 4294967295", ops.get(14).text());
+    assertEquals(250, ops.get(15).millis());
+    assertEquals(Op.Kind.RELOG, ops.get(16).kind());
   }
 
   @Test
@@ -68,6 +73,9 @@ class OpTest {
     assertThrows(IllegalArgumentException.class, () -> Op.parseScript("say"));
     assertThrows(IllegalArgumentException.class, () -> Op.parseScript("sleep"));
     assertThrows(IllegalArgumentException.class, () -> Op.parseScript("walk 9"));
+    assertThrows(IllegalArgumentException.class, () -> Op.parseScript("spell 29 20"));
+    assertThrows(IllegalArgumentException.class, () -> Op.parseScript("spell 29 x 20"));
+    assertThrows(IllegalArgumentException.class, () -> Op.parseScript("spell 29 20 20 -1"));
   }
 
   @Test
