@@ -1,6 +1,7 @@
 package com.mir2.shadowdiff;
 
 import com.mir2.gate.ClientItemCodec;
+import com.mir2.gate.MagicCodec;
 import com.mir2.gate.WireMessageCodec;
 import com.mir2.gate.WirePacket;
 import com.mir2.protocol.DefaultMessage;
@@ -9,6 +10,7 @@ import com.mir2.world.BackpackItem;
 import com.mir2.world.Direction;
 import com.mir2.world.EquipmentSlot;
 import com.mir2.world.Position;
+import com.mir2.world.PlayerSkill;
 import java.io.IOException;
 import java.net.SocketTimeoutException;
 import java.nio.ByteBuffer;
@@ -83,6 +85,12 @@ final class ShadowSession implements AutoCloseable {
   private long worldTime = -1;
   private final Map<Integer, BackpackItem> bag = new LinkedHashMap<>();
   private final Map<Integer, BackpackItem> worn = new LinkedHashMap<>();
+  /**
+   * Learned magic rows reconstructed from SM_SENDMYMAGIC/SM_ADDMAGIC and their later
+   * SM_MAGIC_LVEXP mutations. The map key is the catalog magic id, so server-local object ids
+   * never leak into the W41 spell comparison.
+   */
+  private final Map<Integer, PlayerSkill> skills = new LinkedHashMap<>();
   /**
    * The party roster exactly as the last {@code SM_GROUPMEMBERS} spelled it (W30): server
    * order, names verbatim. Cleared on every {@code SM_NEWMAP} — a fresh map load forgets the
@@ -250,7 +258,7 @@ final class ShadowSession implements AutoCloseable {
     return new StateSnapshot(mapId, position.x(), position.y(), direction.code(),
         hp, maxHp, mp, maxMp, level, experience, gold, itemLines(bag), itemLines(worn),
         List.copyOf(combat), neighbourLines(), worldTime, List.copyOf(groupMembers),
-        nameColor, groundItems.values().stream().sorted().toList());
+        nameColor, groundItems.values().stream().sorted().toList(), skillLines());
   }
 
   /**
@@ -475,6 +483,7 @@ final class ShadowSession implements AutoCloseable {
         mapId = WireMessageCodec.decodeBody(packet.encodedBody());
         bag.clear();
         worn.clear();
+        skills.clear();
         // A fresh map wipes the client's actor list (ClMain.pas clears the scene), so the
         // census starts empty and is rebuilt from the SM_TURN storm that follows.
         neighbours.clear();
@@ -588,6 +597,41 @@ final class ShadowSession implements AutoCloseable {
         long gained = (Integer.toUnsignedLong(message.tag()) << 16)
             | Integer.toUnsignedLong(message.param());
         combat.add("exp +" + gained + " total=" + experience);
+      }
+      // Login refresh (SM_SENDMYMAGIC) is an encoded 84-byte TClientMagic block per skill.
+      // Keep only its durable TUserMagic prefix: key, level, training points and magic id.
+      case ProtocolConstants.SM_SENDMYMAGIC -> {
+        skills.clear();
+        for (String block : packet.encodedBody().split("/", -1)) {
+          if (block.isEmpty()) continue;
+          try {
+            PlayerSkill skill = decodeMagic(block);
+            skills.put(skill.magicId(), skill);
+          } catch (RuntimeException ignored) {
+            // A malformed magic block cannot safely be made observable; later training/update
+            // packets still surface a difference, and the message multiset retains the frame.
+          }
+        }
+      }
+      case ProtocolConstants.SM_ADDMAGIC -> {
+        try {
+          PlayerSkill skill = decodeMagic(packet.encodedBody());
+          skills.put(skill.magicId(), skill);
+        } catch (RuntimeException ignored) {
+          // See SM_SENDMYMAGIC above.
+        }
+      }
+      // RM_MAGIC_LVEXP -> SM_MAGIC_LVEXP: recog=id, param=level, tag/series=training words.
+      case ProtocolConstants.SM_MAGIC_LVEXP -> {
+        int magicId = message.recog();
+        int training = (message.tag() & 0xffff) | ((message.series() & 0xffff) << 16);
+        PlayerSkill previous = skills.get(magicId);
+        int key = previous == null ? 0 : previous.key();
+        try {
+          skills.put(magicId, new PlayerSkill(magicId, message.param() & 0xffff, training, key));
+        } catch (IllegalArgumentException ignored) {
+          // Keep the previous row if a malformed server packet cannot form a legal skill.
+        }
       }
       case ProtocolConstants.SM_BAGITEMS -> {
         bag.clear();
@@ -717,6 +761,28 @@ final class ShadowSession implements AutoCloseable {
       if (!worn.containsKey(slot.index())) return slot.index();
     }
     return firstAccepting != null ? firstAccepting : 0;
+  }
+
+  /** Decodes the durable prefix of Gate {@code MagicCodec}'s 84-byte TClientMagic payload. */
+  private static PlayerSkill decodeMagic(String encodedBlock) {
+    byte[] bytes = com.mir2.protocol.SixBitCodec.decodeString(encodedBlock);
+    if (bytes.length < MagicCodec.CLIENT_MAGIC_SIZE)
+      throw new IllegalArgumentException("TClientMagic block is too short");
+    ByteBuffer buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
+    int key = buffer.get(0) & 0xff;
+    int level = buffer.get(1) & 0xff;
+    int training = buffer.getInt(4);
+    int magicId = buffer.getShort(8) & 0xffff;
+    return new PlayerSkill(magicId, level, training, key);
+  }
+
+  /** Id-sorted durable skill lines, intentionally free of server-local actor identifiers. */
+  private List<String> skillLines() {
+    return skills.values().stream()
+        .sorted(Comparator.comparingInt(PlayerSkill::magicId))
+        .map(skill -> String.format(Locale.ROOT, "magic=%d level=%d train=%d key=%d",
+            skill.magicId(), skill.level(), skill.trainingPoints(), skill.key()))
+        .toList();
   }
 
   /**

@@ -67,7 +67,13 @@ final class G4ReleaseGateTest {
       "shadowdiff-duo-party",
       "shadowdiff-duo-death-pk",
       "shadowdiff-persistence",
-      "shadowdiff-lock");
+      "shadowdiff-lock",
+      "shadowdiff-skills",
+      "shadowdiff-skills-negative");
+
+  /** Every listed row must prove the harness observes a deliberate divergence. */
+  private static final Set<String> NEGATIVE_CONTROL_IDS = Set.of(
+      "shadowdiff-ai-negative", "shadowdiff-skills-negative");
 
   private record Row(String id, String kind, String blocking, String expect,
       String command, String artifact, String scope, String notes) {}
@@ -147,26 +153,40 @@ final class G4ReleaseGateTest {
   }
 
   /**
-   * The negative control is the row that proves the rest are not vacuous, so its shape is
-   * asserted explicitly: mismatched seeds and an {@code exit-1} expectation.
+   * Negative controls prove that each deterministic comparison surface is genuinely observed:
+   * both deliberately change the right-side seed and demand exit 1 rather than treating a
+   * passing comparison or a crash as acceptable evidence.
    */
   @org.junit.jupiter.api.Test
-  void theNegativeControlStillDemandsDivergence() {
-    Row row = rows().stream()
-        .filter(candidate -> candidate.id().equals("shadowdiff-ai-negative"))
-        .findFirst()
-        .orElseGet(() -> fail("the AI negative control row disappeared from the manifest"));
-    assertEquals("exit-1", row.expect(),
-        "a negative control that accepts exit 0 proves nothing");
-    Map<String, String> options = ShadowDiffMain.Args.parse(shadowdiffArgs(row));
-    assertTrue(options.containsKey("seed") && options.containsKey("right-seed"),
-        "the negative control needs both seeds");
-    assertFalse(options.get("seed").equals(options.get("right-seed")),
-        "the negative control's seeds must differ, otherwise the two worlds agree legitimately");
+  void negativeControlsStillDemandDivergence() {
+    Set<String> seen = new HashSet<>();
+    for (Row row : rows()) {
+      if (!NEGATIVE_CONTROL_IDS.contains(row.id())) continue;
+      seen.add(row.id());
+      assertEquals("exit-1", row.expect(),
+          "a negative control that accepts exit 0 proves nothing: " + row.id());
+      Map<String, String> options = ShadowDiffMain.Args.parse(shadowdiffArgs(row));
+      assertTrue(options.containsKey("seed") && options.containsKey("right-seed"),
+          row.id() + ": the negative control needs both seeds");
+      assertFalse(options.get("seed").equals(options.get("right-seed"),
+          row.id() + ": seeds must differ, otherwise the two worlds agree legitimately");
+    }
+    assertEquals(NEGATIVE_CONTROL_IDS, seen,
+        "a negative control row disappeared from the manifest");
     for (Row other : rows()) {
-      if (other.id().equals(row.id()) || !other.kind().equals("shadowdiff")) continue;
+      if (NEGATIVE_CONTROL_IDS.contains(other.id()) || !other.kind().equals("shadowdiff")) continue;
       assertEquals("exit-0", other.expect(),
-          other.id() + ": only the negative control may expect a non-zero exit");
+          other.id() + ": only declared negative controls may expect a non-zero exit");
+    }
+  }
+
+  @org.junit.jupiter.api.Test
+  void skillsRowsDriveTheDedicatedSpellScenario() {
+    for (String id : List.of("shadowdiff-skills", "shadowdiff-skills-negative")) {
+      Row row = rows().stream().filter(candidate -> candidate.id().equals(id)).findFirst()
+          .orElseGet(() -> fail("the skills row disappeared from the manifest: " + id));
+      assertTrue(ShadowDiffMain.Args.parse(shadowdiffArgs(row)).containsKey("skills"),
+          id + ": must use the dedicated pre-seeded spell scenario");
     }
   }
 

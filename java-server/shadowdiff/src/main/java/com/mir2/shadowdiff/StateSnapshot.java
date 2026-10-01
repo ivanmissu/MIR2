@@ -47,6 +47,12 @@ import java.util.Objects;
  * never reach the comparison. A loot table that rolled differently, or a drop that landed on
  * a different cell, is a STATE failure — which is what makes the party scenario's pickup
  * step observable rather than assumed.
+ *
+ * <p>{@code skills} is the W41 spell surface: the last learned-magic view rebuilt from
+ * {@code SM_SENDMYMAGIC}/{@code SM_ADDMAGIC} and updated by {@code SM_MAGIC_LVEXP}. Each line
+ * includes the magic id, level, training points and key, all durable values the player can
+ * observe after a relog. It makes an accepted healing cast's training mutation comparable
+ * instead of reducing spell evidence to only transient packets.
  */
 public record StateSnapshot(
     String mapId,
@@ -67,7 +73,8 @@ public record StateSnapshot(
     long worldTime,
     List<String> groupMembers,
     int nameColor,
-    List<String> groundItems) {
+    List<String> groundItems,
+    List<String> skills) {
 
   public StateSnapshot {
     mapId = Objects.requireNonNullElse(mapId, "");
@@ -77,6 +84,16 @@ public record StateSnapshot(
     neighbours = List.copyOf(neighbours);
     groupMembers = List.copyOf(groupMembers);
     groundItems = List.copyOf(groundItems);
+    skills = List.copyOf(skills);
+  }
+
+  /** Compatibility overload for callers predating the W41 learned-skill snapshot. */
+  public StateSnapshot(String mapId, int x, int y, int direction, int hp, int maxHp,
+      int mp, int maxMp, int level, long experience, long gold, List<String> bagItems,
+      List<String> wornItems, List<String> combat, List<String> neighbours, long worldTime,
+      List<String> groupMembers, int nameColor, List<String> groundItems) {
+    this(mapId, x, y, direction, hp, maxHp, mp, maxMp, level, experience, gold, bagItems,
+        wornItems, combat, neighbours, worldTime, groupMembers, nameColor, groundItems, List.of());
   }
 
   /** Compatibility overload for callers predating the neighbour census. */
@@ -109,7 +126,7 @@ public record StateSnapshot(
       List<String> wornItems, List<String> combat, List<String> neighbours, long worldTime,
       List<String> groupMembers, int nameColor) {
     this(mapId, x, y, direction, hp, maxHp, mp, maxMp, level, experience, gold, bagItems,
-        wornItems, combat, neighbours, worldTime, groupMembers, nameColor, List.of());
+        wornItems, combat, neighbours, worldTime, groupMembers, nameColor, List.of(), List.of());
   }
 
   /** Compatibility overload for callers predating the combat/experience fields. */
@@ -130,6 +147,7 @@ public record StateSnapshot(
         + (worldTime < 0 ? "" : " worldTime=" + worldTime)
         + (groupMembers.isEmpty() ? "" : " group=" + groupMembers)
         + (nameColor < 0 ? "" : " nameColor=" + nameColor)
-        + (groundItems.isEmpty() ? "" : " ground=" + groundItems);
+        + (groundItems.isEmpty() ? "" : " ground=" + groundItems)
+        + (skills.isEmpty() ? "" : " skills=" + skills);
   }
 }
