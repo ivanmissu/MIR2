@@ -25,6 +25,8 @@ services:
       # !Setup.txt SafeZoneSize=10: monsters cannot target a player this close to the spawn.
       MIR2_SAFE_ZONE_SIZE: ${MIR2_SAFE_ZONE_SIZE:-10}
       MIR2_WORLD_TICK_MS: ${MIR2_WORLD_TICK_MS:-50}
+      # Setup.FireBoomRage: square radius 1..12, shipped default 1.
+      MIR2_FIREBOOM_RANGE: ${MIR2_FIREBOOM_RANGE:-1}
       MIR2_MONSTER_COUNT: ${MIR2_MONSTER_COUNT:-0}
       MIR2_MONSTER_KIND: ${MIR2_MONSTER_KIND:-chicken}
       MIR2_BOOTSTRAP_USER: ${MIR2_BOOTSTRAP_USER:-}

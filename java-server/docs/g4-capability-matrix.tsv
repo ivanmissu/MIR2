@@ -390,7 +390,7 @@ SKILL	SKILL_EARTHFIRE:warrior	22	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	火
 SKILL	SKILL_EARTHFIRE:wizard	22	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	火墙；GEEM2 Magic.DB 同名行 job=wizard learnable=yes
 SKILL	SKILL_EARTHFIRE:taoist	22	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	火墙；GEEM2 Magic.DB 同名行 job=wizard learnable=no
 SKILL	SKILL_FIREBOOM:warrior	23	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	爆裂火焰；GEEM2 Magic.DB 同名行 job=wizard learnable=no
-SKILL	SKILL_FIREBOOM:wizard	23	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	爆裂火焰；GEEM2 Magic.DB 同名行 job=wizard learnable=yes
+SKILL	SKILL_FIREBOOM:wizard	23	n/a	gate-game	implemented	WorldAreaExplosionTest,GameAreaExplosionProtocolTest	Grobal2.pas:SKILL_*	爆裂火焰；GEEM2 Magic.DB 同名行 job=wizard learnable=yes；W42 接入：MIR2_FIREBOOM_RANGE(1–12) 方形、整次共享 GetAttackPower、SetTargetCreat、RM_MAGSTRUCK 对象绑定/MAC/魔法受击标记/命中训练；当前 IsProperTarget 仍受 Java 攻击模式/召唤物模型边界限制，G4 未签发
 SKILL	SKILL_FIREBOOM:taoist	23	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	爆裂火焰；GEEM2 Magic.DB 同名行 job=wizard learnable=no
 SKILL	SKILL_LIGHTFLOWER:warrior	24	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	地狱雷光；GEEM2 Magic.DB 同名行 job=wizard learnable=no
 SKILL	SKILL_LIGHTFLOWER:wizard	24	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	地狱雷光；GEEM2 Magic.DB 同名行 job=wizard learnable=yes

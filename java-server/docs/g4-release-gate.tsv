@@ -3,6 +3,8 @@
 # 用途：把 w27-next-plan §5 要求的「全量 mvn verify + shadowdiff 场景集合」固化成数据，
 #       由 scripts/g4-release-gate.sh 逐行执行并汇总，避免证据文档与实际跑批命令漂移。
 #
+# W42：FireBoom 的世界语义、CM_SPELL 协议与配置回归纳入 maven-verify；
+#       没有新增 Java↔Java shadowdiff 场景，亦无 Delphi/真实客户端差分证据。
 # 列：id / kind / blocking / expect / command / artifact / scope / notes
 #   id        门禁行标识（小写 kebab，全局唯一）
 #   kind      maven | shadowdiff
@@ -17,7 +19,7 @@
 # 红线：本清单全绿 ≠ G4 通过。G4 还需要真实 mir2.exe / Delphi 服务端外部基线，
 #       以及技能 / NPC 脚本 / 行会 / 攻城 / 交易的缺口收口（见 g4-capability-matrix.tsv）。
 id	kind	blocking	expect	command	artifact	scope	notes
-maven-verify	maven	yes	exit-0	mvn -f {{repo}}/java-server/pom.xml --batch-mode --no-transfer-progress verify	maven-verify.log	全模块单测 + 集成测试 + 两个数据门禁（G4CapabilityMatrixTest 能力矩阵、G4ReleaseGateTest 本清单）	构建产物同时提供后续 shadowdiff 行所需的 fat JAR
+maven-verify	maven	yes	exit-0	mvn -f {{repo}}/java-server/pom.xml --batch-mode --no-transfer-progress verify	maven-verify.log	全模块单测（含 W42 WorldAreaExplosionTest、GameAreaExplosionProtocolTest、ServerConfigTest）+ 集成测试 + 两个数据门禁（G4CapabilityMatrixTest 能力矩阵、G4ReleaseGateTest 本清单）	包含 FireBoom Java 回归；不构成 Delphi/真实客户端差分或 G4 签发证据。构建产物同时提供后续 shadowdiff 行所需的 fat JAR
 shadowdiff-base	shadowdiff	yes	exit-0	java --enable-native-access=ALL-UNNAMED -jar {{jar}} --embedded --strict-messages --report-dir {{report}}/shadowdiff-base	shadowdiff-base	登录→选人→进图→走/说话/背包 基础操作流在双服上逐 op 状态一致（严格消息）	W21 基线场景，harness 自检
 shadowdiff-pve	shadowdiff	yes	exit-0	java --enable-native-access=ALL-UNNAMED -jar {{jar}} --embedded --pve --seed 20260922 --report-dir {{report}}/shadowdiff-pve	shadowdiff-pve	同种子木桩 PvE：每一击伤害、HP、经验必须同流（守 WorldRandom 种子注入）	静止怪，SYSTEM 时钟
 shadowdiff-ai	shadowdiff	yes	exit-0	java --enable-native-access=ALL-UNNAMED -jar {{jar}} --embedded --ai --strict-messages --seed 20260922 --report-dir {{report}}/shadowdiff-ai	shadowdiff-ai	会动的怪：MANUAL 世界时钟下 AI 走位/攻击节拍与 SM 流逐 op 一致（守虚拟时钟不漏真实墙钟）	W23 虚拟时钟门禁

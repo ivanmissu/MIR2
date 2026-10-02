@@ -240,6 +240,7 @@ $JAVA --enable-native-access=ALL-UNNAMED -XX:MaxRAMPercentage=75 \
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `MIR2_WORLD_TICK_MS` | `50` | 世界逻辑 Tick 间隔，1–10000ms |
+| `MIR2_FIREBOOM_RANGE` | `1` | 爆裂火焰（SKILL_FIREBOOM=23）方形攻击半径；对应 `Setup.FireBoomRage`，取值 1–12，包含边界格。 |
 | `MIR2_MONSTER_COUNT` | `0` | 启动时在出生点四周生成的怪物数，0–1000。怪物**均匀分布在安全区之外的一圈**（半径 `MIR2_SAFE_ZONE_SIZE + 1`），不会贴脸生成 |
 | `MIR2_SAFE_ZONE_SIZE` | `10` | 出生点安全区半径（对应 `!Setup.txt` 的 `SafeZoneSize`）。对应 Delphi `TBaseObject.InSafeZone`：站在安全区内的玩家**不会被怪物选为攻击目标**（`IsAttackTarget`）。设为 0 可关闭（压测/对拍用），地图自带的 `boSAFE` 标志不受影响 |
 | `MIR2_MONSTER_KIND` | `chicken` | 首批 10 种模板之一：`chicken`（鸡）、`deer`（鹿，逃跑型）、`scarecrow`（稻草人）、`hookcat`（多钩猫）、`rakecat`（钉耙猫）、`cavemaggot`（洞蛆）、`scorpion`（蝎子）、`orc`（半兽人）、`orcwarrior`（半兽勇士）、`orcfighter`（半兽战士）；另有 `trainer`（木桩，站桩不还手，对应 Delphi `TRAINER`=55 / `TTrainer` 伤害测试木桩，供对拍用）；中文名同样有效 |
@@ -248,7 +249,7 @@ $JAVA --enable-native-access=ALL-UNNAMED -XX:MaxRAMPercentage=75 \
 | `MIR2_DISABLE_TAKEOFF_FILE` | 未设置 | 可选的经典 `DisableTakeOffList.txt` 路径（W22，对应 `M2Share.pas:LoadDisableTakeOffList`/`InDisableTakeOffList`）。GBK 文本，每行一件禁止取下的物品（`;` 注释与空行跳过，字段以空格/`/`/`,`/TAB 分隔，首字段为物品名）。列入的装备既**无法被玩家主动取下**（`ClientTakeOffItems`），死亡也**不会掉落**（`DropUseItems` 跳过该槽）。未设置或文件缺失 = 无物品锁定 |
 | `MIR2_SAVE_INTERVAL_SECONDS` | `600` | 在线玩家周期存档间隔（对应 Delphi `SaveHumanRcdTime`，默认 10 分钟）；事件型存档（伤害/拾取/离场）不受影响 |
 | `MIR2_TEST_GOLD` | `0` | 测试服登录金币下限（对应 Delphi `boTestServer`/`nTestGold`，`UserLogon` 语义）：登录时金币低于该值即补足并下发 `SM_GOLDCHANGED`；0 = 不生效，上限 10,000,000（`nHumanMaxGold`） |
-| `MIR2_WORLD_SEED` | 未设置 | **世界随机种子**。未设置（生产默认）= 全服共用一条随机流，等价 Delphi 的全局 `Random()`。设置后随机性按子系统拆成 5 条互不干扰的流（伤害 / 装备磨损 / 掉落 / 死亡掉包 / 刷怪落点），各自由该种子派生——**掉落 roll 了几次不再影响第 N 次伤害**。两台服务端配同一个值即可对拍 PvE 数值（见 `docs/g0-evidence/2026-09-22-shadowdiff-pve-seeded.md`）；仅影响可复现性，不改变线上手感 |
+| `MIR2_WORLD_SEED` | 未设置 | **世界随机种子**。未设置（生产默认）= 全服共用一条随机流，等价 Delphi 的全局 `Random()`。设置后随机性按子系统拆成互不干扰的命名流（伤害 / 魔法 / 抵抗 / 装备磨损 / 掉落 / 技能训练 / 刷怪等），各自由该种子派生——**掉落 roll 了几次不再影响第 N 次伤害**。两台服务端配同一个值即可对拍 PvE 数值（见 `docs/g0-evidence/2026-09-22-shadowdiff-pve-seeded.md`）；仅影响可复现性，不改变线上手感 |
 
 ### 5.4 账号引导
 

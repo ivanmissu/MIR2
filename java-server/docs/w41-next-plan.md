@@ -37,9 +37,9 @@ java --enable-native-access=ALL-UNNAMED \
   --report-dir reports/shadowdiff-skills-negative
 ```
 
-## 后续候选：SKILL_FIREBOOM（P1）
+## W41 计划闭环
 
-爆裂火焰（23，`MagBigExplosion`，`g_Config.nFireBoomRage = 1`）与群体治愈共享方形取样，但语义相反：逐目标抗魔、伤害、阻挡与中心格判定都必须先从 Delphi 源码确认。无法确认的字段保持 `protocol-only`；不得按群体治愈的形状猜测性实现。
+W41 的 P0 施法 shadowdiff 通道已完成；本文件原列的下一候选 `SKILL_FIREBOOM` 已在 W42 按 Delphi 源码证据实现，范围、伤害、受击标记与剩余边界见 [`w42-next-plan.md`](w42-next-plan.md)。该实现不等同于 Delphi/真实客户端对拍，G4 仍未签发。
 
 ## 本轮不做
 
