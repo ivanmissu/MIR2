@@ -215,12 +215,21 @@ public sealed interface WorldEvent
     }
   }
 
-  /** Damage landed on {@code victim}; {@code damage} may be zero when defence absorbed the hit. */
-  record ObjectStruck(WorldObjectSnapshot victim, int attackerId, int damage) implements WorldEvent {
+  /**
+   * Damage landed on {@code victim}; the {@code magical} bit becomes TMessageBodyWL.lTag2 for
+   * {@code RM_STRUCK_MAG} (the legacy client uses it to choose the magic-hit reaction).
+   */
+  record ObjectStruck(WorldObjectSnapshot victim, int attackerId, int damage, boolean magical)
+      implements WorldEvent {
     public ObjectStruck {
       Objects.requireNonNull(victim, "victim");
       if (attackerId <= 0) throw new IllegalArgumentException("attacker id must be positive");
       if (damage < 0) throw new IllegalArgumentException("damage must not be negative");
+    }
+
+    /** Compatibility constructor for the pre-W42 physical-hit event shape. */
+    public ObjectStruck(WorldObjectSnapshot victim, int attackerId, int damage) {
+      this(victim, attackerId, damage, false);
     }
   }
 

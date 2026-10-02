@@ -178,7 +178,10 @@ public final class WorldEngine implements AutoCloseable {
   private static final int SKILL_LIGHTENING = 11;
   private static final int SKILL_FIRECHARM = 13;
   private static final int SKILL_BIGHEALLING = 29;
+  private static final int SKILL_FIREBOOM = 23;
   private static final int SKILL_MAGIC_SHIELD = 31;
+  private static final int DEFAULT_FIREBOOM_RANGE = 1;
+  private static final int MAX_FIREBOOM_RANGE = 12;
   /**
    * {@code GetMapBaseObjects(m_PEnvir, nX, nY, 1, ...)} (Magic.pas:180): 群体治愈术 collects the
    * inclusive 3x3 square around the click — the constant is hard-coded, not a config value and
@@ -255,7 +258,8 @@ public final class WorldEngine implements AutoCloseable {
       long itemLingerMillis,
       long regenIntervalMillis,
       long saveIntervalMillis,
-      long testGold) {
+      long testGold,
+      int fireBoomRange) {
 
     public Config {
       Objects.requireNonNull(tickInterval, "tickInterval");
@@ -272,13 +276,24 @@ public final class WorldEngine implements AutoCloseable {
         throw new IllegalArgumentException("save interval must be at least one millisecond");
       if (testGold < 0 || testGold > PlayerState.MAX_GOLD)
         throw new IllegalArgumentException("test gold must be within 0.." + PlayerState.MAX_GOLD);
+      if (fireBoomRange < 1 || fireBoomRange > MAX_FIREBOOM_RANGE)
+        throw new IllegalArgumentException("FireBoom range must be within 1.." + MAX_FIREBOOM_RANGE);
+    }
+
+    /** Compatibility constructor retaining the pre-W42 canonical signature. */
+    public Config(Duration tickInterval, int viewRange, int maxCommandsPerTick,
+        long hitIntervalMillis, long corpseLingerMillis, long itemLingerMillis,
+        long regenIntervalMillis, long saveIntervalMillis, long testGold) {
+      this(tickInterval, viewRange, maxCommandsPerTick, hitIntervalMillis, corpseLingerMillis,
+          itemLingerMillis, regenIntervalMillis, saveIntervalMillis, testGold,
+          DEFAULT_FIREBOOM_RANGE);
     }
 
     public Config(Duration tickInterval, int viewRange, int maxCommandsPerTick,
         long hitIntervalMillis, long corpseLingerMillis, long itemLingerMillis,
         long regenIntervalMillis, long saveIntervalMillis) {
       this(tickInterval, viewRange, maxCommandsPerTick, hitIntervalMillis, corpseLingerMillis,
-          itemLingerMillis, regenIntervalMillis, saveIntervalMillis, 0);
+          itemLingerMillis, regenIntervalMillis, saveIntervalMillis, 0, DEFAULT_FIREBOOM_RANGE);
     }
 
     public Config(Duration tickInterval, int viewRange, int maxCommandsPerTick,
@@ -1716,7 +1731,8 @@ public final class WorldEngine implements AutoCloseable {
     if (player.ability.level() < magic.requiredLevel(skill.level()))
       return rejectSpell(player, magicId, WorldEvent.SpellRejection.LEVEL_TOO_LOW, "等级不足，无法使用该技能");
     if (!isDamageBolt(magicId) && !isLinePiercingSkill(magicId) && !isAreaHealingSkill(magicId)
-        && magicId != SKILL_HEALING && magicId != SKILL_MAGIC_SHIELD)
+        && !isAreaExplosionSkill(magicId) && magicId != SKILL_HEALING
+        && magicId != SKILL_MAGIC_SHIELD)
       return rejectSpell(player, magicId, WorldEvent.SpellRejection.UNSUPPORTED_SKILL, "该技能尚未开放");
 
     Position target = magicId == SKILL_MAGIC_SHIELD ? player.position : requestedTarget;
@@ -1744,6 +1760,7 @@ public final class WorldEngine implements AutoCloseable {
     // 群体治愈术 shares the ground-click shape: MagBigHealing (Magic.pas:172) only reads
     // nTargetX/nTargetY, so a click on empty ground with targetId = 0 is a legal cast.
     if (!isLinePiercingSkill(magicId) && !isAreaHealingSkill(magicId)
+        && !isAreaExplosionSkill(magicId)
         && !validSpellTarget(player, targetObject, target, magicId))
       return rejectSpell(player, magicId, WorldEvent.SpellRejection.INVALID_TARGET, "施法目标无效");
 
@@ -1790,6 +1807,14 @@ public final class WorldEngine implements AutoCloseable {
     // leaves the single-target resist/impact chain below entirely (see castAreaHealing).
     if (isAreaHealingSkill(magicId)) {
       castAreaHealing(player, skill, magic, target, targetId, now);
+      return true;
+    }
+
+    // Magic.pas:510 — 爆裂火焰 is a ground-target area attack. Its one GetAttackPower roll is
+    // shared by every proper target; RM_MAGSTRUCK has no anti-magic-resist roll and is delivered
+    // to the bound object rather than re-checking the explosion cell on arrival.
+    if (isAreaExplosionSkill(magicId)) {
+      castAreaExplosion(player, skill, magic, target, targetId, now);
       return true;
     }
 
@@ -2238,6 +2263,16 @@ public final class WorldEngine implements AutoCloseable {
         player.ability.maxMc() - player.ability.minMc() + 1);
   }
 
+  /** FireBoom's exact GetAttackPower base + spread call (Magic.pas:510). */
+  private int rollFireBoomPower(Player player, PlayerSkill skill, MagicDefinition magic) {
+    int base = getMagicPower(magic, skill.level(), rollExclusive(magic.power(), magic.maxPower()))
+        + player.ability.minMc();
+    int spread = player.ability.maxMc() - player.ability.minMc() + 1;
+    // GetAttackPower draws the inclusive 0..nPower range, so the source's +1 spread gives
+    // HiMC-LoMC+2 possible offsets. Do not collapse this to the usual LoMC..HiMC fireball roll.
+    return attackPower(base, base + spread, playerLuck(player));
+  }
+
   private int rollHealingPower(Player player, PlayerSkill skill, MagicDefinition magic) {
     int base = getMagicPower(magic, skill.level(), rollExclusive(magic.power(), magic.maxPower()))
         + player.ability.minSc() * 2;
@@ -2382,6 +2417,11 @@ public final class WorldEngine implements AutoCloseable {
     return magicId == SKILL_BIGHEALLING;
   }
 
+  /** Magic.DB row 23 — 爆裂火焰: a configurable square of RM_MAGSTRUCK impacts. */
+  private static boolean isAreaExplosionSkill(int magicId) {
+    return magicId == SKILL_FIREBOOM;
+  }
+
   /**
    * {@code SKILL_BIGHEALLING}(29, 群体治愈术, Magic.pas:532 → {@code MagBigHealing},
    * Magic.pas:172):
@@ -2447,6 +2487,53 @@ public final class WorldEngine implements AutoCloseable {
     emitToObserversAndSelf(player, new WorldEvent.MagicFired(player.id, center, firedTargetId, magic));
     // boTrain is only set when at least one friend was actually below max HP (Magic.pas:186).
     if (!healed.isEmpty()) trainSpellSkill(player, skill, magic);
+  }
+
+  /**
+   * {@code SKILL_FIREBOOM}(23, 爆裂火焰, Magic.pas:510 → {@code MagBigExplosion}, Magic.pas:1170):
+   * the click is optionally snapped to a nearby named object, then every live proper target in
+   * the inclusive square gets one ordinary (non-delayed) {@code RM_MAGSTRUCK} carrying the same
+   * power. There is no per-target anti-magic-resist roll, and delivery stays bound to the object
+   * even if it moves out of the square. The configured radius defaults to one and ranges from 1
+   * through 12, matching {@code Setup.FireBoomRage}.
+   *
+   * <p>The shared roll is {@code GetAttackPower(GetPower(MPow) + LoWord(MC),
+   * SmallInt(HiWord(MC)-LoWord(MC)) + 1)}. The second argument is a <em>power spread</em>, not
+   * the high MC endpoint; the extra inclusive point is intentional. Luck/UnLuck use the existing
+   * {@link #attackPower(int, int, int)} port. Delphi's player-only power-rate and color modifiers
+   * are not modeled by the current player state and remain outside this slice.
+   *
+   * <p>{@code IsProperTarget} uses the current hostility slice: alive, same map, not the caster,
+   * and not an NPC. Attack/protection modes, slave ownership and an explicit ghost flag are not
+   * represented by the Java object model; dead objects are rejected and ghosts are absent from
+   * map occupancy.
+   */
+  private void castAreaExplosion(
+      Player player, PlayerSkill skill, MagicDefinition magic, Position requestedTarget,
+      int targetId, long now) {
+    WorldObject clicked = targetId != 0 ? findObject(targetId) : null;
+    boolean snapped = clicked != null && clicked.map() == player.map
+        && chebyshev(clicked.position(), requestedTarget) <= 1;
+    Position center = snapped ? clicked.position() : requestedTarget;
+    int firedTargetId = snapped && clicked.ability().alive() ? clicked.id() : 0;
+
+    // MagBigExplosion evaluates nPower before it searches the square, even when nobody is hit.
+    int power = rollFireBoomPower(player, skill, magic);
+    int hits = 0;
+    for (int id : player.map.objectsInSquare(center, config.fireBoomRange())) {
+      WorldObject candidate = findObject(id);
+      if (!isProperTarget(player, candidate)) continue;
+      // MagBigExplosion calls SetTargetCreat before SendMsg(RM_MAGSTRUCK).
+      if (candidate instanceof Monster monster) monster.targetId = player.id;
+      pendingMagicImpacts.add(new PendingMagicImpact(
+          now, MagicImpactKind.AREA_DAMAGE, player.id, candidate.id(), candidate.position(), power));
+      hits++;
+    }
+
+    emitToObserversAndSelf(player, new WorldEvent.MagicFired(player.id, center, firedTargetId, magic));
+    // DoSpell's boTrain is the MagBigExplosion result: any proper target trains even when MAC
+    // later absorbs the entire hit.
+    if (hits > 0) trainSpellSkill(player, skill, magic);
   }
 
   /**
@@ -3830,6 +3917,7 @@ public final class WorldEngine implements AutoCloseable {
       // RM_MAGHEALING of 群体治愈术 is likewise addressed to the object (Magic.pas:185), so a
       // healed friend who stepped away inside the 800 ms window still receives it.
       boolean positionBound = impact.kind() != MagicImpactKind.PIERCING_DAMAGE
+          && impact.kind() != MagicImpactKind.AREA_DAMAGE
           && impact.kind() != MagicImpactKind.AREA_HEAL;
       if (caster == null || target == null || !caster.ability().alive() || !target.ability().alive()
           || caster.map() != target.map()
@@ -3837,11 +3925,18 @@ public final class WorldEngine implements AutoCloseable {
       // The party relationship is re-confirmed on arrival — see castAreaHealing.
       if (impact.kind() == MagicImpactKind.AREA_HEAL
           && (!(caster instanceof Player healer) || !isAreaHealFriend(healer, target))) continue;
-      if (impact.kind() == MagicImpactKind.DAMAGE || impact.kind() == MagicImpactKind.PIERCING_DAMAGE) {
+      if (impact.kind() == MagicImpactKind.DAMAGE || impact.kind() == MagicImpactKind.PIERCING_DAMAGE
+          || impact.kind() == MagicImpactKind.AREA_DAMAGE) {
+        if ((impact.kind() == MagicImpactKind.PIERCING_DAMAGE
+            || impact.kind() == MagicImpactKind.AREA_DAMAGE)
+            && target instanceof Monster monster && monster.ability().level() < 50) {
+          // RM_MAGSTRUCK: low-level animals pause walking for 800 + Random(1000) ms before MAC.
+          monster.lastWalkAt += 800 + random.nextInt(WorldRandom.Stream.MAGIC_STAGGER, 1_000);
+        }
         int defence = random.between(WorldRandom.Stream.MAGIC,
             target.ability().minMac(), target.ability().maxMac());
         int damage = applyMagicShield(target, Math.max(0, impact.power() - defence));
-        applyDamage(target, caster, damage);
+        applyDamage(target, caster, damage, true);
       } else if (impact.kind() == MagicImpactKind.HEAL
           || impact.kind() == MagicImpactKind.AREA_HEAL) {
         Ability before = target.ability();
@@ -3989,6 +4084,10 @@ public final class WorldEngine implements AutoCloseable {
   }
 
   private void applyDamage(WorldObject victim, WorldObject attacker, int damage) {
+    applyDamage(victim, attacker, damage, false);
+  }
+
+  private void applyDamage(WorldObject victim, WorldObject attacker, int damage, boolean magical) {
     // ObjBase.pas:22252-22262 gates StruckDamage *and* the RM_STRUCK broadcast behind
     // `if nPower > 0`, so a blow that was dodged (W33) or fully absorbed by AC is silent on
     // the wire: no flinch animation, no floating 0. Before W33 the engine broadcast a
@@ -4017,7 +4116,7 @@ public final class WorldEngine implements AutoCloseable {
       }
       wearArmorOnStruck(player);
     }
-    broadcastStruck(victim, attacker.id(), damage);
+    broadcastStruck(victim, attacker.id(), damage, magical);
     if (updated.alive()) {
       WorldEvent health = new WorldEvent.HealthChanged(victim.snapshot());
       emitToObserversAndSelf(victim, health);
@@ -4163,8 +4262,8 @@ public final class WorldEngine implements AutoCloseable {
     }
   }
 
-  private void broadcastStruck(WorldObject victim, int attackerId, int damage) {
-    WorldEvent struck = new WorldEvent.ObjectStruck(victim.snapshot(), attackerId, damage);
+  private void broadcastStruck(WorldObject victim, int attackerId, int damage, boolean magical) {
+    WorldEvent struck = new WorldEvent.ObjectStruck(victim.snapshot(), attackerId, damage, magical);
     emitToObserversAndSelf(victim, struck);
   }
 
@@ -5489,7 +5588,7 @@ public final class WorldEngine implements AutoCloseable {
   }
 
   private enum MagicImpactKind {
-    DAMAGE, PIERCING_DAMAGE, HEAL, AREA_HEAL, POISON_DECHEALTH, POISON_DAMAGEARMOR
+    DAMAGE, PIERCING_DAMAGE, AREA_DAMAGE, HEAL, AREA_HEAL, POISON_DECHEALTH, POISON_DAMAGEARMOR
   }
 
   private record PendingMagicImpact(

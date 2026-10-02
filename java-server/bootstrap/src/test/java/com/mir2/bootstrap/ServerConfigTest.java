@@ -26,6 +26,8 @@ class ServerConfigTest {
     assertNull(config.bootstrapUser());
     // !Setup.txt SafeZoneSize=10.
     assertEquals(10, config.safeZoneSize());
+    // M2Share.pas Setup.FireBoomRage defaults to one tile.
+    assertEquals(1, config.fireBoomRange());
   }
 
   @Test
@@ -39,6 +41,26 @@ class ServerConfigTest {
         () -> ServerConfig.from(Map.of("MIR2_SAFE_ZONE_SIZE", "-1")));
     assertThrows(IllegalArgumentException.class,
         () -> ServerConfig.from(Map.of("MIR2_SAFE_ZONE_SIZE", "101")));
+  }
+
+  @Test
+  void fireBoomRangeMatchesDelphiDefaultsAndFlowsThroughCopies() {
+    ServerConfig defaults = ServerConfig.from(Map.of());
+    assertEquals(1, defaults.fireBoomRange());
+    assertEquals(4, ServerConfig.from(Map.of("MIR2_FIREBOOM_RANGE", "4")).fireBoomRange());
+    assertEquals(12, ServerConfig.from(Map.of("MIR2_FIREBOOM_RANGE", "12")).fireBoomRange());
+
+    ServerConfig copied = defaults.withSafeZoneSize(0)
+        .withWorldClockMode(com.mir2.world.WorldClock.Mode.MANUAL)
+        .withDisableTakeOffFile(Path.of("DisableTakeOffList.txt"));
+    assertEquals(1, copied.fireBoomRange(), "unrelated copy helpers retain FireBoom range");
+    assertEquals(6, defaults.withFireBoomRange(6).fireBoomRange());
+    assertThrows(IllegalArgumentException.class, () -> defaults.withFireBoomRange(0));
+    assertThrows(IllegalArgumentException.class, () -> defaults.withFireBoomRange(13));
+    assertThrows(IllegalArgumentException.class,
+        () -> ServerConfig.from(Map.of("MIR2_FIREBOOM_RANGE", "0")));
+    assertThrows(IllegalArgumentException.class,
+        () -> ServerConfig.from(Map.of("MIR2_FIREBOOM_RANGE", "13")));
   }
 
   @Test

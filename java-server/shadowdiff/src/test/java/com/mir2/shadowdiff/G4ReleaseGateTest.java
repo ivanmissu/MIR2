@@ -168,7 +168,7 @@ final class G4ReleaseGateTest {
       Map<String, String> options = ShadowDiffMain.Args.parse(shadowdiffArgs(row));
       assertTrue(options.containsKey("seed") && options.containsKey("right-seed"),
           row.id() + ": the negative control needs both seeds");
-      assertFalse(options.get("seed").equals(options.get("right-seed"),
+      assertFalse(options.get("seed").equals(options.get("right-seed")),
           row.id() + ": seeds must differ, otherwise the two worlds agree legitimately");
     }
     assertEquals(NEGATIVE_CONTROL_IDS, seen,
@@ -188,6 +188,17 @@ final class G4ReleaseGateTest {
       assertTrue(ShadowDiffMain.Args.parse(shadowdiffArgs(row)).containsKey("skills"),
           id + ": must use the dedicated pre-seeded spell scenario");
     }
+  }
+
+  @org.junit.jupiter.api.Test
+  void fireBoomJavaRegressionIsListedWithoutClaimingExternalG4Evidence() {
+    Row row = rows().stream().filter(candidate -> candidate.id().equals("maven-verify"))
+        .findFirst().orElseGet(() -> fail("the Maven verification row disappeared"));
+    assertTrue(row.scope().contains("WorldAreaExplosionTest"));
+    assertTrue(row.scope().contains("GameAreaExplosionProtocolTest"));
+    assertTrue(row.scope().contains("ServerConfigTest"));
+    assertTrue(row.notes().contains("不构成 Delphi/真实客户端差分或 G4 签发证据"),
+        "Java FireBoom tests must not be described as external compatibility evidence");
   }
 
   @org.junit.jupiter.api.Test

@@ -684,7 +684,8 @@ public final class GameProtocolAdapter implements WorldEventSink {
   /** {@code SM_STRUCK}: recog=victim, param=HP, tag=MaxHP, series=damage, body=TMessageBodyWL. */
   private void sendStruck(WorldEvent.ObjectStruck struck) {
     WorldObjectSnapshot victim = struck.victim();
-    String body = messageBodyWl(victim.feature(), victim.status(), struck.attackerId(), 0);
+    String body = messageBodyWl(victim.feature(), victim.status(), struck.attackerId(),
+        struck.magical() ? 1 : 0);
     output.accept(new GameOutbound.Packet(packet(ProtocolConstants.SM_STRUCK, victim.id(),
         victim.ability().hp(), victim.ability().maxHp(), struck.damage(), body)));
   }

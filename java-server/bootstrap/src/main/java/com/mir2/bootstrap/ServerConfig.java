@@ -41,7 +41,11 @@ public record ServerConfig(
     int maxClientPacketSize,
     int normalClientPacketSize,
     int maxClientMessagesPerRead,
-    boolean kickOnOversizePacket) {
+    boolean kickOnOversizePacket,
+    int fireBoomRange) {
+
+  private static final int DEFAULT_FIREBOOM_RANGE = 1;
+  private static final int MAX_FIREBOOM_RANGE = 12;
 
   /**
    * One decorative NPC to stand near the spawn point: a {@code MIR2_NPC_LIST} entry
@@ -65,6 +69,25 @@ public record ServerConfig(
       new NpcPlacement("老板", 1, -5, 0),
       new NpcPlacement("商人", 2, 0, -5));
 
+  /** Compatibility constructor retaining the pre-W42 canonical signature. */
+  public ServerConfig(Path database, GatePorts ports, String advertisedHost, String serverName,
+      Path mapFile, Path mapInfoFile, String mapId, int spawnX, int spawnY, int worldTickMillis,
+      int monsterCount, String monsterKind, Path monGenFile, String bootstrapUser,
+      String bootstrapPassword, int maxConnectionsPerIp, int connectionBurstLimit1s,
+      int connectionBurstLimit3s, int idleTimeoutSeconds, int saveIntervalSeconds, long testGold,
+      Long worldSeed, int safeZoneSize, boolean spawnConfigured, List<NpcPlacement> npcPlacements,
+      Path disableTakeOffFile, com.mir2.world.WorldClock.Mode worldClockMode, Path blockIpFile,
+      com.mir2.gate.BlockMethod blockMethod, int maxClientPacketSize, int normalClientPacketSize,
+      int maxClientMessagesPerRead, boolean kickOnOversizePacket) {
+    this(database, ports, advertisedHost, serverName, mapFile, mapInfoFile, mapId, spawnX, spawnY,
+        worldTickMillis, monsterCount, monsterKind, monGenFile, bootstrapUser, bootstrapPassword,
+        maxConnectionsPerIp, connectionBurstLimit1s, connectionBurstLimit3s, idleTimeoutSeconds,
+        saveIntervalSeconds, testGold, worldSeed, safeZoneSize, spawnConfigured, npcPlacements,
+        disableTakeOffFile, worldClockMode, blockIpFile, blockMethod, maxClientPacketSize,
+        normalClientPacketSize, maxClientMessagesPerRead, kickOnOversizePacket,
+        DEFAULT_FIREBOOM_RANGE);
+  }
+
   /** Compatibility constructor for embedded tests and load-test callers. */
   public ServerConfig(Path database, GatePorts ports, String advertisedHost, String serverName,
       Path mapFile, String mapId, int spawnX, int spawnY, int worldTickMillis, int monsterCount,
@@ -76,7 +99,7 @@ public record ServerConfig(
         null, com.mir2.gate.BlockMethod.DISCONNECT,
         com.mir2.gate.PacketSizePolicy.DEFAULT_MAX_SIZE,
         com.mir2.gate.PacketSizePolicy.DEFAULT_NORMAL_SIZE,
-        com.mir2.gate.PacketSizePolicy.DEFAULT_MAX_MESSAGES, true);
+        com.mir2.gate.PacketSizePolicy.DEFAULT_MAX_MESSAGES, true, DEFAULT_FIREBOOM_RANGE);
   }
 
   /** Compatibility constructor that also pins the world seed (shadow comparison harness). */
@@ -90,7 +113,7 @@ public record ServerConfig(
         null, com.mir2.gate.BlockMethod.DISCONNECT,
         com.mir2.gate.PacketSizePolicy.DEFAULT_MAX_SIZE,
         com.mir2.gate.PacketSizePolicy.DEFAULT_NORMAL_SIZE,
-        com.mir2.gate.PacketSizePolicy.DEFAULT_MAX_MESSAGES, true);
+        com.mir2.gate.PacketSizePolicy.DEFAULT_MAX_MESSAGES, true, DEFAULT_FIREBOOM_RANGE);
   }
 
   public ServerConfig {
@@ -123,6 +146,9 @@ public record ServerConfig(
       throw new IllegalArgumentException("save interval must be a positive number of seconds");
     if (safeZoneSize < 0 || safeZoneSize > 100)
       throw new IllegalArgumentException("safe zone size must be between 0 and 100");
+    if (fireBoomRange < 1 || fireBoomRange > MAX_FIREBOOM_RANGE)
+      throw new IllegalArgumentException("MIR2_FIREBOOM_RANGE must be between 1 and "
+          + MAX_FIREBOOM_RANGE);
     if (testGold < 0 || testGold > com.mir2.world.PlayerState.MAX_GOLD)
       throw new IllegalArgumentException("test gold must be within 0.."
           + com.mir2.world.PlayerState.MAX_GOLD);
@@ -162,7 +188,7 @@ public record ServerConfig(
         connectionBurstLimit3s, idleTimeoutSeconds, saveIntervalSeconds, testGold,
         worldSeed, newSafeZoneSize, spawnConfigured, npcPlacements, disableTakeOffFile,
         worldClockMode, blockIpFile, blockMethod, maxClientPacketSize, normalClientPacketSize,
-        maxClientMessagesPerRead, kickOnOversizePacket);
+        maxClientMessagesPerRead, kickOnOversizePacket, fireBoomRange);
   }
 
   /**
@@ -178,7 +204,7 @@ public record ServerConfig(
         connectionBurstLimit3s, idleTimeoutSeconds, saveIntervalSeconds, testGold,
         worldSeed, safeZoneSize, spawnConfigured, npcPlacements, disableTakeOffFile, mode,
         blockIpFile, blockMethod, maxClientPacketSize, normalClientPacketSize,
-        maxClientMessagesPerRead, kickOnOversizePacket);
+        maxClientMessagesPerRead, kickOnOversizePacket, fireBoomRange);
   }
 
   /**
@@ -195,7 +221,18 @@ public record ServerConfig(
         connectionBurstLimit3s, idleTimeoutSeconds, saveIntervalSeconds, testGold,
         worldSeed, safeZoneSize, spawnConfigured, npcPlacements, newDisableTakeOffFile,
         worldClockMode, blockIpFile, blockMethod, maxClientPacketSize, normalClientPacketSize,
-        maxClientMessagesPerRead, kickOnOversizePacket);
+        maxClientMessagesPerRead, kickOnOversizePacket, fireBoomRange);
+  }
+
+  /** Returns a copy with a different {@code Setup.FireBoomRage} radius (1..12). */
+  public ServerConfig withFireBoomRange(int newFireBoomRange) {
+    return new ServerConfig(database, ports, advertisedHost, serverName, mapFile, mapInfoFile,
+        mapId, spawnX, spawnY, worldTickMillis, monsterCount, monsterKind, monGenFile,
+        bootstrapUser, bootstrapPassword, maxConnectionsPerIp, connectionBurstLimit1s,
+        connectionBurstLimit3s, idleTimeoutSeconds, saveIntervalSeconds, testGold,
+        worldSeed, safeZoneSize, spawnConfigured, npcPlacements, disableTakeOffFile,
+        worldClockMode, blockIpFile, blockMethod, maxClientPacketSize, normalClientPacketSize,
+        maxClientMessagesPerRead, kickOnOversizePacket, newFireBoomRange);
   }
 
   /**
@@ -276,7 +313,8 @@ public record ServerConfig(
             com.mir2.gate.PacketSizePolicy.DEFAULT_MAX_MESSAGES),
         // bokickOverPacketSize = True: an oversized read closes the connection. False keeps
         // it open but still discards the bytes, exactly as Delphi does.
-        booleanValue(environment, "MIR2_KICK_ON_OVERSIZE_PACKET", true));
+        booleanValue(environment, "MIR2_KICK_ON_OVERSIZE_PACKET", true),
+        nonNegativeInt(environment, "MIR2_FIREBOOM_RANGE", DEFAULT_FIREBOOM_RANGE));
   }
 
   /** The admission guard for all three gates: IP bans plus Delphi's three connection limits. */

@@ -19,6 +19,8 @@ import com.mir2.world.WorldEvent;
 import com.mir2.world.WorldEventSink;
 import com.mir2.world.WorldObjectSnapshot;
 import com.mir2.world.WorldObjectType;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -261,6 +263,8 @@ class GameCombatProtocolTest {
       assertEquals(2, struck.message().param());
       assertEquals(6, struck.message().tag());
       assertEquals(4, struck.message().series());
+      assertEquals(0, ByteBuffer.wrap(SixBitCodec.decodeString(struck.encodedBody()))
+          .order(ByteOrder.LITTLE_ENDIAN).getInt(12), "physical RM_STRUCK keeps lTag2=0");
 
       adapter.send(new WorldEvent.ItemAppeared(new GroundItem(12, "金创药", 40, "0", new Position(7, 8))));
       WirePacket shown = ((GameOutbound.Packet) output.remove(0)).packet();

@@ -77,7 +77,9 @@ public final class WorldRandom {
      * hostile bolts and {@code MagPassThroughMagic}. The target's anti-magic accumulator supplies
      * the threshold; keeping it on its own stream preserves existing damage-roll determinism.
      */
-    MAGIC_RESIST
+    MAGIC_RESIST,
+    /** {@code RM_MAGSTRUCK}: low-level animal targets pause walking for 800 + Random(1000) ms. */
+    MAGIC_STAGGER
   }
 
   private static final Stream[] STREAMS = Stream.values();
