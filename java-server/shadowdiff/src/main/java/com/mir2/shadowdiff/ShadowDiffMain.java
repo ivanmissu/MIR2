@@ -470,10 +470,10 @@ public final class ShadowDiffMain {
 
   /**
    * One account the harness registers before the server boots. An account with a non-empty
-   * bag or a wallet additionally gets a pre-created character — a male warrior, the wearer
-   * the seed's 布衣(男) requires ({@code gMan = 0}) — whose persisted state carries those
-   * items, so item-dependent scenarios start with real inventory without inventing any new
-   * server-side command.
+   * bag, a wallet, or non-default progression additionally gets a pre-created character — a
+   * male character, the wearer the seed's 布衣(男) requires ({@code gMan = 0}) — whose persisted
+   * state carries the requested scenario inputs, so seeded scenarios start from their intended
+   * inventory, level, abilities and learned skills without inventing any new server-side command.
    */
   record SeededAccount(String account, String password, int job, int level, int healthDeficit,
       List<PlayerSkill> skills, List<String> bagItems, long gold) {
@@ -513,7 +513,9 @@ public final class ShadowDiffMain {
         for (SeededAccount seeded : accounts) {
           AuthService auth = new AuthService(store);
           if (store.find(seeded.account()).isEmpty()) auth.register(seeded.account(), seeded.password());
-          if (seeded.bagItems().isEmpty() && seeded.gold() == 0) continue;
+          boolean defaultProgression = seeded.job() == LevelAbilities.JOB_WARRIOR
+              && seeded.level() == 1 && seeded.healthDeficit() == 0 && seeded.skills().isEmpty();
+          if (defaultProgression && seeded.bagItems().isEmpty() && seeded.gold() == 0) continue;
           seedCharacterState(store, seeded);
         }
       }

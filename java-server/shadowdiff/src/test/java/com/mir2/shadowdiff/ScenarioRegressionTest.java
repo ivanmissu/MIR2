@@ -26,10 +26,16 @@ class ScenarioRegressionTest {
   @Test
   void persistenceScenarioRestoresGoldWornAndBagIdentically(@TempDir Path reports)
       throws Exception {
+    Path report = reports.resolve("persistence");
     int status = ShadowDiffMain.run(new String[] {
         "--embedded", "--persistence", "--strict-messages",
-        "--report-dir", reports.resolve("persistence").toString()});
-    assertEquals(0, status, "the seeded item lifecycle must survive the relog identically");
+        "--report-dir", report.toString()});
+    Path reportFile = report.resolve("shadow-report.md");
+    String markdown = Files.exists(reportFile)
+        ? Files.readString(reportFile, StandardCharsets.UTF_8) : "<shadow report missing>";
+    assertEquals(0, status,
+        "the seeded item lifecycle must survive the relog identically: "
+            + markdown.replace('\n', ' '));
   }
 
   @Test
