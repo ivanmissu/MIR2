@@ -51,7 +51,8 @@ class ScenarioRegressionTest {
     String markdown = Files.exists(reportFile)
         ? Files.readString(reportFile, StandardCharsets.UTF_8) : "<shadow report missing>";
     assertEquals(0, status,
-        "the pre-seeded Taoist spell path must match through delayed impact and relog:\n" + markdown);
+        "the pre-seeded Taoist spell path must match through delayed impact and relog: "
+            + markdown.replace('\n', ' '));
     assertTrue(markdown.contains("spell 29 20 20"));
     assertTrue(markdown.contains("mp="),
         "the trace must retain the immediate mana spend observation");
@@ -69,7 +70,8 @@ class ScenarioRegressionTest {
     String markdown = Files.exists(reportFile)
         ? Files.readString(reportFile, StandardCharsets.UTF_8) : "<shadow report missing>";
     assertEquals(1, status,
-        "a different MAGIC stream must produce a visible spell-state divergence:\n" + markdown);
+        "a different MAGIC stream must produce a visible spell-state divergence: "
+            + markdown.replace('\n', ' '));
   }
 
   @Test
