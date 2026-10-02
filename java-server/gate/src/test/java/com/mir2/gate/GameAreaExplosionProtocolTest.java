@@ -102,7 +102,7 @@ class GameAreaExplosionProtocolTest {
   }
 
   private WorldObjectSnapshot spawn(WorldEngine world, String name, int x, int y) {
-    MonsterTemplate target = new MonsterTemplate(name, 0, Ability.monster(100_000, 0, 0, 0, 0),
+    MonsterTemplate target = new MonsterTemplate(name, 0, Ability.monster(10_000, 0, 0, 0, 0),
         1, 1_000_000, 1_000_000, 0, List.of());
     var pending = world.spawnMonster(target, "0", new Position(x, y), Direction.DOWN);
     world.tickOnce();

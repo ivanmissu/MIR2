@@ -168,7 +168,7 @@ final class G4ReleaseGateTest {
       Map<String, String> options = ShadowDiffMain.Args.parse(shadowdiffArgs(row));
       assertTrue(options.containsKey("seed") && options.containsKey("right-seed"),
           row.id() + ": the negative control needs both seeds");
-      assertFalse(options.get("seed").equals(options.get("right-seed"),
+      assertFalse(options.get("seed").equals(options.get("right-seed")),
           row.id() + ": seeds must differ, otherwise the two worlds agree legitimately");
     }
     assertEquals(NEGATIVE_CONTROL_IDS, seen,
