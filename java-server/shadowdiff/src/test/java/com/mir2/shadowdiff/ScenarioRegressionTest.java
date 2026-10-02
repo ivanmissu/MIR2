@@ -47,9 +47,11 @@ class ScenarioRegressionTest {
     int status = ShadowDiffMain.run(new String[] {
         "--embedded", "--skills", "--strict-messages", "--seed", "20260922",
         "--report-dir", report.toString()});
+    Path reportFile = report.resolve("shadow-report.md");
+    String markdown = Files.exists(reportFile)
+        ? Files.readString(reportFile, StandardCharsets.UTF_8) : "<shadow report missing>";
     assertEquals(0, status,
-        "the pre-seeded Taoist spell path must match through delayed impact and relog");
-    String markdown = Files.readString(report.resolve("shadow-report.md"), StandardCharsets.UTF_8);
+        "the pre-seeded Taoist spell path must match through delayed impact and relog:\n" + markdown);
     assertTrue(markdown.contains("spell 29 20 20"));
     assertTrue(markdown.contains("mp="),
         "the trace must retain the immediate mana spend observation");
@@ -59,11 +61,15 @@ class ScenarioRegressionTest {
 
   @Test
   void skillsScenarioWrongMagicSeedIsDetected(@TempDir Path reports) throws Exception {
+    Path report = reports.resolve("skills-negative");
     int status = ShadowDiffMain.run(new String[] {
         "--embedded", "--skills", "--seed", "20260922", "--right-seed", "99999",
-        "--report-dir", reports.resolve("skills-negative").toString()});
+        "--report-dir", report.toString()});
+    Path reportFile = report.resolve("shadow-report.md");
+    String markdown = Files.exists(reportFile)
+        ? Files.readString(reportFile, StandardCharsets.UTF_8) : "<shadow report missing>";
     assertEquals(1, status,
-        "a different MAGIC stream must produce a visible spell-state divergence");
+        "a different MAGIC stream must produce a visible spell-state divergence:\n" + markdown);
   }
 
   @Test
