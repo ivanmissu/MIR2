@@ -34,8 +34,17 @@ class ShadowDiffMainArgsTest {
     // containsKey() checks in run()/runEmbedded() only work for registered flags.
     assertTrue(ShadowDiffMain.Args.FLAGS.containsAll(
         java.util.List.of("embedded", "help", "pve", "ai", "ai-all", "strict-messages",
-            "persistence", "lock")),
+            "persistence", "lock", "skills")),
         "the W30 scenario switches must be registered or they eat the next argument");
+  }
+
+  @Test
+  void skillsFlagRemainsValuelessAndCanKeepTheSeedArguments() {
+    Map<String, String> options = ShadowDiffMain.Args.parse(
+        new String[] {"--embedded", "--skills", "--seed", "20260922", "--right-seed", "99999"});
+    assertEquals("true", options.get("skills"));
+    assertEquals("20260922", options.get("seed"));
+    assertEquals("99999", options.get("right-seed"));
   }
 
   @Test

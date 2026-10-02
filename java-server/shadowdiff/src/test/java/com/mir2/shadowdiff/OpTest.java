@@ -106,6 +106,22 @@ class OpTest {
   }
 
   @Test
+  void areaHealingScriptUsesRealSpellAndExactDelayedImpactTick() {
+    List<Op> script = Op.areaHealingScript();
+    assertTrue(script.stream().anyMatch(op -> op.kind() == Op.Kind.SPELL
+        && "29 20 20".equals(op.text())),
+        "W41 must send the real CM_SPELL operands for 群体治愈术");
+    assertTrue(script.stream().anyMatch(op -> op.kind() == Op.Kind.TICK && op.millis() == 16),
+        "16 × 50 ms is the documented 800 ms RM_MAGHEALING delay");
+    assertTrue(script.stream().noneMatch(op -> op.kind() == Op.Kind.SLEEP),
+        "manual-clock spell evidence must not depend on host wall time");
+    assertTrue(script.stream().anyMatch(op -> op.kind() == Op.Kind.RELOG),
+        "the trained magic row must be observed after persistence round trip");
+    assertEquals(script,
+        Op.parseScript(String.join("\n", script.stream().map(Op::describe).toList())));
+  }
+
+  @Test
   void aiScriptPumpsTheClockAroundEveryPlayerActionAndRoundTrips() {
     List<Op> script = Op.aiScript();
 

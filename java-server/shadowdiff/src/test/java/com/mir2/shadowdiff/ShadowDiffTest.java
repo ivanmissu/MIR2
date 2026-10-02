@@ -142,6 +142,23 @@ class ShadowDiffTest {
   }
 
   @Test
+  void learnedSkillTrainingDriftIsAStateFailure() {
+    StateSnapshot leftState = new StateSnapshot("0", 20, 20, 4, 170, 251, 300, 300,
+        31, 0, 0, List.of(), List.of(), List.of(), List.of(), 1_000_800,
+        List.of(), -1, List.of(), List.of("magic=29 level=0 train=3 key=0"));
+    StateSnapshot rightState = new StateSnapshot("0", 20, 20, 4, 170, 251, 300, 300,
+        31, 0, 0, List.of(), List.of(), List.of(), List.of(), 1_000_800,
+        List.of(), -1, List.of(), List.of("magic=29 level=0 train=1 key=0"));
+    ShadowDiff.Result result = ShadowDiff.compare("L", "R",
+        List.of(observation("tick 16", List.of(), List.of("SM_MAGIC_LVEXP"), leftState)),
+        List.of(observation("tick 16", List.of(), List.of("SM_MAGIC_LVEXP"), rightState)), false);
+    assertFalse(result.passed());
+    assertEquals(ShadowDiff.Severity.STATE, result.entries().getFirst().severity());
+    assertTrue(result.entries().getFirst().details().stream()
+        .anyMatch(detail -> detail.startsWith("skills:")));
+  }
+
+  @Test
   void emptyGroupAndUnpaintedNamesStayInvisibleToTheDiffer() {
     // Pre-existing scripts must not start failing just because two new fields exist.
     StateSnapshot legacy = new StateSnapshot("0", 20, 20, 4, 15, 15, 15, 15,

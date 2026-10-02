@@ -9,6 +9,8 @@ import com.mir2.persistence.SqliteStore;
 import com.mir2.world.Ability;
 import com.mir2.world.BackpackItem;
 import com.mir2.world.Equipment;
+import com.mir2.world.LevelAbilities;
+import com.mir2.world.PlayerSkill;
 import com.mir2.world.PlayerState;
 import com.mir2.world.StdItem;
 import com.mir2.world.StdItemsDb;
@@ -111,6 +113,17 @@ public final class ShadowDiffMain {
     String serverName = options.getOrDefault("server-name", "MIR2");
 
     boolean embedded = options.containsKey("embedded");
+    if (options.containsKey("skills")) {
+      if (!embedded)
+        throw new IllegalArgumentException("--skills is only available with --embedded");
+      if (options.containsKey("duo") || options.containsKey("persistence") || options.containsKey("lock")
+          || options.containsKey("pve") || options.containsKey("ai") || options.containsKey("ai-all")) {
+        throw new IllegalArgumentException(
+            "--skills cannot be combined with --duo/--persistence/--lock/--pve/--ai/--ai-all");
+      }
+      return runSkillScenario(options, settle, strictMessages, reportDir,
+          account, password, serverName);
+    }
     if (options.containsKey("duo")) {
       if (!embedded)
         throw new IllegalArgumentException("--duo is only available with --embedded");
@@ -175,6 +188,36 @@ public final class ShadowDiffMain {
         EmbeddedWorld right = EmbeddedWorld.boot(workDir.resolve("right"), "embedded-right",
             serverName, rightSeed, monsters, monsterKind, clockMode,
             List.of(new SeededAccount(account, password, List.of(), 0)), null)) {
+      return compare(left.target(), right.target(), script, settle, strictMessages,
+          reportDir, account, password, serverName);
+    }
+  }
+
+  /**
+   * W41 spell-shadow scenario. A pre-seeded level-31 Taoist begins below full HP, already
+   * knows 群体治愈术 (29), casts it on the own cell and then advances the MANUAL clock by exactly
+   * the 800 ms delayed-impact window. The snapshot therefore has three independent wire-only
+   * observations to compare: immediate MP spend, delayed HP recovery, and SM_MAGIC_LVEXP skill
+   * training. A right-hand seed change perturbs the MAGIC-stream healing roll and must fail.
+   */
+  private static int runSkillScenario(Map<String, String> options, Duration settle,
+      boolean strictMessages, Path reportDir, String account, String password,
+      String serverName) throws Exception {
+    List<Op> script = options.containsKey("script")
+        ? loadScript(options, account, account)
+        : Op.areaHealingScript();
+    Path workDir = Files.createTempDirectory("mir2-shadowdiff-skills-");
+    long seed = longOption(options, "seed", 20260922);
+    long rightSeed = longOption(options, "right-seed", seed);
+    List<SeededAccount> accounts = List.of(new SeededAccount(
+        account, password, LevelAbilities.JOB_TAOIST, 31, 80,
+        List.of(PlayerSkill.learned(29)), List.of(), 0));
+    try (EmbeddedWorld left = EmbeddedWorld.boot(workDir.resolve("left"), "skills-left",
+            serverName, seed, 0, "trainer", com.mir2.world.WorldClock.Mode.MANUAL,
+            accounts, null);
+        EmbeddedWorld right = EmbeddedWorld.boot(workDir.resolve("right"), "skills-right",
+            serverName, rightSeed, 0, "trainer", com.mir2.world.WorldClock.Mode.MANUAL,
+            accounts, null)) {
       return compare(left.target(), right.target(), script, settle, strictMessages,
           reportDir, account, password, serverName);
     }
@@ -311,8 +354,9 @@ public final class ShadowDiffMain {
   /**
    * The W30 seeded solo scenarios (§4 场景 3/5): the character exists before the server
    * boots, with the harness-written bag and wallet (and, for {@code --lock}, a
-   * DisableTakeOffList naming the seeded sword). Nothing here depends on world time, so the
-   * worlds keep the production SYSTEM clock and no monsters.
+   * DisableTakeOffList naming the seeded sword). The same seed shape also supports a chosen
+   * job, level, HP deficit and learned magic rows for W41 spell scenarios. Nothing here depends
+   * on world time, so the worlds keep the production SYSTEM clock and no monsters.
    */
   private static int runSeededSolo(Map<String, String> options, Duration settle,
       boolean strictMessages, Path reportDir, String account, String password,
@@ -431,11 +475,29 @@ public final class ShadowDiffMain {
    * items, so item-dependent scenarios start with real inventory without inventing any new
    * server-side command.
    */
-  record SeededAccount(String account, String password, List<String> bagItems, long gold) {
+  record SeededAccount(String account, String password, int job, int level, int healthDeficit,
+      List<PlayerSkill> skills, List<String> bagItems, long gold) {
     SeededAccount {
+      if (job < LevelAbilities.JOB_WARRIOR || job > LevelAbilities.JOB_TAOIST)
+        throw new IllegalArgumentException("seed job must be 0..2");
+      if (level < 1 || level > com.mir2.world.LevelExperience.MAX_UP_LEVEL)
+        throw new IllegalArgumentException("seed level must be within the supported level range");
+      Ability fullAbility = LevelAbilities.forLevel(job, level, Ability.defaultPlayer()).restored();
+      if (healthDeficit < 0 || healthDeficit >= fullAbility.maxHp())
+        throw new IllegalArgumentException("seed health deficit must leave the player alive");
+      skills = List.copyOf(skills);
+      if (skills.stream().anyMatch(java.util.Objects::isNull))
+        throw new IllegalArgumentException("seed skills must not contain null entries");
+      if (skills.stream().map(PlayerSkill::magicId).distinct().count() != skills.size())
+        throw new IllegalArgumentException("seed skills must not contain duplicate magic ids");
       bagItems = List.copyOf(bagItems);
       if (gold < 0 || gold > PlayerState.MAX_GOLD)
         throw new IllegalArgumentException("seed gold must be within 0.." + PlayerState.MAX_GOLD);
+    }
+
+    /** Compatibility seed: a fresh level-1 warrior with no learned skills. */
+    SeededAccount(String account, String password, List<String> bagItems, long gold) {
+      this(account, password, LevelAbilities.JOB_WARRIOR, 1, 0, List.of(), bagItems, gold);
     }
   }
 
@@ -488,17 +550,22 @@ public final class ShadowDiffMain {
           .anyMatch(character -> character.name().equals(seeded.account()))) {
         return; // already seeded (retry after a partial boot)
       }
-      // A male warrior (gMan = 0), so the seeded 布衣(男) passes CheckTakeOnItems' gender
-      // lock; hair 2 matches what the wire's CM_NEWCHR literal produces. Job 0 = warrior.
-      var character = characters.create(seeded.account(), seeded.account(), 0, 2, 0);
+      // Gender remains male (gMan = 0) so the persistence seed's 布衣(男) passes its
+      // CheckTakeOnItems lock; job/level/skills are otherwise deliberate scenario inputs.
+      var character = characters.create(seeded.account(), seeded.account(), seeded.job(), 2, 0);
       List<BackpackItem> bag = new ArrayList<>();
       for (String itemName : seeded.bagItems()) {
         StdItem template = StdItemsDb.byName(itemName).orElseThrow(
             () -> new IllegalArgumentException("cannot seed unknown standard item: " + itemName));
         bag.add(BackpackItem.of(template, 0));
       }
-      store.save(new PlayerState(character.id(), Ability.defaultPlayer(), bag,
-          Equipment.empty(), seeded.gold(), 0, 0));
+      Ability ability = LevelAbilities.forLevel(seeded.job(), seeded.level(),
+          Ability.defaultPlayer()).restored();
+      if (seeded.healthDeficit() > 0) {
+        ability = ability.withHp(ability.maxHp() - seeded.healthDeficit());
+      }
+      store.save(new PlayerState(character.id(), ability, bag,
+          Equipment.empty(), seeded.gold(), 0, 0, seeded.skills()));
     }
 
     @Override
@@ -533,6 +600,7 @@ public final class ShadowDiffMain {
     // --pve selects the built-in combat script; it only means anything with a pinned seed
     // and trainer dummies, which is exactly what --pve configures below.
     if (options.containsKey("ai") || options.containsKey("ai-all")) return Op.aiScript();
+    if (options.containsKey("skills")) return Op.areaHealingScript();
     return options.containsKey("pve") ? Op.pveScript() : Op.defaultScript();
   }
 
@@ -556,7 +624,7 @@ public final class ShadowDiffMain {
      */
     static final java.util.Set<String> FLAGS =
         java.util.Set.of("embedded", "help", "strict-messages", "pve", "ai", "ai-all",
-            "persistence", "lock");
+            "persistence", "lock", "skills");
 
     static Map<String, String> parse(String[] args) {
       Map<String, String> options = new LinkedHashMap<>();
@@ -614,6 +682,10 @@ public final class ShadowDiffMain {
                                给两台服务端配同一个值。
         --pve                  用内置 PvE 对拍脚本（走到木桩前连续攻击），并默认放 8 个木桩。
                                需要两侧同种子；这是「静止怪对拍」的开箱即用入口。
+        --skills               （embedded，W41）**技能对拍·群体治愈术**：预种 31 级道士、
+                               80 HP 缺口和已学 29 号群体治愈术；真实 CM_SPELL 后以 MANUAL
+                               时钟 tick 16（800 ms）观察 MP、HP 与 SM_MAGIC_LVEXP 技能熟练度。
+                               需要两侧同种子；--right-seed 是该场景的非空转负控制。
         --ai                   （embedded）**会动的怪对拍**（W23）：两侧世界改用 MANUAL 世界时钟
                                （时间只在 tick op 推进），默认放 4 只鸡并用内置 AI 脚本。
                                怪物走位/攻击节拍因此只由 tick 数决定，与两台主机的墙钟无关；
@@ -649,7 +721,7 @@ public final class ShadowDiffMain {
 
       判定:
         STATE   状态快照差异（地图/坐标/朝向/HP/MP/等级/经验/金币/背包/装备/战斗/视野内角色/
-                世界时间/组队名单/自身名字颜色）→ FAIL
+                世界时间/组队名单/自身名字颜色/已学技能熟练度）→ FAIL
                 战斗 = 本 op 期间观测到的 SM_STRUCK 伤害与 HP、SM_DEATH、SM_WINEXP
         ACKS    +GOOD/+FAIL 应答序列差异 → FAIL
         MESSAGES 服务端消息集合差异 → 提示（--strict-messages 时 FAIL）

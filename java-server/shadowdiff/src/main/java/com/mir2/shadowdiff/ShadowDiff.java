@@ -136,6 +136,9 @@ public final class ShadowDiff {
     if (!a.groundItems().equals(b.groundItems())) {
       out.add("ground: " + a.groundItems() + " vs " + b.groundItems());
     }
+    if (!a.skills().equals(b.skills())) {
+      out.add("skills: " + a.skills() + " vs " + b.skills());
+    }
   }
 
   private static List<String> sortedCopy(List<String> values) {

@@ -41,6 +41,32 @@ class ScenarioRegressionTest {
   }
 
   @Test
+  void skillsScenarioComparesSpellManaDelayedHealAndTraining(@TempDir Path reports)
+      throws Exception {
+    Path report = reports.resolve("skills");
+    int status = ShadowDiffMain.run(new String[] {
+        "--embedded", "--skills", "--strict-messages", "--seed", "20260922",
+        "--report-dir", report.toString()});
+    assertEquals(0, status,
+        "the pre-seeded Taoist spell path must match through delayed impact and relog");
+    String markdown = Files.readString(report.resolve("shadow-report.md"), StandardCharsets.UTF_8);
+    assertTrue(markdown.contains("spell 29 20 20"));
+    assertTrue(markdown.contains("mp="),
+        "the trace must retain the immediate mana spend observation");
+    assertTrue(markdown.contains("skills=[magic=29 level=0 train=3 key=0]"),
+        "the SM_MAGIC_LVEXP-derived training snapshot must survive the relog");
+  }
+
+  @Test
+  void skillsScenarioWrongMagicSeedIsDetected(@TempDir Path reports) throws Exception {
+    int status = ShadowDiffMain.run(new String[] {
+        "--embedded", "--skills", "--seed", "20260922", "--right-seed", "99999",
+        "--report-dir", reports.resolve("skills-negative").toString()});
+    assertEquals(1, status,
+        "a different MAGIC stream must produce a visible spell-state divergence");
+  }
+
+  @Test
   void duoCustomScriptRunsTheGroupProtocolThroughTwoSessions(@TempDir Path tmp)
       throws Exception {
     Path script = tmp.resolve("duo-custom.txt");

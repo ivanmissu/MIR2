@@ -320,6 +320,27 @@ public record Op(Kind kind, Direction direction, String text, long millis, Strin
   }
 
   /**
+   * The W41 spell-shadow script. The embedded runner seeds a level-31 Taoist on (20,20) with
+   * an 80-HP deficit and a learned 群体治愈术 (29) row. The real CM_SPELL request is followed by
+   * exactly sixteen MANUAL-clock ticks: 16 × 50 ms reaches the 800 ms RM_MAGHEALING delay
+   * without consulting wall time. This makes the MP spend, HP recovery and skill-training
+   * packet all reproducible comparison surfaces.
+   */
+  public static List<Op> areaHealingScript() {
+    return parseScript("""
+        # --- seeded level-31 Taoist, wounded at the fixed spawn cell (20,20) ---
+        bag
+        # --- CM_SPELL: un-targeted ground click, Recog=MakeLong(20,20), Tag=29 ---
+        spell 29 20 20
+        # --- RM_MAGHEALING lands after 800 ms = 16 shipped 50 ms world ticks ---
+        tick 16
+        # --- the learned-magic row and recovered ability must persist through relog ---
+        relog
+        bag
+        """);
+  }
+
+  /**
    * The moving-monster comparison script (W23). Unlike {@link #pveScript()}, whose trainer
    * dummy is inert, this drives live AI: the monsters around the spawn acquire the player,
    * chase and attack.
