@@ -39,3 +39,7 @@ mvn -f java-server/pom.xml -pl world,gate,bootstrap -am test
 - 当前 `IsProperTarget` 仍是已有 Java hostility 子集：未建模玩家攻击/保护模式、召唤物主人归属及独立 ghost 状态；Delphi `bo2BF` 的低级动物延迟豁免也没有 Java 字段。玩家 `m_nPowerRate`、power item、auto/fix color 亦未建模。相关边界已写入世界实现注释及能力矩阵说明，不以 Java↔Java 单测掩盖。
 - 本切片没有 Delphi 服务端或真实 `mir2.exe` 的 wire 差分证据，也未增加 shadowdiff 场景；G4 继续未签发。
 - 下一技能候选为 `SKILL_LIGHTFLOWER`（24，地狱雷光，P1）。在实现前应先核验 `MagElecBlizzard` 的按目标 undead 分流、`nElecBlizzardRange` 配置与角色中心语义，再定义可测试边界。
+
+## W42 计划闭环
+
+W42 列出的下一候选 `SKILL_LIGHTFLOWER` 已在 W43 按 Delphi 源码证据实现：施法者中心方形、`LA_UNDEAD` 满额/其余 `div 10` 的逐目标分流、立即 `RM_MAGSTRUCK`（无 `SetTargetCreat`、无 600ms 延迟、无抗魔抵抗门）、`MIR2_ELEC_BLIZZARD_RANGE`（默认 2，1–12）。范围与验收见 [`w43-next-plan.md`](w43-next-plan.md)；该实现同样不等同于 Delphi/真实客户端对拍，G4 仍未签发。

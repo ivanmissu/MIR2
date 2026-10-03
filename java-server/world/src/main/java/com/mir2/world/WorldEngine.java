@@ -179,9 +179,18 @@ public final class WorldEngine implements AutoCloseable {
   private static final int SKILL_FIRECHARM = 13;
   private static final int SKILL_BIGHEALLING = 29;
   private static final int SKILL_FIREBOOM = 23;
+  private static final int SKILL_LIGHTFLOWER = 24;
   private static final int SKILL_MAGIC_SHIELD = 31;
   private static final int DEFAULT_FIREBOOM_RANGE = 1;
   private static final int MAX_FIREBOOM_RANGE = 12;
+  /**
+   * {@code g_Config.nElecBlizzardRange} (M2Share.pas:2079): the half-extent of
+   * 地狱雷光's caster-centred square. It ships at two — the {@code FunctionConfig.dfm}
+   * spin edit is only the form's initial value, not the runtime default.
+   */
+  private static final int DEFAULT_ELEC_BLIZZARD_RANGE = 2;
+  /** {@code EditElecBlizzardRange.MaxValue} (FunctionConfig.dfm): 12, same cap as FireBoom. */
+  private static final int MAX_ELEC_BLIZZARD_RANGE = 12;
   /**
    * {@code GetMapBaseObjects(m_PEnvir, nX, nY, 1, ...)} (Magic.pas:180): 群体治愈术 collects the
    * inclusive 3x3 square around the click — the constant is hard-coded, not a config value and
@@ -259,7 +268,8 @@ public final class WorldEngine implements AutoCloseable {
       long regenIntervalMillis,
       long saveIntervalMillis,
       long testGold,
-      int fireBoomRange) {
+      int fireBoomRange,
+      int elecBlizzardRange) {
 
     public Config {
       Objects.requireNonNull(tickInterval, "tickInterval");
@@ -278,6 +288,18 @@ public final class WorldEngine implements AutoCloseable {
         throw new IllegalArgumentException("test gold must be within 0.." + PlayerState.MAX_GOLD);
       if (fireBoomRange < 1 || fireBoomRange > MAX_FIREBOOM_RANGE)
         throw new IllegalArgumentException("FireBoom range must be within 1.." + MAX_FIREBOOM_RANGE);
+      if (elecBlizzardRange < 1 || elecBlizzardRange > MAX_ELEC_BLIZZARD_RANGE)
+        throw new IllegalArgumentException(
+            "ElecBlizzard range must be within 1.." + MAX_ELEC_BLIZZARD_RANGE);
+    }
+
+    /** Compatibility constructor retaining the pre-W43 canonical signature. */
+    public Config(Duration tickInterval, int viewRange, int maxCommandsPerTick,
+        long hitIntervalMillis, long corpseLingerMillis, long itemLingerMillis,
+        long regenIntervalMillis, long saveIntervalMillis, long testGold, int fireBoomRange) {
+      this(tickInterval, viewRange, maxCommandsPerTick, hitIntervalMillis, corpseLingerMillis,
+          itemLingerMillis, regenIntervalMillis, saveIntervalMillis, testGold, fireBoomRange,
+          DEFAULT_ELEC_BLIZZARD_RANGE);
     }
 
     /** Compatibility constructor retaining the pre-W42 canonical signature. */
@@ -1731,8 +1753,8 @@ public final class WorldEngine implements AutoCloseable {
     if (player.ability.level() < magic.requiredLevel(skill.level()))
       return rejectSpell(player, magicId, WorldEvent.SpellRejection.LEVEL_TOO_LOW, "等级不足，无法使用该技能");
     if (!isDamageBolt(magicId) && !isLinePiercingSkill(magicId) && !isAreaHealingSkill(magicId)
-        && !isAreaExplosionSkill(magicId) && magicId != SKILL_HEALING
-        && magicId != SKILL_MAGIC_SHIELD)
+        && !isAreaExplosionSkill(magicId) && !isElecBlizzardSkill(magicId)
+        && magicId != SKILL_HEALING && magicId != SKILL_MAGIC_SHIELD)
       return rejectSpell(player, magicId, WorldEvent.SpellRejection.UNSUPPORTED_SKILL, "该技能尚未开放");
 
     Position target = magicId == SKILL_MAGIC_SHIELD ? player.position : requestedTarget;
@@ -1759,8 +1781,10 @@ public final class WorldEngine implements AutoCloseable {
     // single-target gate is skipped and the beam itself filters objects on its cells.
     // 群体治愈术 shares the ground-click shape: MagBigHealing (Magic.pas:172) only reads
     // nTargetX/nTargetY, so a click on empty ground with targetId = 0 is a legal cast.
+    // 地狱雷光 likewise reads neither TargeTBaseObject nor the click cell: MagElecBlizzard
+    // (Magic.pas:1191) only takes the caster's own coordinates.
     if (!isLinePiercingSkill(magicId) && !isAreaHealingSkill(magicId)
-        && !isAreaExplosionSkill(magicId)
+        && !isAreaExplosionSkill(magicId) && !isElecBlizzardSkill(magicId)
         && !validSpellTarget(player, targetObject, target, magicId))
       return rejectSpell(player, magicId, WorldEvent.SpellRejection.INVALID_TARGET, "施法目标无效");
 
@@ -1815,6 +1839,13 @@ public final class WorldEngine implements AutoCloseable {
     // to the bound object rather than re-checking the explosion cell on arrival.
     if (isAreaExplosionSkill(magicId)) {
       castAreaExplosion(player, skill, magic, target, targetId, now);
+      return true;
+    }
+
+    // Magic.pas:518 — 地狱雷光 detonates on the caster's own cell. Its RM_MAGSTRUCK has no
+    // delay, no SetTargetCreat and no anti-magic-resist roll (see castElecBlizzard).
+    if (isElecBlizzardSkill(magicId)) {
+      castElecBlizzard(player, skill, magic, target, targetId, now);
       return true;
     }
 
@@ -2263,8 +2294,12 @@ public final class WorldEngine implements AutoCloseable {
         player.ability.maxMc() - player.ability.minMc() + 1);
   }
 
-  /** FireBoom's exact GetAttackPower base + spread call (Magic.pas:510). */
-  private int rollFireBoomPower(Player player, PlayerSkill skill, MagicDefinition magic) {
+  /**
+   * The {@code GetAttackPower(GetPower(MPow(UserMagic)) + LoWord(m_WAbil.MC),
+   * SmallInt(HiWord(m_WAbil.MC) - LoWord(m_WAbil.MC)) + 1)} call shared by 爆裂火焰
+   * (Magic.pas:510) and 地狱雷光 (Magic.pas:519).
+   */
+  private int rollMcAttackPower(Player player, PlayerSkill skill, MagicDefinition magic) {
     int base = getMagicPower(magic, skill.level(), rollExclusive(magic.power(), magic.maxPower()))
         + player.ability.minMc();
     int spread = player.ability.maxMc() - player.ability.minMc() + 1;
@@ -2422,6 +2457,11 @@ public final class WorldEngine implements AutoCloseable {
     return magicId == SKILL_FIREBOOM;
   }
 
+  /** Magic.DB row 24 — 地狱雷光, the caster-centred {@code LA_UNDEAD} blizzard of W43. */
+  private static boolean isElecBlizzardSkill(int magicId) {
+    return magicId == SKILL_LIGHTFLOWER;
+  }
+
   /**
    * {@code SKILL_BIGHEALLING}(29, 群体治愈术, Magic.pas:532 → {@code MagBigHealing},
    * Magic.pas:172):
@@ -2518,7 +2558,7 @@ public final class WorldEngine implements AutoCloseable {
     int firedTargetId = snapped && clicked.ability().alive() ? clicked.id() : 0;
 
     // MagBigExplosion evaluates nPower before it searches the square, even when nobody is hit.
-    int power = rollFireBoomPower(player, skill, magic);
+    int power = rollMcAttackPower(player, skill, magic);
     int hits = 0;
     for (int id : player.map.objectsInSquare(center, config.fireBoomRange())) {
       WorldObject candidate = findObject(id);
@@ -2533,6 +2573,48 @@ public final class WorldEngine implements AutoCloseable {
     emitToObserversAndSelf(player, new WorldEvent.MagicFired(player.id, center, firedTargetId, magic));
     // DoSpell's boTrain is the MagBigExplosion result: any proper target trains even when MAC
     // later absorbs the entire hit.
+    if (hits > 0) trainSpellSkill(player, skill, magic);
+  }
+
+  /**
+   * {@code SKILL_LIGHTFLOWER}(24, 地狱雷光, Magic.pas:518 → {@code MagElecBlizzard},
+   * Magic.pas:1191): a square of {@code Setup.ElecBlizzardRange} cells around the
+   * <em>caster</em> — the click never selects the blast cell, it only travels on the trailing
+   * {@code RM_MAGICFIRE} frame. Every proper target takes one non-delayed {@code RM_MAGSTRUCK}
+   * whose damage is the single rolled nPower for {@code LA_UNDEAD} targets and {@code nPower
+   * div 10} for everything else. Unlike FireBoom there is no {@code SetTargetCreat} (the call
+   * is commented out in the source) and no resist roll; the low-level animal walk pause still
+   * applies because it lives inside the {@code RM_MAGSTRUCK} handler.
+   *
+   * <p>The power is rolled once per cast, before the square walk, even when the square is
+   * empty, and any proper target sets Delphi's {@code Result := True} — the {@code boTrain}
+   * signal — regardless of whether the target's MAC later absorbs the whole hit.
+   */
+  private void castElecBlizzard(
+      Player player, PlayerSkill skill, MagicDefinition magic, Position requestedTarget,
+      int targetId, long now) {
+    // ClientSpellXY's CretInNearXY (ObjBase.pas:16854) snaps the click onto a referenced object
+    // within one cell before DoSpell runs; the snap steers the RM_MAGICFIRE broadcast only.
+    WorldObject clicked = targetId != 0 ? findObject(targetId) : null;
+    boolean snapped = clicked != null && clicked.map() == player.map
+        && chebyshev(clicked.position(), requestedTarget) <= 1;
+    Position firedAt = snapped ? clicked.position() : requestedTarget;
+    int firedTargetId = snapped && clicked.ability().alive() ? clicked.id() : 0;
+
+    int power = rollMcAttackPower(player, skill, magic);
+    int hits = 0;
+    for (int id : player.map.objectsInSquare(player.position, config.elecBlizzardRange())) {
+      WorldObject candidate = findObject(id);
+      if (!isProperTarget(player, candidate)) continue;
+      int struck = isUndead(candidate) ? power : power / 10;
+      pendingMagicImpacts.add(new PendingMagicImpact(
+          now, MagicImpactKind.AREA_DAMAGE, player.id, candidate.id(), candidate.position(),
+          struck));
+      hits++;
+    }
+
+    emitToObserversAndSelf(player, new WorldEvent.MagicFired(
+        player.id, firedAt, firedTargetId, magic));
     if (hits > 0) trainSpellSkill(player, skill, magic);
   }
 
