@@ -28,6 +28,8 @@ class ServerConfigTest {
     assertEquals(10, config.safeZoneSize());
     // M2Share.pas Setup.FireBoomRage defaults to one tile.
     assertEquals(1, config.fireBoomRange());
+    // M2Share.pas Setup.ElecBlizzardRange defaults to two cells.
+    assertEquals(2, config.elecBlizzardRange());
   }
 
   @Test
@@ -61,6 +63,31 @@ class ServerConfigTest {
         () -> ServerConfig.from(Map.of("MIR2_FIREBOOM_RANGE", "0")));
     assertThrows(IllegalArgumentException.class,
         () -> ServerConfig.from(Map.of("MIR2_FIREBOOM_RANGE", "13")));
+  }
+
+  @Test
+  void elecBlizzardRangeMatchesDelphiDefaultsAndFlowsThroughCopies() {
+    ServerConfig defaults = ServerConfig.from(Map.of());
+    // M2Share.pas:2079 — unlike the FunctionConfig.dfm spin edit's initial value of 1.
+    assertEquals(2, defaults.elecBlizzardRange());
+    assertEquals(5, ServerConfig.from(Map.of("MIR2_ELEC_BLIZZARD_RANGE", "5"))
+        .elecBlizzardRange());
+    assertEquals(12, ServerConfig.from(Map.of("MIR2_ELEC_BLIZZARD_RANGE", "12"))
+        .elecBlizzardRange());
+
+    ServerConfig copied = defaults.withSafeZoneSize(0)
+        .withWorldClockMode(com.mir2.world.WorldClock.Mode.MANUAL)
+        .withDisableTakeOffFile(Path.of("DisableTakeOffList.txt"))
+        .withFireBoomRange(3);
+    assertEquals(2, copied.elecBlizzardRange(),
+        "unrelated copy helpers retain the ElecBlizzard range");
+    assertEquals(7, defaults.withElecBlizzardRange(7).elecBlizzardRange());
+    assertThrows(IllegalArgumentException.class, () -> defaults.withElecBlizzardRange(0));
+    assertThrows(IllegalArgumentException.class, () -> defaults.withElecBlizzardRange(13));
+    assertThrows(IllegalArgumentException.class,
+        () -> ServerConfig.from(Map.of("MIR2_ELEC_BLIZZARD_RANGE", "0")));
+    assertThrows(IllegalArgumentException.class,
+        () -> ServerConfig.from(Map.of("MIR2_ELEC_BLIZZARD_RANGE", "13")));
   }
 
   @Test
