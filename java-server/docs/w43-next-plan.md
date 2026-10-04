@@ -34,4 +34,4 @@
 
 - 当前 `IsProperTarget` 仍是已有 Java hostility 子集：未建模玩家攻击/保护模式、召唤物主人归属及独立 ghost 状态；`RM_MAGSTRUCK` 的 `bo2BF` 低级动物豁免也没有 Java 字段。玩家 `m_nPowerRate`、power item、auto/fix color 修正不在 Java 玩家模型中。相关边界已写入世界实现注释与能力矩阵说明，不以 Java↔Java 单测掩盖。
 - 本切片没有 Delphi 服务端或真实 `mir2.exe` 的 wire 差分证据，也未增加 shadowdiff 场景；G4 继续未签发。
-- 下一技能候选为 `SKILL_SNOWWIND`（33，冰咆哮，P1）：`Magic.pas:542` 与爆裂火焰共用 `MagBigExplosion`，把半径换成 `g_Config.nSnowWindRange`，是最短的下一步；实现前应先核验 `nSnowWindRange` 的默认值与 spin edit 上限，以及它与 FireBoom 是否存在其他调用差异。
+- 下一技能候选 `SKILL_SNOWWIND`（33，冰咆哮，P1）已完成源码核验并形成 W44 计划：`Magic.pas:578` 与爆裂火焰共用 `MagBigExplosion`，使用独立 `nSnowWindRange`；默认 1、SpinEdit 范围 1–12，无其他调用语义差异。详见 [`w44-next-plan.md`](w44-next-plan.md)。
