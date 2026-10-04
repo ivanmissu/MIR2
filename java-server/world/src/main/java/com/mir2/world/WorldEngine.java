@@ -181,6 +181,7 @@ public final class WorldEngine implements AutoCloseable {
   private static final int SKILL_FIREBOOM = 23;
   private static final int SKILL_LIGHTFLOWER = 24;
   private static final int SKILL_MAGIC_SHIELD = 31;
+  private static final int SKILL_SNOWWIND = 33;
   private static final int DEFAULT_FIREBOOM_RANGE = 1;
   private static final int MAX_FIREBOOM_RANGE = 12;
   /**
@@ -191,6 +192,15 @@ public final class WorldEngine implements AutoCloseable {
   private static final int DEFAULT_ELEC_BLIZZARD_RANGE = 2;
   /** {@code EditElecBlizzardRange.MaxValue} (FunctionConfig.dfm): 12, same cap as FireBoom. */
   private static final int MAX_ELEC_BLIZZARD_RANGE = 12;
+  /**
+   * {@code g_Config.nSnowWindRange} (M2Share.pas:2078): the half-extent of 冰咆哮's
+   * click-centred square. It ships at one, which is also the {@code !Setup.txt} value
+   * ({@code SnowWindRange=1}) — unlike ElecBlizzard, the runtime default and the shipped
+   * config agree here.
+   */
+  private static final int DEFAULT_SNOW_WIND_RANGE = 1;
+  /** {@code EditSnowWindRange.MaxValue} (FunctionConfig.dfm:2069): 12, shared with FireBoom. */
+  private static final int MAX_SNOW_WIND_RANGE = 12;
   /**
    * {@code GetMapBaseObjects(m_PEnvir, nX, nY, 1, ...)} (Magic.pas:180): 群体治愈术 collects the
    * inclusive 3x3 square around the click — the constant is hard-coded, not a config value and
@@ -269,7 +279,8 @@ public final class WorldEngine implements AutoCloseable {
       long saveIntervalMillis,
       long testGold,
       int fireBoomRange,
-      int elecBlizzardRange) {
+      int elecBlizzardRange,
+      int snowWindRange) {
 
     public Config {
       Objects.requireNonNull(tickInterval, "tickInterval");
@@ -291,6 +302,19 @@ public final class WorldEngine implements AutoCloseable {
       if (elecBlizzardRange < 1 || elecBlizzardRange > MAX_ELEC_BLIZZARD_RANGE)
         throw new IllegalArgumentException(
             "ElecBlizzard range must be within 1.." + MAX_ELEC_BLIZZARD_RANGE);
+      if (snowWindRange < 1 || snowWindRange > MAX_SNOW_WIND_RANGE)
+        throw new IllegalArgumentException(
+            "SnowWind range must be within 1.." + MAX_SNOW_WIND_RANGE);
+    }
+
+    /** Compatibility constructor retaining the pre-W44 canonical signature. */
+    public Config(Duration tickInterval, int viewRange, int maxCommandsPerTick,
+        long hitIntervalMillis, long corpseLingerMillis, long itemLingerMillis,
+        long regenIntervalMillis, long saveIntervalMillis, long testGold, int fireBoomRange,
+        int elecBlizzardRange) {
+      this(tickInterval, viewRange, maxCommandsPerTick, hitIntervalMillis, corpseLingerMillis,
+          itemLingerMillis, regenIntervalMillis, saveIntervalMillis, testGold, fireBoomRange,
+          elecBlizzardRange, DEFAULT_SNOW_WIND_RANGE);
     }
 
     /** Compatibility constructor retaining the pre-W43 canonical signature. */
@@ -1834,11 +1858,16 @@ public final class WorldEngine implements AutoCloseable {
       return true;
     }
 
-    // Magic.pas:510 — 爆裂火焰 is a ground-target area attack. Its one GetAttackPower roll is
-    // shared by every proper target; RM_MAGSTRUCK has no anti-magic-resist roll and is delivered
-    // to the bound object rather than re-checking the explosion cell on arrival.
+    // Magic.pas:510/578 — 爆裂火焰 and 冰咆哮 are ground-target area attacks that share one
+    // MagBigExplosion body. Their one GetAttackPower roll is shared by every proper target;
+    // RM_MAGSTRUCK has no anti-magic-resist roll and is delivered to the bound object rather
+    // than re-checking the explosion cell on arrival. Only the configured square radius differs.
     if (isAreaExplosionSkill(magicId)) {
-      castAreaExplosion(player, skill, magic, target, targetId, now);
+      if (magicId == SKILL_SNOWWIND) {
+        castSnowWind(player, skill, magic, target, targetId, now);
+      } else {
+        castAreaExplosion(player, skill, magic, target, targetId, now);
+      }
       return true;
     }
 
@@ -2452,9 +2481,15 @@ public final class WorldEngine implements AutoCloseable {
     return magicId == SKILL_BIGHEALLING;
   }
 
-  /** Magic.DB row 23 — 爆裂火焰: a configurable square of RM_MAGSTRUCK impacts. */
+  /**
+   * Magic.DB rows 23/33 — 爆裂火焰 and 冰咆哮: both call {@code MagBigExplosion} and differ only
+   * in which configured square radius they pass as {@code nRage} — 爆裂火焰 reads
+   * {@code g_Config.nFireBoomRage} (Magic.pas:515), 冰咆哮 reads
+   * {@code g_Config.nSnowWindRange} (Magic.pas:583). The two are independent config fields:
+   * SnowWind never falls back onto the FireBoom radius.
+   */
   private static boolean isAreaExplosionSkill(int magicId) {
-    return magicId == SKILL_FIREBOOM;
+    return magicId == SKILL_FIREBOOM || magicId == SKILL_SNOWWIND;
   }
 
   /** Magic.DB row 24 — 地狱雷光, the caster-centred {@code LA_UNDEAD} blizzard of W43. */
@@ -2547,10 +2582,48 @@ public final class WorldEngine implements AutoCloseable {
    * and not an NPC. Attack/protection modes, slave ownership and an explicit ghost flag are not
    * represented by the Java object model; dead objects are rejected and ghosts are absent from
    * map occupancy.
+   *
+   * <p>W44 shares this whole shape with {@code SKILL_SNOWWIND}; only {@code nRage} differs, so
+   * both branches funnel into {@link #castBigExplosion}.
    */
   private void castAreaExplosion(
       Player player, PlayerSkill skill, MagicDefinition magic, Position requestedTarget,
       int targetId, long now) {
+    castBigExplosion(player, skill, magic, requestedTarget, targetId, now,
+        config.fireBoomRange());
+  }
+
+  /**
+   * {@code SKILL_SNOWWIND}(33, 冰咆哮, Magic.pas:578 → {@code MagBigExplosion}): the same case
+   * branch as 爆裂火焰 — it evaluates the identical {@code GetAttackPower(...)} expression and
+   * passes the click coordinates straight through — and the only difference in the Delphi source
+   * is the last argument, {@code g_Config.nSnowWindRange} instead of
+   * {@code g_Config.nFireBoomRage}. Everything 爆裂火焰's slice established therefore carries
+   * over verbatim: {@code CretInNearXY} snapping, one shared power roll, {@code SetTargetCreat}
+   * before the object-bound non-delayed {@code RM_MAGSTRUCK}, no anti-magic-resist gate, and
+   * {@code boTrain} set by any proper target even when MAC later absorbs the hit.
+   *
+   * <p>{@code nSnowWindRange} ships at one (M2Share.pas:2078, {@code !Setup.txt:296}), with the
+   * {@code FunctionConfig.dfm} spin edit bounded to 1–12 — the same limits as FireBoom, so a
+   * 3x3 square is the default blast.
+   */
+  private void castSnowWind(
+      Player player, PlayerSkill skill, MagicDefinition magic, Position requestedTarget,
+      int targetId, long now) {
+    castBigExplosion(player, skill, magic, requestedTarget, targetId, now,
+        config.snowWindRange());
+  }
+
+  /**
+   * The shared {@code MagBigExplosion} body (Magic.pas:1170) used by 爆裂火焰 and 冰咆哮: the
+   * click is optionally snapped to a nearby named object, then every live proper target in the
+   * inclusive square of the given radius gets one ordinary (non-delayed) {@code RM_MAGSTRUCK}
+   * carrying the same power. Delivery stays bound to the object even if it walks out of the
+   * square afterwards.
+   */
+  private void castBigExplosion(
+      Player player, PlayerSkill skill, MagicDefinition magic, Position requestedTarget,
+      int targetId, long now, int range) {
     WorldObject clicked = targetId != 0 ? findObject(targetId) : null;
     boolean snapped = clicked != null && clicked.map() == player.map
         && chebyshev(clicked.position(), requestedTarget) <= 1;
@@ -2560,7 +2633,7 @@ public final class WorldEngine implements AutoCloseable {
     // MagBigExplosion evaluates nPower before it searches the square, even when nobody is hit.
     int power = rollMcAttackPower(player, skill, magic);
     int hits = 0;
-    for (int id : player.map.objectsInSquare(center, config.fireBoomRange())) {
+    for (int id : player.map.objectsInSquare(center, range)) {
       WorldObject candidate = findObject(id);
       if (!isProperTarget(player, candidate)) continue;
       // MagBigExplosion calls SetTargetCreat before SendMsg(RM_MAGSTRUCK).

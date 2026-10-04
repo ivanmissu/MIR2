@@ -420,7 +420,7 @@ SKILL	SKILL_KILLUNDEAD:warrior	32	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	�
 SKILL	SKILL_KILLUNDEAD:wizard	32	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	圣言术；GEEM2 Magic.DB 同名行 job=wizard learnable=yes
 SKILL	SKILL_KILLUNDEAD:taoist	32	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	圣言术；GEEM2 Magic.DB 同名行 job=wizard learnable=no
 SKILL	SKILL_SNOWWIND:warrior	33	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	冰咆哮；GEEM2 Magic.DB 同名行 job=wizard learnable=no
-SKILL	SKILL_SNOWWIND:wizard	33	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	冰咆哮；GEEM2 Magic.DB 同名行 job=wizard learnable=yes
+SKILL	SKILL_SNOWWIND:wizard	33	n/a	gate-game	implemented	WorldSnowWindTest,GameSnowWindProtocolTest	Grobal2.pas:SKILL_*	冰咆哮；GEEM2 Magic.DB 同名行 job=wizard learnable=yes；W44 接入：Magic.pas:578 与爆裂火焰共用 MagBigExplosion，仅半径参数不同，改用 MIR2_SNOW_WIND_RANGE(1–12，默认 1 对应 Setup.SnowWindRange)；点击吸附后的坐标为中心、整次共享一次 GetAttackPower、SetTargetCreat 仇恨锁定、RM_MAGSTRUCK 对象绑定/MAC/魔法受击标记/命中训练。当前 IsProperTarget 仍受 Java 攻击模式/召唤物模型边界限制，G4 未签发
 SKILL	SKILL_SNOWWIND:taoist	33	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	冰咆哮；GEEM2 Magic.DB 同名行 job=wizard learnable=no
 SKILL	SKILL_CROSSMOON:warrior	34	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	双龙斩；GEEM2 基线无同编号行，Job 归属待 Magic.DB 导入校准
 SKILL	SKILL_CROSSMOON:wizard	34	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	双龙斩；GEEM2 基线无同编号行，Job 归属待 Magic.DB 导入校准
