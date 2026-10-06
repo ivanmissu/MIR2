@@ -43,13 +43,17 @@ public record ServerConfig(
     int maxClientMessagesPerRead,
     boolean kickOnOversizePacket,
     int fireBoomRange,
-    int elecBlizzardRange) {
+    int elecBlizzardRange,
+    int snowWindRange) {
 
   private static final int DEFAULT_FIREBOOM_RANGE = 1;
   private static final int MAX_FIREBOOM_RANGE = 12;
   /** {@code g_Config.nElecBlizzardRange} (M2Share.pas:2079) ships at two. */
   private static final int DEFAULT_ELEC_BLIZZARD_RANGE = 2;
   private static final int MAX_ELEC_BLIZZARD_RANGE = 12;
+  /** {@code g_Config.nSnowWindRange} (M2Share.pas:2078) ships at one. */
+  private static final int DEFAULT_SNOW_WIND_RANGE = 1;
+  private static final int MAX_SNOW_WIND_RANGE = 12;
 
   /**
    * One decorative NPC to stand near the spawn point: a {@code MIR2_NPC_LIST} entry
@@ -72,6 +76,26 @@ public record ServerConfig(
       new NpcPlacement("老兵", 0, 5, 0),
       new NpcPlacement("老板", 1, -5, 0),
       new NpcPlacement("商人", 2, 0, -5));
+
+  /** Compatibility constructor retaining the pre-W44 canonical signature. */
+  public ServerConfig(Path database, GatePorts ports, String advertisedHost, String serverName,
+      Path mapFile, Path mapInfoFile, String mapId, int spawnX, int spawnY, int worldTickMillis,
+      int monsterCount, String monsterKind, Path monGenFile, String bootstrapUser,
+      String bootstrapPassword, int maxConnectionsPerIp, int connectionBurstLimit1s,
+      int connectionBurstLimit3s, int idleTimeoutSeconds, int saveIntervalSeconds, long testGold,
+      Long worldSeed, int safeZoneSize, boolean spawnConfigured, List<NpcPlacement> npcPlacements,
+      Path disableTakeOffFile, com.mir2.world.WorldClock.Mode worldClockMode, Path blockIpFile,
+      com.mir2.gate.BlockMethod blockMethod, int maxClientPacketSize, int normalClientPacketSize,
+      int maxClientMessagesPerRead, boolean kickOnOversizePacket, int fireBoomRange,
+      int elecBlizzardRange) {
+    this(database, ports, advertisedHost, serverName, mapFile, mapInfoFile, mapId, spawnX, spawnY,
+        worldTickMillis, monsterCount, monsterKind, monGenFile, bootstrapUser, bootstrapPassword,
+        maxConnectionsPerIp, connectionBurstLimit1s, connectionBurstLimit3s, idleTimeoutSeconds,
+        saveIntervalSeconds, testGold, worldSeed, safeZoneSize, spawnConfigured, npcPlacements,
+        disableTakeOffFile, worldClockMode, blockIpFile, blockMethod, maxClientPacketSize,
+        normalClientPacketSize, maxClientMessagesPerRead, kickOnOversizePacket, fireBoomRange,
+        elecBlizzardRange, DEFAULT_SNOW_WIND_RANGE);
+  }
 
   /** Compatibility constructor retaining the pre-W43 canonical signature. */
   public ServerConfig(Path database, GatePorts ports, String advertisedHost, String serverName,
@@ -123,7 +147,7 @@ public record ServerConfig(
         com.mir2.gate.PacketSizePolicy.DEFAULT_MAX_SIZE,
         com.mir2.gate.PacketSizePolicy.DEFAULT_NORMAL_SIZE,
         com.mir2.gate.PacketSizePolicy.DEFAULT_MAX_MESSAGES, true, DEFAULT_FIREBOOM_RANGE,
-        DEFAULT_ELEC_BLIZZARD_RANGE);
+        DEFAULT_ELEC_BLIZZARD_RANGE, DEFAULT_SNOW_WIND_RANGE);
   }
 
   /** Compatibility constructor that also pins the world seed (shadow comparison harness). */
@@ -138,7 +162,7 @@ public record ServerConfig(
         com.mir2.gate.PacketSizePolicy.DEFAULT_MAX_SIZE,
         com.mir2.gate.PacketSizePolicy.DEFAULT_NORMAL_SIZE,
         com.mir2.gate.PacketSizePolicy.DEFAULT_MAX_MESSAGES, true, DEFAULT_FIREBOOM_RANGE,
-        DEFAULT_ELEC_BLIZZARD_RANGE);
+        DEFAULT_ELEC_BLIZZARD_RANGE, DEFAULT_SNOW_WIND_RANGE);
   }
 
   public ServerConfig {
@@ -177,6 +201,9 @@ public record ServerConfig(
     if (elecBlizzardRange < 1 || elecBlizzardRange > MAX_ELEC_BLIZZARD_RANGE)
       throw new IllegalArgumentException("MIR2_ELEC_BLIZZARD_RANGE must be between 1 and "
           + MAX_ELEC_BLIZZARD_RANGE);
+    if (snowWindRange < 1 || snowWindRange > MAX_SNOW_WIND_RANGE)
+      throw new IllegalArgumentException("MIR2_SNOW_WIND_RANGE must be between 1 and "
+          + MAX_SNOW_WIND_RANGE);
     if (testGold < 0 || testGold > com.mir2.world.PlayerState.MAX_GOLD)
       throw new IllegalArgumentException("test gold must be within 0.."
           + com.mir2.world.PlayerState.MAX_GOLD);
@@ -216,7 +243,8 @@ public record ServerConfig(
         connectionBurstLimit3s, idleTimeoutSeconds, saveIntervalSeconds, testGold,
         worldSeed, newSafeZoneSize, spawnConfigured, npcPlacements, disableTakeOffFile,
         worldClockMode, blockIpFile, blockMethod, maxClientPacketSize, normalClientPacketSize,
-        maxClientMessagesPerRead, kickOnOversizePacket, fireBoomRange, elecBlizzardRange);
+        maxClientMessagesPerRead, kickOnOversizePacket, fireBoomRange, elecBlizzardRange,
+        snowWindRange);
   }
 
   /**
@@ -232,7 +260,8 @@ public record ServerConfig(
         connectionBurstLimit3s, idleTimeoutSeconds, saveIntervalSeconds, testGold,
         worldSeed, safeZoneSize, spawnConfigured, npcPlacements, disableTakeOffFile, mode,
         blockIpFile, blockMethod, maxClientPacketSize, normalClientPacketSize,
-        maxClientMessagesPerRead, kickOnOversizePacket, fireBoomRange, elecBlizzardRange);
+        maxClientMessagesPerRead, kickOnOversizePacket, fireBoomRange, elecBlizzardRange,
+        snowWindRange);
   }
 
   /**
@@ -249,7 +278,8 @@ public record ServerConfig(
         connectionBurstLimit3s, idleTimeoutSeconds, saveIntervalSeconds, testGold,
         worldSeed, safeZoneSize, spawnConfigured, npcPlacements, newDisableTakeOffFile,
         worldClockMode, blockIpFile, blockMethod, maxClientPacketSize, normalClientPacketSize,
-        maxClientMessagesPerRead, kickOnOversizePacket, fireBoomRange, elecBlizzardRange);
+        maxClientMessagesPerRead, kickOnOversizePacket, fireBoomRange, elecBlizzardRange,
+        snowWindRange);
   }
 
   /** Returns a copy with a different {@code Setup.FireBoomRage} radius (1..12). */
@@ -260,7 +290,8 @@ public record ServerConfig(
         connectionBurstLimit3s, idleTimeoutSeconds, saveIntervalSeconds, testGold,
         worldSeed, safeZoneSize, spawnConfigured, npcPlacements, disableTakeOffFile,
         worldClockMode, blockIpFile, blockMethod, maxClientPacketSize, normalClientPacketSize,
-        maxClientMessagesPerRead, kickOnOversizePacket, newFireBoomRange, elecBlizzardRange);
+        maxClientMessagesPerRead, kickOnOversizePacket, newFireBoomRange, elecBlizzardRange,
+        snowWindRange);
   }
 
   /** Returns a copy with a different {@code Setup.ElecBlizzardRange} radius (1..12). */
@@ -271,7 +302,20 @@ public record ServerConfig(
         connectionBurstLimit3s, idleTimeoutSeconds, saveIntervalSeconds, testGold,
         worldSeed, safeZoneSize, spawnConfigured, npcPlacements, disableTakeOffFile,
         worldClockMode, blockIpFile, blockMethod, maxClientPacketSize, normalClientPacketSize,
-        maxClientMessagesPerRead, kickOnOversizePacket, fireBoomRange, newElecBlizzardRange);
+        maxClientMessagesPerRead, kickOnOversizePacket, fireBoomRange, newElecBlizzardRange,
+        snowWindRange);
+  }
+
+  /** Returns a copy with a different {@code Setup.SnowWindRange} radius (1..12). */
+  public ServerConfig withSnowWindRange(int newSnowWindRange) {
+    return new ServerConfig(database, ports, advertisedHost, serverName, mapFile, mapInfoFile,
+        mapId, spawnX, spawnY, worldTickMillis, monsterCount, monsterKind, monGenFile,
+        bootstrapUser, bootstrapPassword, maxConnectionsPerIp, connectionBurstLimit1s,
+        connectionBurstLimit3s, idleTimeoutSeconds, saveIntervalSeconds, testGold,
+        worldSeed, safeZoneSize, spawnConfigured, npcPlacements, disableTakeOffFile,
+        worldClockMode, blockIpFile, blockMethod, maxClientPacketSize, normalClientPacketSize,
+        maxClientMessagesPerRead, kickOnOversizePacket, fireBoomRange, elecBlizzardRange,
+        newSnowWindRange);
   }
 
   /**
@@ -355,7 +399,9 @@ public record ServerConfig(
         booleanValue(environment, "MIR2_KICK_ON_OVERSIZE_PACKET", true),
         nonNegativeInt(environment, "MIR2_FIREBOOM_RANGE", DEFAULT_FIREBOOM_RANGE),
         // g_Config.nElecBlizzardRange (M2Share.pas:2079): 地狱雷光's square radius.
-        nonNegativeInt(environment, "MIR2_ELEC_BLIZZARD_RANGE", DEFAULT_ELEC_BLIZZARD_RANGE));
+        nonNegativeInt(environment, "MIR2_ELEC_BLIZZARD_RANGE", DEFAULT_ELEC_BLIZZARD_RANGE),
+        // g_Config.nSnowWindRange (M2Share.pas:2078): 冰咆哮's square radius.
+        nonNegativeInt(environment, "MIR2_SNOW_WIND_RANGE", DEFAULT_SNOW_WIND_RANGE));
   }
 
   /** The admission guard for all three gates: IP bans plus Delphi's three connection limits. */

@@ -242,6 +242,7 @@ $JAVA --enable-native-access=ALL-UNNAMED -XX:MaxRAMPercentage=75 \
 | `MIR2_WORLD_TICK_MS` | `50` | 世界逻辑 Tick 间隔，1–10000ms |
 | `MIR2_FIREBOOM_RANGE` | `1` | 爆裂火焰（SKILL_FIREBOOM=23）方形攻击半径；对应 `Setup.FireBoomRage`，取值 1–12，包含边界格。 |
 | `MIR2_ELEC_BLIZZARD_RANGE` | `2` | 地狱雷光（SKILL_LIGHTFLOWER=24）方形攻击半径；对应 `Setup.ElecBlizzardRange`，取值 1–12。方形以**施法者自身**格为中心（点击坐标只随 `SM_MAGICFIRE` 下发），`LA_UNDEAD` 目标吃满 `GetAttackPower`，其余目标只吃 `nPower div 10`。 |
+| `MIR2_SNOW_WIND_RANGE` | `1` | 冰咆哮（SKILL_SNOWWIND=33）方形攻击半径；对应 `Setup.SnowWindRange`，取值 1–12。与爆裂火焰共用 `MagBigExplosion`（Magic.pas:578 vs 510），语义完全一致——点击可吸附到邻近对象、以吸附后坐标为中心、整次施法只掷一次 `GetAttackPower`、`SetTargetCreat` 仇恨锁定、对象绑定的普通 `RM_MAGSTRUCK`——**只有半径读的是这个独立配置项**，不会回落到 `MIR2_FIREBOOM_RANGE`。 |
 | `MIR2_MONSTER_COUNT` | `0` | 启动时在出生点四周生成的怪物数，0–1000。怪物**均匀分布在安全区之外的一圈**（半径 `MIR2_SAFE_ZONE_SIZE + 1`），不会贴脸生成 |
 | `MIR2_SAFE_ZONE_SIZE` | `10` | 出生点安全区半径（对应 `!Setup.txt` 的 `SafeZoneSize`）。对应 Delphi `TBaseObject.InSafeZone`：站在安全区内的玩家**不会被怪物选为攻击目标**（`IsAttackTarget`）。设为 0 可关闭（压测/对拍用），地图自带的 `boSAFE` 标志不受影响 |
 | `MIR2_MONSTER_KIND` | `chicken` | 首批 10 种模板之一：`chicken`（鸡）、`deer`（鹿，逃跑型）、`scarecrow`（稻草人）、`hookcat`（多钩猫）、`rakecat`（钉耙猫）、`cavemaggot`（洞蛆）、`scorpion`（蝎子）、`orc`（半兽人）、`orcwarrior`（半兽勇士）、`orcfighter`（半兽战士）；另有 `trainer`（木桩，站桩不还手，对应 Delphi `TRAINER`=55 / `TTrainer` 伤害测试木桩，供对拍用）；中文名同样有效 |

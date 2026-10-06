@@ -30,6 +30,8 @@ class ServerConfigTest {
     assertEquals(1, config.fireBoomRange());
     // M2Share.pas Setup.ElecBlizzardRange defaults to two cells.
     assertEquals(2, config.elecBlizzardRange());
+    // M2Share.pas Setup.SnowWindRange defaults to one cell.
+    assertEquals(1, config.snowWindRange());
   }
 
   @Test
@@ -88,6 +90,34 @@ class ServerConfigTest {
         () -> ServerConfig.from(Map.of("MIR2_ELEC_BLIZZARD_RANGE", "0")));
     assertThrows(IllegalArgumentException.class,
         () -> ServerConfig.from(Map.of("MIR2_ELEC_BLIZZARD_RANGE", "13")));
+  }
+
+  @Test
+  void snowWindRangeMatchesDelphiDefaultsAndFlowsThroughCopies() {
+    ServerConfig defaults = ServerConfig.from(Map.of());
+    // M2Share.pas:2078 and !Setup.txt:296 — 冰咆哮 ships at a one-cell square, unlike the
+    // two-cell default of 地狱雷光.
+    assertEquals(1, defaults.snowWindRange());
+    assertEquals(3, ServerConfig.from(Map.of("MIR2_SNOW_WIND_RANGE", "3")).snowWindRange());
+    assertEquals(12, ServerConfig.from(Map.of("MIR2_SNOW_WIND_RANGE", "12")).snowWindRange());
+
+    ServerConfig copied = defaults.withSafeZoneSize(0)
+        .withWorldClockMode(com.mir2.world.WorldClock.Mode.MANUAL)
+        .withDisableTakeOffFile(Path.of("DisableTakeOffList.txt"))
+        .withFireBoomRange(3)
+        .withElecBlizzardRange(4);
+    assertEquals(1, copied.snowWindRange(), "unrelated copy helpers retain the SnowWind range");
+    assertEquals(7, defaults.withSnowWindRange(7).snowWindRange());
+    // SnowWind is its own config field: moving it must not drag FireBoom/ElecBlizzard along.
+    ServerConfig widened = defaults.withSnowWindRange(7);
+    assertEquals(1, widened.fireBoomRange());
+    assertEquals(2, widened.elecBlizzardRange());
+    assertThrows(IllegalArgumentException.class, () -> defaults.withSnowWindRange(0));
+    assertThrows(IllegalArgumentException.class, () -> defaults.withSnowWindRange(13));
+    assertThrows(IllegalArgumentException.class,
+        () -> ServerConfig.from(Map.of("MIR2_SNOW_WIND_RANGE", "0")));
+    assertThrows(IllegalArgumentException.class,
+        () -> ServerConfig.from(Map.of("MIR2_SNOW_WIND_RANGE", "13")));
   }
 
   @Test
