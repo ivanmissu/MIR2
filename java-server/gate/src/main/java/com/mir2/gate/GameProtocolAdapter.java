@@ -469,6 +469,14 @@ public final class GameProtocolAdapter implements WorldEventSink {
       // 0 — Delphi ships g_Config.nClientKey there but the 1.76 client never reads it.
       case WorldEvent.LightChanged relit -> output.accept(new GameOutbound.Packet(
           packet(ProtocolConstants.SM_CHANGELIGHT, relit.objectId(), relit.light(), 0, 0, "")));
+      // RM_CHARSTATUSCHANGED -> SM_CHARSTATUSCHANGED (ObjBase.pas:5966): recog = the object the
+      // word belongs to, param/tag = the low/high halves of m_nCharStatus, series = m_nHitSpeed.
+      // The client rebuilds the word with MakeLong(Param, Tag) and renders the actor blended while
+      // bit 8 (0x00800000, STATE_TRANSPARENT) is set (ClMain.pas:4491 -> Actor.pas:1965).
+      case WorldEvent.CharacterStatusChanged status -> output.accept(new GameOutbound.Packet(
+          packet(ProtocolConstants.SM_CHARSTATUSCHANGED, status.objectId(),
+              status.charStatus() & 0xffff, (status.charStatus() >>> 16) & 0xffff,
+              status.hitSpeed(), "")));
       default -> {
         // MapLeft has no client packet; socket closure already ends the local session.
       }

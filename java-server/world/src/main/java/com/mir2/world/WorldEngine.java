@@ -297,6 +297,45 @@ public final class WorldEngine implements AutoCloseable {
   /** {@code g_Config.WideAttack} (M2Share.pas:1645): 半月弯刀 sweeps dir-1, dir+1, dir+2. */
   private static final int[] WIDE_ATTACK_OFFSETS = {7, 1, 2};
 
+  /**
+   * 隐身术 {@code SKILL_CLOAK}(18) and 集体隐身术 {@code SKILL_BIGCLOAK}(19): the 护身符-gated
+   * pair that only arms {@code m_wStatusTimeArr[STATE_TRANSPARENT]} (Magic.pas:476/481).
+   */
+  private static final int SKILL_CLOAK = 18;
+  private static final int SKILL_BIGCLOAK = 19;
+  /** {@code GetPower13(30)}'s base (Magic.pas:477/481): 15/20/25/30 at skill levels 0..3. */
+  private static final int TRANSPARENT_SECONDS_BASE = 30;
+  /**
+   * {@code MagMakePrivateTransparent}'s {@code GetMapBaseObjects(..., 9, ...)} radius
+   * (Magic.pas:745): the monsters that may drop their target when the cloak lands.
+   */
+  private static final int TRANSPARENT_DE_TARGET_RANGE = 9;
+  /** {@code MagMakeGroupTransparent}'s {@code GetMapBaseObjects(nX, nY, 1, ...)} (Magic.pas:1292). */
+  private static final int GROUP_TRANSPARENT_RANGE = 1;
+  /** {@code SendDelayMsg(..., 800)} (Magic.pas:1300): the group cloak's own delivery delay. */
+  private static final long GROUP_TRANSPARENT_DELAY_MILLIS = 800;
+  /** {@code m_wStatusTimeArr[STATE_TRANSPARENT] := 1} on a moved step (ObjBase.pas:2061). */
+  private static final long TRANSPARENT_MOVE_REVEAL_MILLIS = 1_000L;
+  /** {@code STATE_TRANSPARENT = 8} (Common/Grobal2.pas:88). */
+  private static final int STATE_TRANSPARENT = 8;
+  /** {@code STATE_DEFENCEUP = 9}. */
+  private static final int STATE_DEFENCEUP = 9;
+  /** {@code STATE_MAGDEFENCEUP = 10}. */
+  private static final int STATE_MAGDEFENCEUP = 10;
+  /** {@code STATE_BUBBLEDEFENCEUP = 11} — the 魔法盾 slot. */
+  private static final int STATE_BUBBLEDEFENCEUP = 11;
+  /** {@code POISON_DECHEALTH = 0} (Common/Grobal2.pas): {@code m_wStatusTimeArr} slot 0. */
+  private static final int POISON_DECHEALTH_SLOT = 0;
+  /** {@code POISON_DAMAGEARMOR = 1} (Common/Grobal2.pas): {@code m_wStatusTimeArr} slot 1. */
+  private static final int POISON_DAMAGEARMOR_SLOT = 1;
+  /**
+   * {@code m_nHitSpeed} rides along as the {@code series} word of RM_CHARSTATUSCHANGED
+   * (ObjBase.pas:20141/5968). It accumulates item attack-speed bonuses
+   * ({@code m_AddAbil.nHitSpeed}, ObjBase.pas:3403); no Java item carries one yet, so the
+   * modelled value is the zero a stocked character sends.
+   */
+  private static final int CHAR_STATUS_HIT_SPEED = 0;
+
   public record Config(
       Duration tickInterval,
       int viewRange,
@@ -1668,7 +1707,13 @@ public final class WorldEngine implements AutoCloseable {
     GameMap map = requireMap(mapId);
     if (!map.canWalk(position)) throw new IllegalStateException("spawn cell is not available: " + position);
     int id = allocateObjectId();
-    Monster monster = new Monster(id, template, map, position, direction, clock.getAsLong());
+    // UsrEngn.pas:1950 (right after MonInitialize): `if Random(100) < Cert.m_btCoolEye then
+    // Cert.m_boCoolEye := True`. A zero column never draws, so spawning the first-ten templates
+    // (chicken/deer/... all carry CoolEye = 0 except 半兽勇士/洞蛆 = 1) leaves every existing
+    // deterministic vector untouched.
+    boolean coolEye = template.coolEyePercent() > 0
+        && random.nextInt(WorldRandom.Stream.COOL_EYE, 100) < template.coolEyePercent();
+    Monster monster = new Monster(id, template, map, position, direction, clock.getAsLong(), coolEye);
     map.place(id, position);
     monsters.put(id, monster);
     WorldEvent appeared = new WorldEvent.ObjectAppeared(monster.snapshot());
@@ -1712,6 +1757,13 @@ public final class WorldEngine implements AutoCloseable {
     player.map.move(player.id, source, target);
     player.position = target;
     player.direction = direction;
+    // ObjBase.pas:2061 (walk), 8947 (run) and 9560 (horse run): a successful step rewrites the
+    // transparent slot to 1 second, so the cloak lapses on the next whole-second countdown tick
+    // rather than the instant the step lands. Every further step refreshes that same second, so a
+    // character who keeps walking stays cloaked (the counter never reaches zero in between).
+    if (player.transparent && player.hideMode) {
+      player.transparentUntil = clock.getAsLong() + TRANSPARENT_MOVE_REVEAL_MILLIS;
+    }
     Set<Integer> visibleAfter = new LinkedHashSet<>(visibleIds(player.map, target, player.id));
     WorldObjectSnapshot movedPlayer = player.snapshot();
 
@@ -1808,6 +1860,7 @@ public final class WorldEngine implements AutoCloseable {
     if (!isDamageBolt(magicId) && !isLinePiercingSkill(magicId) && !isAreaHealingSkill(magicId)
         && !isAreaExplosionSkill(magicId) && !isElecBlizzardSkill(magicId)
         && !isPushArroundSkill(magicId) && !isDefenceBuffSkill(magicId)
+        && !isCloakSkill(magicId)
         && magicId != SKILL_HEALING && magicId != SKILL_MAGIC_SHIELD)
       return rejectSpell(player, magicId, WorldEvent.SpellRejection.UNSUPPORTED_SKILL, "该技能尚未开放");
 
@@ -1843,9 +1896,12 @@ public final class WorldEngine implements AutoCloseable {
     // 幽灵盾/神圣战甲术 (Magic.pas:451/456) only read the click coordinates as the centre of
     // MagMakeDefenceArea's square; TargeTBaseObject is never touched, so — as with 群体治愈术 —
     // an empty-ground click with targetId = 0 is a legal cast.
+    // 隐身术 casts on the caster's own cell and 集体隐身术 on the group's cell; neither branch
+    // reads TargeTBaseObject either (Magic.pas:476/481), so both accept an empty-ground click.
     if (!isLinePiercingSkill(magicId) && !isAreaHealingSkill(magicId)
         && !isAreaExplosionSkill(magicId) && !isElecBlizzardSkill(magicId)
         && !isPushArroundSkill(magicId) && !isDefenceBuffSkill(magicId)
+        && !isCloakSkill(magicId)
         && !validSpellTarget(player, targetObject, target, magicId))
       return rejectSpell(player, magicId, WorldEvent.SpellRejection.INVALID_TARGET, "施法目标无效");
 
@@ -1878,7 +1934,8 @@ public final class WorldEngine implements AutoCloseable {
     // caster with no charm never gets the projectile broadcast at all (see
     // castAmuletGatedSpell). W46 brings 幽灵盾/神圣战甲术 (the first two rows of that block that
     // need no summon, transparency or trap subsystem) onto the same gate.
-    if (magicId == SKILL_FIRECHARM || magicId == SKILL_AMYOUNSUL || isDefenceBuffSkill(magicId)) {
+    if (magicId == SKILL_FIRECHARM || magicId == SKILL_AMYOUNSUL || isDefenceBuffSkill(magicId)
+        || isCloakSkill(magicId)) {
       castAmuletGatedSpell(player, magicId, skill, magic, target, targetId, targetObject, now);
       return true;
     }
@@ -2479,6 +2536,17 @@ public final class WorldEngine implements AutoCloseable {
       castDefenceArea(player, skill, magic, target, targetId);
       return;
     }
+    // 隐身术/集体隐身术 (Magic.pas:476/481) also run their case body before DoSpell's trailing
+    // RM_MAGICFIRE, so the status frame (private) or the queued RM_TRANSPARENT deliveries (group)
+    // keep Delphi's relative order to the cast frame. Both own their own broadcast below.
+    if (magicId == SKILL_CLOAK) {
+      castPrivateCloak(player, skill, magic, target, targetId);
+      return;
+    }
+    if (magicId == SKILL_BIGCLOAK) {
+      castGroupCloak(player, skill, magic, target, targetId);
+      return;
+    }
     emitToObserversAndSelf(player, new WorldEvent.MagicFired(player.id, target, targetId, magic));
     if (magicId == SKILL_FIRECHARM) {
       if (targetObject != null && passesMagicResist(targetObject)) {
@@ -2571,7 +2639,7 @@ public final class WorldEngine implements AutoCloseable {
     int affected = 0;
     for (int id : player.map.objectsInSquare(center, DEFENCE_AREA_RANGE)) {
       WorldObject candidate = findObject(id);
-      if (!isDefenceAreaFriend(player, candidate)) continue;
+      if (!isGroupFriend(player, candidate)) continue;
       applyDefenceUp((Player) candidate, seconds, magical);
       affected++;
     }
@@ -2625,11 +2693,11 @@ public final class WorldEngine implements AutoCloseable {
   }
 
   /**
-   * The {@code HAM_GROUP} arm of {@code IsProperFriend} (ObjBase.pas:24143) as
-   * {@code MagMakeDefenceArea} reaches it: {@code cret = Self} or {@code IsGroupMember(cret)},
-   * and only for {@code RC_PLAYOBJECT}. Monsters are never friends here — a tamed slave would be
-   * one through {@code m_Master}, which the Java object model does not carry yet, the same
-   * boundary W40 recorded for 群体治愈术.
+   * The {@code HAM_GROUP} arm of {@code IsProperFriend} (ObjBase.pas:24143) as both
+   * {@code MagMakeDefenceArea} (W46) and {@code MagMakeGroupTransparent} (W47) reach it:
+   * {@code cret = Self} or {@code IsGroupMember(cret)}, and only for {@code RC_PLAYOBJECT}.
+   * Monsters are never friends here — a tamed slave would be one through {@code m_Master}, which
+   * the Java object model does not carry yet, the same boundary W40 recorded for 群体治愈术.
    *
    * <p>Unlike {@link #isAreaHealFriend} this predicate carries no alive filter, because
    * {@code MagMakeDefenceArea} filters on {@code not m_boGhost} alone and {@code IsProperFriend}
@@ -2639,10 +2707,166 @@ public final class WorldEngine implements AutoCloseable {
    * start a cast at all — so no corpse can ever satisfy {@code cret = Self} or
    * {@code IsGroupMember(cret)} here.
    */
-  private static boolean isDefenceAreaFriend(Player caster, WorldObject candidate) {
+  private static boolean isGroupFriend(Player caster, WorldObject candidate) {
     if (!(candidate instanceof Player target) || target.map != caster.map) return false;
     if (target.id == caster.id) return true;
     return caster.group != null && caster.group == target.group && caster.group.contains(target.id);
+  }
+
+  /** Magic.DB rows 18/19 — 隐身术 and 集体隐身术, the last standalone pair of the 护身符 block. */
+  private static boolean isCloakSkill(int magicId) {
+    return magicId == SKILL_CLOAK || magicId == SKILL_BIGCLOAK;
+  }
+
+  /**
+   * {@code GetPower13(30) + GetRPow(PlayObject.m_WAbil.SC) * 3} (Magic.pas:477/481), in seconds.
+   *
+   * <p>{@code GetRPow} (Magic.pas:73) draws one value from {@code [LoWord(SC), HiWord(SC)]}
+   * — inclusive, and just {@code LoWord} when the range is flat — and the literal 30 runs through
+   * {@code GetPower13} (Magic.pas:238 → {@link MagicDefinition#scalePower13}), which yields
+   * 15/20/25/30 at skill levels 0..3 with both rows' zero {@code DefPower}/{@code DefMaxPower}.
+   * The engine reads the <em>working</em> ability's SC range, the same choice
+   * {@link #rollDefenceSeconds} makes for the identical literal.
+   */
+  private int rollTransparentSeconds(Player player, PlayerSkill skill, MagicDefinition magic) {
+    int minSc = player.ability.minSc();
+    int maxSc = player.ability.maxSc();
+    int rpow = maxSc > minSc
+        ? minSc + random.nextInt(WorldRandom.Stream.MAGIC, maxSc - minSc + 1)
+        : minSc;
+    return magic.scalePower13(TRANSPARENT_SECONDS_BASE, skill.level())
+        + rollExclusive(magic.defPower(), magic.defMaxPower())
+        + rpow * 3;
+  }
+
+  /**
+   * {@code GetCharStatus} (ObjBase.pas:20074): every {@code m_wStatusTimeArr} slot above zero
+   * contributes {@code $80000000 shr slot} to the actor's status word. The engine models five of
+   * the slots — the two poison timers, {@code STATE_TRANSPARENT}(8), {@code STATE_DEFENCEUP}(9),
+   * {@code STATE_MAGDEFENCEUP}(10) and the 魔法盾 bubble slot (11) — so the word is rebuilt from
+   * those and the rest stay zero, exactly like a character who never met a 石化/锁灵 status.
+   */
+  private static int charStatus(Player player, long now) {
+    int status = 0;
+    if (player.poison().decHealthUntil > now) status |= statusBit(POISON_DECHEALTH_SLOT);
+    if (player.poison().damageArmorUntil > now) status |= statusBit(POISON_DAMAGEARMOR_SLOT);
+    if (player.transparentUntil > now) status |= statusBit(STATE_TRANSPARENT);
+    if (player.defenceUpUntil > now) status |= statusBit(STATE_DEFENCEUP);
+    if (player.magDefenceUpUntil > now) status |= statusBit(STATE_MAGDEFENCEUP);
+    if (player.magicShieldUntil > now) status |= statusBit(STATE_BUBBLEDEFENCEUP);
+    return status;
+  }
+
+  private static int statusBit(int slot) {
+    return 0x8000_0000 >>> slot;
+  }
+
+  /**
+   * {@code TBaseObject.StatusChanged} (ObjBase.pas:20139 → {@code SendRefMsg(RM_CHARSTATUSCHANGED,
+   * m_nHitSpeed, m_nCharStatus, ...)}): the word goes to the actor and to every player inside the
+   * ±12-cell broadcast square, which for the engine's smaller view range is the same set
+   * {@link #emitToObserversAndSelf} walks. {@code m_nHitSpeed} has no Java source yet, so the
+   * frame carries Delphi's initial zero.
+   */
+  private void emitCharacterStatusChanged(Player player) {
+    emitToObserversAndSelf(player, new WorldEvent.CharacterStatusChanged(
+        player.id, CHAR_STATUS_HIT_SPEED, player.status));
+  }
+
+  /**
+   * {@code MagMakePrivateTransparent} (Magic.pas:734, 004930E8), the shared body of 隐身术 and of
+   * the delayed {@code RM_TRANSPARENT} that 集体隐身术 queues for each friend:
+   *
+   * <pre>
+   *   if m_wStatusTimeArr[STATE_TRANSPARENT] &gt; 0 then exit False;      // 已隐身，绝不刷新
+   *   for 每个 ±9 格内的对象:                                            // GetMapBaseObjects(..., 9, ...)
+   *     if (race &gt;= RC_ANIMAL) and (m_TargetCret = Self) then
+   *       if (|dx| &gt; 1) or (|dy| &gt; 1) or (Random(2) = 0) then         // 近身只有一半概率
+   *         m_TargetCret := nil;
+   *   m_wStatusTimeArr[STATE_TRANSPARENT] := nHTime;
+   *   m_nCharStatus := GetCharStatus();  StatusChanged();
+   *   m_boHideMode := True;  m_boTransparent := True;
+   * </pre>
+   *
+   * @return Delphi's {@code Result}: false when the target was already transparent (the caller
+   *     then skips {@code boTrain}, though the 护身符 charge and MP were already spent)
+   */
+  private boolean applyPrivateTransparent(Player target, int seconds) {
+    long now = clock.getAsLong();
+    if (target.transparentUntil > now) return false;
+    clearMonsterAggro(target);
+    target.transparentUntil = now + Math.max(0, seconds) * 1_000L;
+    target.transparent = true;
+    target.hideMode = true;
+    target.status = charStatus(target, now);
+    emitCharacterStatusChanged(target);
+    return true;
+  }
+
+  /**
+   * The de-target sweep of {@code MagMakePrivateTransparent} (Magic.pas:744-753): every monster
+   * within nine cells that is currently hunting the newly cloaked player drops its target —
+   * always when it stands more than one cell away, and only on a {@code Random(2) = 0} coin flip
+   * when it is adjacent. Objects of other races are never touched, and monsters further than nine
+   * cells keep chasing (Delphi only clears what the sweep reaches).
+   */
+  private void clearMonsterAggro(Player target) {
+    for (int id : target.map.objectsInSquare(target.position, TRANSPARENT_DE_TARGET_RANGE)) {
+      Monster monster = monsters.get(id);
+      if (monster == null || monster.targetId != target.id || !monster.ability().alive()) continue;
+      boolean distant = Math.abs(monster.position.x() - target.position.x()) > 1
+          || Math.abs(monster.position.y() - target.position.y()) > 1;
+      if (distant || random.nextInt(WorldRandom.Stream.CLOAK_AGGRO, 2) == 0) monster.targetId = 0;
+    }
+  }
+
+  /**
+   * {@code SKILL_BIGCLOAK} (Magic.pas:481 → {@code MagMakeGroupTransparent}, Magic.pas:1286):
+   * the inclusive 3x3 square around the (possibly snapped) click cell, filtered by the caster's
+   * {@code IsProperFriend}, then one self-addressed 800 ms {@code RM_TRANSPARENT} per friend whose
+   * transparent slot is idle. The delayed message re-runs {@link #applyPrivateTransparent} on the
+   * recipient — which re-checks the slot and so never refreshes a window that started inside the
+   * 800 ms — while the friendship itself is <em>not</em> re-checked at delivery (Delphi does not
+   * either). {@code boTrain} follows the returned count: a square with no eligible friend trains
+   * nothing even though the charm and MP are gone.
+   */
+  private void castGroupCloak(
+      Player player, PlayerSkill skill, MagicDefinition magic, Position requestedTarget,
+      int targetId) {
+    WorldObject clicked = targetId != 0 ? findObject(targetId) : null;
+    boolean snapped = clicked != null && clicked.map() == player.map
+        && chebyshev(clicked.position(), requestedTarget) <= 1;
+    Position center = snapped ? clicked.position() : requestedTarget;
+    int firedTargetId = snapped && clicked.ability().alive() ? clicked.id() : 0;
+
+    long now = clock.getAsLong();
+    int seconds = rollTransparentSeconds(player, skill, magic);
+    int affected = 0;
+    for (int id : player.map.objectsInSquare(center, GROUP_TRANSPARENT_RANGE)) {
+      WorldObject candidate = findObject(id);
+      if (!isGroupFriend(player, candidate)) continue;
+      Player friend = (Player) candidate;
+      if (friend.transparentUntil > now) continue;
+      pendingMagicImpacts.add(new PendingMagicImpact(
+          now + GROUP_TRANSPARENT_DELAY_MILLIS, MagicImpactKind.TRANSPARENT,
+          player.id, friend.id(), friend.position(), seconds));
+      affected++;
+    }
+    emitToObserversAndSelf(player, new WorldEvent.MagicFired(player.id, center, firedTargetId, magic));
+    if (affected > 0) trainSpellSkill(player, skill, magic);
+  }
+
+  /**
+   * {@code SKILL_CLOAK} (Magic.pas:476 → {@code MagMakePrivateTransparent}). The result drives
+   * {@code boTrain}: a recast while already invisible spends the charm and MP but neither trains
+   * nor repaints the status word.
+   */
+  private void castPrivateCloak(
+      Player player, PlayerSkill skill, MagicDefinition magic, Position target, int targetId) {
+    int seconds = rollTransparentSeconds(player, skill, magic);
+    boolean applied = applyPrivateTransparent(player, seconds);
+    emitToObserversAndSelf(player, new WorldEvent.MagicFired(player.id, target, targetId, magic));
+    if (applied) trainSpellSkill(player, skill, magic);
   }
 
   /** {@code Random(10) >= target.m_nAntiMagic}: true when a hostile magic effect lands. */
@@ -4181,8 +4405,12 @@ public final class WorldEngine implements AutoCloseable {
     player.map.remove(player.id, player.position);
     players.remove(playerId);
     playersByName.remove(player.name);
+    // Delphi's SendDelayMsg queues the message on the receiver (ObjBase.pas:19374 adds it to
+    // Self.m_MsgList), so a friend's pending RM_TRANSPARENT still fires after the caster is gone;
+    // every other kind is a bolt the caster owns and dies with them.
     pendingMagicImpacts.removeIf(impact ->
-        impact.casterId() == playerId || impact.targetId() == playerId);
+        impact.targetId() == playerId
+            || (impact.casterId() == playerId && impact.kind() != MagicImpactKind.TRANSPARENT));
     emit(player, new WorldEvent.MapLeft(playerId));
     WorldEvent disappeared = new WorldEvent.ObjectDisappeared(playerId);
     for (int viewerId : visibleIds) emit(players.get(viewerId), disappeared);
@@ -4343,6 +4571,14 @@ public final class WorldEngine implements AutoCloseable {
       pendingMagicImpacts.remove(index);
       WorldObject caster = findObject(impact.casterId());
       WorldObject target = findObject(impact.targetId());
+      // RM_TRANSPARENT (ObjBase.pas:4619) is a self-addressed delayed message: the friend's queue
+      // re-runs MagMakePrivateTransparent with the recorded duration, so a caster who died or left
+      // inside the 800 ms window does not cancel it, and only the recipient's own transparent slot
+      // (the >0 early exit) can still refuse.
+      if (impact.kind() == MagicImpactKind.TRANSPARENT) {
+        if (target instanceof Player cloaked) applyPrivateTransparent(cloaked, impact.power());
+        continue;
+      }
       // RM_MAGSTRUCK (ObjBase.pas:2554) binds its victim at cast time and is delivered to the
       // object directly — unlike the RM_DELAYMAGIC bolts, whose `abs(nTargetX-x) <= nRage`
       // arrival check (ObjBase.pas:4579) is what the one-cell escape below models (W28).
@@ -4512,8 +4748,34 @@ public final class WorldEngine implements AutoCloseable {
         player.magicShieldLevel = 0;
         emit(player, new WorldEvent.SystemMessage(player.id, "魔法盾效果已消失"));
       }
-      expireDefenceUp(player, now);
+      // The status walk keeps Delphi's slot order (STATE_TRANSPARENT=8, STATE_DEFENCEUP=9,
+      // STATE_MAGDEFENCEUP=10): each slot's hint goes out as the walk reaches it, the cloak's
+      // status repaint follows every hint (boChg, ObjBase.pas:4236-4240), and the single shared
+      // RM_ABILITY refresh lands last (boNeedRecalc, ObjBase.pas:4243-4247).
+      boolean needRecalc = expireDefenceUp(player, now);
+      if (expireTransparent(player, now)) emitCharacterStatusChanged(player);
+      if (needRecalc) {
+        emit(player, new WorldEvent.AbilityChanged(
+            player.id, player.ability, player.gold, player.job, player.weights()));
+      }
     }
+  }
+
+  /**
+   * {@code STATE_TRANSPARENT}'s arm of the status countdown (ObjBase.pas:4168-4171): when the
+   * slot reaches zero {@code m_boHideMode} drops and {@code boChg} repaints the status word.
+   * {@code m_boTransparent} deliberately survives, exactly as in Delphi — {@code RecalcAbilitys}
+   * reads the pair together ({@code transparent and slot > 0}) to decide whether to re-enter hide
+   * mode, and a relog rebuilds both from scratch.
+   *
+   * @return {@code true} when the slot actually lapsed this tick
+   */
+  private boolean expireTransparent(Player player, long now) {
+    if (player.transparentUntil == 0 || player.transparentUntil > now) return false;
+    player.transparentUntil = 0;
+    player.hideMode = false;
+    player.status = charStatus(player, now);
+    return true;
   }
 
   /**
@@ -4528,7 +4790,7 @@ public final class WorldEngine implements AutoCloseable {
    * {@code STATE_MAGDEFENCEUP = 10}, Common/Grobal2.pas:91-92), which is the order the hints
    * arrive in.
    */
-  private void expireDefenceUp(Player player, long now) {
+  private boolean expireDefenceUp(Player player, long now) {
     boolean needRecalc = false;
     if (player.defenceUpUntil != 0 && player.defenceUpUntil <= now) {
       player.defenceUpUntil = 0;
@@ -4540,11 +4802,8 @@ public final class WorldEngine implements AutoCloseable {
       emit(player, new WorldEvent.SystemMessage(player.id, MAG_DEFENCE_UP_EXPIRED_MESSAGE));
       needRecalc = true;
     }
-    if (needRecalc) {
-      recalculateAbilities(player);
-      emit(player, new WorldEvent.AbilityChanged(
-          player.id, player.ability, player.gold, player.job, player.weights()));
-    }
+    if (needRecalc) recalculateAbilities(player);
+    return needRecalc;
   }
 
   private void applyDamage(WorldObject victim, WorldObject attacker, int damage) {
@@ -5685,6 +5944,12 @@ public final class WorldEngine implements AutoCloseable {
     for (int viewerId : visibleIds(monster.map, monster.position, monster.id)) {
       Player candidate = players.get(viewerId);
       if (candidate == null || !isAttackTarget(candidate)) continue;
+      // The search gate every monster AI branch shares: `if not BaseObject.m_boHideMode or
+      // m_boCoolEye then` (ObjMon.pas:564/1238/1421/1531, ObjMon2.pas:235/551, ObjAxeMon.pas:145,
+      // ObjBase.pas:22680). A cloaked player is invisible to a monster unless that instance's
+      // per-spawn CoolEye roll succeeded; a target acquired before the cloak landed is kept —
+      // clearing it is the cloak's own ±9-cell sweep job (see clearMonsterAggro).
+      if (candidate.hideMode && !monster.coolEye) continue;
       int distance = monster.position.distanceTo(candidate.position);
       if (distance < closestDistance) {
         closestDistance = distance;
@@ -6052,7 +6317,14 @@ public final class WorldEngine implements AutoCloseable {
   }
 
   private enum MagicImpactKind {
-    DAMAGE, PIERCING_DAMAGE, AREA_DAMAGE, HEAL, AREA_HEAL, POISON_DECHEALTH, POISON_DAMAGEARMOR
+    DAMAGE, PIERCING_DAMAGE, AREA_DAMAGE, HEAL, AREA_HEAL, POISON_DECHEALTH, POISON_DAMAGEARMOR,
+    /**
+     * 集体隐身术's delayed {@code RM_TRANSPARENT} (Magic.pas:1300): unlike every other kind this
+     * one carries no damage and is re-checked against the recipient alone, because Delphi's
+     * delayed message is addressed to the friend and re-runs {@code MagMakePrivateTransparent}
+     * there regardless of what happened to the caster in the meantime.
+     */
+    TRANSPARENT
   }
 
   private record PendingMagicImpact(
@@ -6173,7 +6445,13 @@ public final class WorldEngine implements AutoCloseable {
     // m_PEnvir equivalent: reassigned by EnterAnotherMap when a gate teleports the player.
     private GameMap map;
     private final int baseFeature;
-    private final int status;
+    /**
+     * {@code m_nCharStatus}: the actor's status word, rebuilt by {@code GetCharStatus}
+     * (ObjBase.pas:20074) whenever a status slot flips. Seeded from the character record at
+     * login; the cloak slice is the first producer of a runtime change (bit 8,
+     * {@code STATE_TRANSPARENT}).
+     */
+    private int status;
     private final WorldEventSink sink;
     private final List<BackpackItem> backpack;
     private final int gender;
@@ -6208,6 +6486,29 @@ public final class WorldEngine implements AutoCloseable {
      */
     private int appliedDefenceUpBonus;
     private int appliedMagDefenceUpBonus;
+    /**
+     * The 隐身术 family's {@code m_wStatusTimeArr[STATE_TRANSPARENT]} deadline, written to
+     * {@code now + GetPower13(30) + GetRPow(SC) * 3} seconds by {@code MagMakePrivateTransparent}
+     * (Magic.pas:755). Delphi freezes status slots at or above 60000 — that is how the 隐身戒指
+     * grants permanent invisibility (ObjBase.pas:2965) — and the engine has no such item yet, so
+     * only the ordinary per-second countdown of ObjBase.pas:4156 is modelled. A moved step
+     * rewrites the slot to 1 second (ObjBase.pas:2061/8947/9560); this timestamp then becomes
+     * {@code now + 1000}. {@code 0} means the slot is idle.
+     */
+    private long transparentUntil;
+    /**
+     * {@code m_boHideMode}: what the monster target search actually reads
+     * ({@code if not BaseObject.m_boHideMode or m_boCoolEye}, ObjMon.pas:564). Set with the cloak,
+     * cleared by the countdown (ObjBase.pas:4170) or a relog (Initialize, ObjBase.pas:1359).
+     */
+    private boolean hideMode;
+    /**
+     * {@code m_boTransparent}: only the cloak spells ever raise it (Magic.pas:759); the countdown
+     * leaves it alone. {@code RecalcAbilitys} restores {@code m_boHideMode} from it
+     * ({@code if m_boTransparent and m_wStatusTimeArr[8] > 0 then m_boHideMode := True},
+     * ObjBase.pas:3364), which is why the pair is kept apart here too.
+     */
+    private boolean transparent;
     private long lastSavedAt;
     /** {@code m_dwDeathTick}: 0 while alive, the death timestamp otherwise. */
     private long diedAt;
@@ -6542,9 +6843,12 @@ public final class WorldEngine implements AutoCloseable {
     private long lastWalkAt;
     private long lastAttackAt;
     private long diedAt;
+    /** {@code m_boCoolEye}: rolled once at spawn from the Monster.DB {@code CoolEye} column. */
+    private final boolean coolEye;
 
     private Monster(
-        int id, MonsterTemplate template, GameMap map, Position position, Direction direction, long now) {
+        int id, MonsterTemplate template, GameMap map, Position position, Direction direction,
+        long now, boolean coolEye) {
       this.id = id;
       this.template = template;
       this.map = map;
@@ -6553,6 +6857,7 @@ public final class WorldEngine implements AutoCloseable {
       this.ability = template.ability();
       this.lastWalkAt = now;
       this.lastAttackAt = now;
+      this.coolEye = coolEye;
     }
 
     @Override

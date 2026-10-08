@@ -44,7 +44,8 @@ public record MonsterTemplate(
     List<MonsterDropTable.GoldDrop> goldDrops,
     boolean undead,
     int speedPoint,
-    int hitPoint) {
+    int hitPoint,
+    int coolEyePercent) {
 
   public MonsterTemplate {
     if (name == null || name.isBlank()) throw new IllegalArgumentException("monster name must not be blank");
@@ -56,8 +57,23 @@ public record MonsterTemplate(
     if (experience < 0) throw new IllegalArgumentException("experience must not be negative");
     if (speedPoint < 0 || hitPoint < 0)
       throw new IllegalArgumentException("speed/hit points must not be negative");
+    if (coolEyePercent < 0) throw new IllegalArgumentException("cool eye value must not be negative");
     drops = List.copyOf(drops);
     goldDrops = List.copyOf(goldDrops);
+  }
+
+  /**
+   * Compatibility constructor for templates built before the {@code CoolEye} column landed
+   * (W47): zero reproduces the old behaviour exactly, because the monster search gate reads
+   * {@code not m_boHideMode or m_boCoolEye} (ObjMon.pas:564) and an always-false CoolEye simply
+   * means "every monster is blind to 隐身术", the pre-W47 status quo.
+   */
+  public MonsterTemplate(String name, int feature, Ability ability, int viewRange,
+      long walkIntervalMillis, long attackIntervalMillis, long experience, MonsterBehavior behavior,
+      List<ItemDrop> drops, List<MonsterDropTable.GoldDrop> goldDrops, boolean undead,
+      int speedPoint, int hitPoint) {
+    this(name, feature, ability, viewRange, walkIntervalMillis, attackIntervalMillis, experience,
+        behavior, drops, goldDrops, undead, speedPoint, hitPoint, 0);
   }
 
   /**
@@ -70,7 +86,7 @@ public record MonsterTemplate(
       long walkIntervalMillis, long attackIntervalMillis, long experience, MonsterBehavior behavior,
       List<ItemDrop> drops, List<MonsterDropTable.GoldDrop> goldDrops, boolean undead) {
     this(name, feature, ability, viewRange, walkIntervalMillis, attackIntervalMillis, experience,
-        behavior, drops, goldDrops, undead, 0, 0);
+        behavior, drops, goldDrops, undead, 0, 0, 0);
   }
 
   /** Compatibility constructor for templates built before the {@code undead} column landed (W32). */
@@ -78,7 +94,7 @@ public record MonsterTemplate(
       long walkIntervalMillis, long attackIntervalMillis, long experience, MonsterBehavior behavior,
       List<ItemDrop> drops, List<MonsterDropTable.GoldDrop> goldDrops) {
     this(name, feature, ability, viewRange, walkIntervalMillis, attackIntervalMillis, experience,
-        behavior, drops, goldDrops, false, 0, 0);
+        behavior, drops, goldDrops, false, 0, 0, 0);
   }
 
   /** Compatibility constructor for templates that have ordinary item drops but no gold rows. */
@@ -86,14 +102,14 @@ public record MonsterTemplate(
       long walkIntervalMillis, long attackIntervalMillis, long experience, MonsterBehavior behavior,
       List<ItemDrop> drops) {
     this(name, feature, ability, viewRange, walkIntervalMillis, attackIntervalMillis, experience,
-        behavior, drops, List.of(), false, 0, 0);
+        behavior, drops, List.of(), false, 0, 0, 0);
   }
 
   /** Compatibility constructor for the W03 melee slice: everything defaults to aggressive AI. */
   public MonsterTemplate(String name, int feature, Ability ability, int viewRange,
       long walkIntervalMillis, long attackIntervalMillis, long experience, List<ItemDrop> drops) {
     this(name, feature, ability, viewRange, walkIntervalMillis, attackIntervalMillis, experience,
-        MonsterBehavior.AGGRESSIVE, drops, List.of(), false, 0, 0);
+        MonsterBehavior.AGGRESSIVE, drops, List.of(), false, 0, 0, 0);
   }
 
   /**
@@ -173,7 +189,7 @@ public record MonsterTemplate(
         MonsterDb.clampActionInterval(row.walkSpd()),
         MonsterDb.clampActionInterval(row.attackSpd()),
         row.exp(), behavior, drops.drops(), drops.goldDrops(), row.undead() != 0,
-        row.speed(), row.hit());
+        row.speed(), row.hit(), row.coolEye());
   }
 
   /** The wallet-gold rows of a template; exposed for docs/tests alongside ordinary drops. */
