@@ -100,7 +100,28 @@ public final class WorldRandom {
      * 隐身术. Monsters whose Monster.DB {@code CoolEye} column is zero never draw here, so
      * every existing deterministic spawn vector keeps its draws.
      */
-    COOL_EYE
+    COOL_EYE,
+    /**
+     * 圣言术 ({@code MagTurnUndead}, Magic.pas:912/915): the {@code Random(2) + (casterLevel - 1)
+     * > targetLevel} level gate followed by the {@code Random(100) < 7 * skillLevel + 15 +
+     * levelGap} instant-kill roll. Both draws live on one stream because they are issued back to
+     * back inside a single skill branch; appending keeps every pre-W48 seeded stream unmoved.
+     */
+    TURN_UNDEAD,
+    /**
+     * {@code TAnimalObject.Struck}'s {@code Random(6) = 0} retarget coin (ObjBase.pas:2798): when
+     * the struck monster already hunts a target that is *not* inside its 3x3 neighbourhood, it
+     * only switches to the new attacker one time in six. W48 is the first caller of the shared
+     * struck path (melee aggro is modelled by {@code acquireTarget} instead), so the stream has
+     * no pre-existing consumers.
+     */
+    STRUCK_RETARGET,
+    /**
+     * 心灵启示's {@code Random(6) <= btLevel + 3} reveal gate (Magic.pas:524): skill levels 0..3
+     * pass at 4/6, 5/6, 6/6 and 6/6. Kept apart from {@link #MAGIC} so a failed reveal cannot
+     * perturb the SC-range draw that follows it on success.
+     */
+    SHOW_HP
   }
 
   private static final Stream[] STREAMS = Stream.values();

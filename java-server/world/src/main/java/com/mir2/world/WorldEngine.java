@@ -185,6 +185,20 @@ public final class WorldEngine implements AutoCloseable {
   private static final int SKILL_LIGHTFLOWER = 24;
   private static final int SKILL_MAGIC_SHIELD = 31;
   private static final int SKILL_SNOWWIND = 33;
+  /** 心灵启示 {@code SKILL_SHOWHP}(28, Magic.pas:522): the Taoist reveal-target-HP spell. */
+  private static final int SKILL_SHOWHP = 28;
+  /** 圣言术 {@code SKILL_KILLUNDEAD}(32, Magic.pas:572): the Wizard instant-kill vs undead. */
+  private static final int SKILL_KILLUNDEAD = 32;
+  /**
+   * {@code SendDelayMsg(TargeTBaseObject, RM_DOOPENHEALTH, ..., 1500)} (Magic.pas:527): the
+   * 心灵启示 reveal lands 1.5 s after a successful cast.
+   */
+  private static final long SHOW_HP_REVEAL_DELAY_MILLIS = 1_500;
+  /**
+   * {@code m_dwRunAwayTime := 10 * 1000} (Magic.pas:909): how long 圣言术's run-away mode freezes
+   * an aggressive monster that did not take the caster as its target.
+   */
+  private static final long TURN_UNDEAD_RUN_AWAY_MILLIS = 10_000L;
   private static final int DEFAULT_FIREBOOM_RANGE = 1;
   private static final int MAX_FIREBOOM_RANGE = 12;
   /**
@@ -204,6 +218,13 @@ public final class WorldEngine implements AutoCloseable {
   private static final int DEFAULT_SNOW_WIND_RANGE = 1;
   /** {@code EditSnowWindRange.MaxValue} (FunctionConfig.dfm:2069): 12, shared with FireBoom. */
   private static final int MAX_SNOW_WIND_RANGE = 12;
+  /**
+   * {@code g_Config.nMagTurnUndeadLevel} (M2Share.pas:2080): 圣言术 only works on monsters
+   * strictly below this level. It ships at 50.
+   */
+  private static final int DEFAULT_MAG_TURN_UNDEAD_LEVEL = 50;
+  /** {@code EditMagTurnUndeadLevel.MaxValue} (FunctionConfig.dfm): 65535, MinValue 1. */
+  private static final int MAX_MAG_TURN_UNDEAD_LEVEL = 65535;
   /**
    * {@code GetMapBaseObjects(m_PEnvir, nX, nY, 1, ...)} (Magic.pas:180): 群体治愈术 collects the
    * inclusive 3x3 square around the click — the constant is hard-coded, not a config value and
@@ -324,6 +345,15 @@ public final class WorldEngine implements AutoCloseable {
   private static final int STATE_MAGDEFENCEUP = 10;
   /** {@code STATE_BUBBLEDEFENCEUP = 11} — the 魔法盾 slot. */
   private static final int STATE_BUBBLEDEFENCEUP = 11;
+  /**
+   * {@code STATE_OPENHEATH = $00000002} (Common/Grobal2.pas:96): 心灵启示's marker bit. Delphi
+   * folds it into {@code m_nCharStatus} through {@code GetCharStatus} (ObjBase.pas:20087,
+   * {@code (m_nCharStatusEx and $FFFFF) or nStatus}) but never repaints the status word from
+   * {@code MakeOpenHealth}/{@code BreakOpenHealth} themselves — the client drives its HP bar
+   * off {@code SM_OPENHEALTH}/{@code SM_CLOSEHEALTH} and only re-reads this bit when some
+   * unrelated status change repaints the word (Actor.pas:1460).
+   */
+  private static final int STATE_OPENHEATH = 0x2;
   /** {@code POISON_DECHEALTH = 0} (Common/Grobal2.pas): {@code m_wStatusTimeArr} slot 0. */
   private static final int POISON_DECHEALTH_SLOT = 0;
   /** {@code POISON_DAMAGEARMOR = 1} (Common/Grobal2.pas): {@code m_wStatusTimeArr} slot 1. */
@@ -348,7 +378,8 @@ public final class WorldEngine implements AutoCloseable {
       long testGold,
       int fireBoomRange,
       int elecBlizzardRange,
-      int snowWindRange) {
+      int snowWindRange,
+      int magTurnUndeadLevel) {
 
     public Config {
       Objects.requireNonNull(tickInterval, "tickInterval");
@@ -373,6 +404,19 @@ public final class WorldEngine implements AutoCloseable {
       if (snowWindRange < 1 || snowWindRange > MAX_SNOW_WIND_RANGE)
         throw new IllegalArgumentException(
             "SnowWind range must be within 1.." + MAX_SNOW_WIND_RANGE);
+      if (magTurnUndeadLevel < 1 || magTurnUndeadLevel > MAX_MAG_TURN_UNDEAD_LEVEL)
+        throw new IllegalArgumentException("MagTurnUndead level must be within 1.."
+            + MAX_MAG_TURN_UNDEAD_LEVEL);
+    }
+
+    /** Compatibility constructor retaining the pre-W48 canonical signature. */
+    public Config(Duration tickInterval, int viewRange, int maxCommandsPerTick,
+        long hitIntervalMillis, long corpseLingerMillis, long itemLingerMillis,
+        long regenIntervalMillis, long saveIntervalMillis, long testGold, int fireBoomRange,
+        int elecBlizzardRange, int snowWindRange) {
+      this(tickInterval, viewRange, maxCommandsPerTick, hitIntervalMillis, corpseLingerMillis,
+          itemLingerMillis, regenIntervalMillis, saveIntervalMillis, testGold, fireBoomRange,
+          elecBlizzardRange, snowWindRange, DEFAULT_MAG_TURN_UNDEAD_LEVEL);
     }
 
     /** Compatibility constructor retaining the pre-W44 canonical signature. */
@@ -1861,6 +1905,7 @@ public final class WorldEngine implements AutoCloseable {
         && !isAreaExplosionSkill(magicId) && !isElecBlizzardSkill(magicId)
         && !isPushArroundSkill(magicId) && !isDefenceBuffSkill(magicId)
         && !isCloakSkill(magicId)
+        && !isShowHpSkill(magicId) && !isTurnUndeadSkill(magicId)
         && magicId != SKILL_HEALING && magicId != SKILL_MAGIC_SHIELD)
       return rejectSpell(player, magicId, WorldEvent.SpellRejection.UNSUPPORTED_SKILL, "该技能尚未开放");
 
@@ -1980,6 +2025,22 @@ public final class WorldEngine implements AutoCloseable {
     // (see castPushArround).
     if (isPushArroundSkill(magicId)) {
       castPushArround(player, skill, magic, target, targetId);
+      return true;
+    }
+
+    // Magic.pas:572 — 圣言术 is a synchronous single-target branch: no resist roll, no delayed
+    // impact. The effect (aggro, possible fear freeze, possible instant kill) runs inline, and
+    // RM_MAGICFIRE closes the cast — see castTurnUndead.
+    if (isTurnUndeadSkill(magicId)) {
+      castTurnUndead(player, skill, magic, target, targetId, targetObject);
+      return true;
+    }
+
+    // Magic.pas:522 — 心灵启示 queues a single self-addressed RM_DOOPENHEALTH on the target and
+    // trains when the reveal was accepted; RM_MAGICFIRE still fires unconditionally — see
+    // castShowHp.
+    if (isShowHpSkill(magicId)) {
+      castShowHp(player, skill, magic, target, targetId, targetObject, now);
       return true;
     }
 
@@ -2391,7 +2452,12 @@ public final class WorldEngine implements AutoCloseable {
       Player caster, WorldObject target, Position claimed, int magicId) {
     if (target == null || !target.ability().alive() || target.map() != caster.map) return false;
     if (chebyshev(target.position(), claimed) > 1) return false;
-    if (isDamageBolt(magicId)) return target.id() != caster.id && !(target instanceof Npc);
+    // 心灵启示 (Magic.pas:523) gates on `TargeTBaseObject <> nil` alone — no IsProperTarget, no
+    // race check — and 圣言术's IsProperTarget (Magic.pas:573) accepts any proper hostile. Both
+    // reduce to the same shape the damage bolts use: a live, non-self, non-NPC object; the
+    // undead-only and not-already-revealed refinements live inside their case bodies instead.
+    if (isDamageBolt(magicId) || isShowHpSkill(magicId) || isTurnUndeadSkill(magicId))
+      return target.id() != caster.id && !(target instanceof Npc);
     return target instanceof Player;
   }
 
@@ -2719,6 +2785,23 @@ public final class WorldEngine implements AutoCloseable {
   }
 
   /**
+   * Magic.DB row 28 — 心灵启示 (Taoist, Magic.pas:522): the {@code RM_DOOPENHEALTH} reveal-spell
+   * branch of W48. It reads only the clicked object, never re-rolls damage and needs no amulet.
+   */
+  private static boolean isShowHpSkill(int magicId) {
+    return magicId == SKILL_SHOWHP;
+  }
+
+  /**
+   * Magic.DB row 32 — 圣言术 (Wizard, Magic.pas:572): the {@code MagTurnUndead} instant-kill
+   * branch of W48. Like the damage bolts it is a single-target hostile spell, but its effect is
+   * resolved synchronously instead of through a delayed impact.
+   */
+  private static boolean isTurnUndeadSkill(int magicId) {
+    return magicId == SKILL_KILLUNDEAD;
+  }
+
+  /**
    * {@code GetPower13(30) + GetRPow(PlayObject.m_WAbil.SC) * 3} (Magic.pas:477/481), in seconds.
    *
    * <p>{@code GetRPow} (Magic.pas:73) draws one value from {@code [LoWord(SC), HiWord(SC)]}
@@ -2754,6 +2837,10 @@ public final class WorldEngine implements AutoCloseable {
     if (player.defenceUpUntil > now) status |= statusBit(STATE_DEFENCEUP);
     if (player.magDefenceUpUntil > now) status |= statusBit(STATE_MAGDEFENCEUP);
     if (player.magicShieldUntil > now) status |= statusBit(STATE_BUBBLEDEFENCEUP);
+    // 心灵启示 (W48): GetCharStatus folds m_nCharStatusEx's low 20 bits into the word
+    // (ObjBase.pas:20087), and MakeOpenHealth/BreakOpenHealth raise/clear STATE_OPENHEATH($2)
+    // there without repainting — so the bit rides along on whatever repaint comes next.
+    if (player.revealedHealth.active) status |= STATE_OPENHEATH;
     return status;
   }
 
@@ -2867,6 +2954,180 @@ public final class WorldEngine implements AutoCloseable {
     boolean applied = applyPrivateTransparent(player, seconds);
     emitToObserversAndSelf(player, new WorldEvent.MagicFired(player.id, target, targetId, magic));
     if (applied) trainSpellSkill(player, skill, magic);
+  }
+
+  /**
+   * {@code SKILL_SHOWHP} (28, 心灵启示, Magic.pas:522-531): reveal the clicked object's HP bar to
+   * everyone nearby.
+   *
+   * <pre>
+   *   if (TargeTBaseObject &lt;&gt; nil) and not TargeTBaseObject.m_boShowHP then begin
+   *     if Random(6) &lt;= (UserMagic.btLevel + 3) then begin
+   *       TargeTBaseObject.m_dwShowHPTick := GetTickCount();
+   *       TargeTBaseObject.m_dwShowHPInterval := GetPower13(GetRPow(SC) * 2 + 30) * 1000;
+   *       TargeTBaseObject.SendDelayMsg(TargeTBaseObject, RM_DOOPENHEALTH, 0, 0, 0, 0, '', 1500);
+   *       boTrain := True;
+   *     end;
+   *   end;
+   * </pre>
+   *
+   * <p>Three quirks are kept verbatim. The branch never touches {@code boSpellFail}/{@code
+   * boSpellFire}, so mana is already gone and {@code RM_MAGICFIRE} still broadcasts even when the
+   * reveal gate fails or the target is already revealed. {@code m_dwShowHPTick}/{@code
+   * m_dwShowHPInterval} are stamped on the <em>target</em> at cast time, so the visible window is
+   * measured from the cast — 1.5 s before the bar actually appears (the delayed message is
+   * self-addressed to the target, not to the caster). And {@code m_boShowHP} only flips at
+   * delivery, so a second cast inside the 1.5 s window passes the {@code not m_boShowHP} gate
+   * again and simply re-stamps the timings.
+   */
+  private void castShowHp(Player player, PlayerSkill skill, MagicDefinition magic,
+      Position target, int targetId, WorldObject targetObject, long now) {
+    boolean queued = false;
+    if (targetObject != null && !targetObject.revealedHealth().active
+        && random.nextInt(WorldRandom.Stream.SHOW_HP, 6) <= skill.level() + 3) {
+      int seconds = rollShowHpIntervalSeconds(player, skill, magic);
+      RevealedHealth health = targetObject.revealedHealth();
+      health.castAt = now;
+      health.intervalMillis = seconds * 1_000L;
+      pendingMagicImpacts.add(new PendingMagicImpact(
+          now + SHOW_HP_REVEAL_DELAY_MILLIS, MagicImpactKind.OPEN_HEALTH,
+          player.id, targetId, targetObject.position(), 0));
+      queued = true;
+    }
+    emitToObserversAndSelf(player, new WorldEvent.MagicFired(player.id, target, targetId, magic));
+    if (queued) trainSpellSkill(player, skill, magic);
+  }
+
+  /**
+   * {@code m_dwShowHPInterval := GetPower13(GetRPow(PlayObject.m_WAbil.SC) * 2 + 30) * 1000}
+   * (Magic.pas:526), in seconds. {@code GetRPow} (Magic.pas:73) draws one value from the working
+   * ability's {@code [minSC, maxSC]} range — inclusive, and just {@code minSC} when flat — and the
+   * literal runs through {@code GetPower13} (Magic.pas:238 → {@link MagicDefinition#scalePower13}),
+   * so a bare SC(0) target reveals for 15/20/25/30 s at skill levels 0..3. The draw order matches
+   * Delphi: the {@code Random(6)} gate first (in {@link #castShowHp}), this SC roll only on success.
+   */
+  private int rollShowHpIntervalSeconds(Player player, PlayerSkill skill, MagicDefinition magic) {
+    int minSc = player.ability.minSc();
+    int maxSc = player.ability.maxSc();
+    int rpow = maxSc > minSc
+        ? minSc + random.nextInt(WorldRandom.Stream.MAGIC, maxSc - minSc + 1)
+        : minSc;
+    return magic.scalePower13(rpow * 2 + 30, skill.level())
+        + rollExclusive(magic.defPower(), magic.defMaxPower());
+  }
+
+  /**
+   * {@code MakeOpenHealth} (ObjBase.pas:3606): the delayed {@code RM_DOOPENHEALTH} delivery.
+   * Sets {@code m_boShowHP}, folds {@code STATE_OPENHEATH ($2)} into the status word (without
+   * repainting it — Delphi does not call {@code StatusChanged} here either) and broadcasts
+   * {@code RM_OPENHEALTH} with the target's HP/MaxHP to every player in range.
+   */
+  private void makeOpenHealth(WorldObject target) {
+    target.revealedHealth().active = true;
+    emitToObserversAndSelf(target, new WorldEvent.HealthRevealed(target.snapshot()));
+  }
+
+  /**
+   * {@code BreakOpenHealth} (ObjBase.pas:3595): the expiry half — clears {@code m_boShowHP} and
+   * broadcasts {@code RM_CLOSEHEALTH} to every player in range.
+   */
+  private void breakOpenHealth(WorldObject target) {
+    target.revealedHealth().active = false;
+    emitToObserversAndSelf(target, new WorldEvent.HealthConcealed(target.id()));
+  }
+
+  /**
+   * The {@code m_boShowHP} arm of {@code TBaseObject.Run}'s status walk (ObjBase.pas:4029-4031):
+   * strictly-greater comparison against the cast-time reference, so the bar vanishes one tick
+   * after {@code m_dwShowHPTick + m_dwShowHPInterval}.
+   */
+  private void expireOpenHealth(WorldObject target, long now) {
+    RevealedHealth health = target.revealedHealth();
+    if (!health.active || now - health.castAt <= health.intervalMillis) return;
+    breakOpenHealth(target);
+  }
+
+  /**
+   * {@code SKILL_KILLUNDEAD} (32, 圣言术, Magic.pas:572-577): the wizard's instant-kill against
+   * undead monsters. The branch is `if IsProperTarget(TargeTBaseObject) then if MagTurnUndead(...)
+   * then boTrain := True` — no resist roll, no delayed impact, and {@code RM_MAGICFIRE} fires
+   * unconditionally at the tail of {@code DoSpell}. The fire frame is emitted <em>before</em> the
+   * effect runs so a kill's {@code SM_DEATH} lands after {@code SM_MAGICFIRE}, matching Delphi
+   * where the monster's {@code Die} is processed on its own next tick.
+   */
+  private void castTurnUndead(
+      Player player, PlayerSkill skill, MagicDefinition magic, Position target, int targetId,
+      WorldObject targetObject) {
+    emitToObserversAndSelf(player, new WorldEvent.MagicFired(player.id, target, targetId, magic));
+    boolean killed = targetObject instanceof Monster monster
+        && turnUndead(player, monster, skill.level());
+    if (killed) trainSpellSkill(player, skill, magic);
+  }
+
+  /**
+   * {@code MagTurnUndead} (Magic.pas:901-925, 004926D4):
+   *
+   * <pre>
+   *   if TargeTBaseObject.m_boSuperMan or not (TargeTBaseObject.m_btLifeAttrib = LA_UNDEAD) then exit;
+   *   TAnimalObject(TargeTBaseObject).Struck(BaseObject);
+   *   if TargeTBaseObject.m_TargetCret = nil then begin   // 恐惧冻结 10 秒
+   *     m_boRunAwayMode := True;  m_dwRunAwayStart := GetTickCount();  m_dwRunAwayTime := 10 * 1000;
+   *   end;
+   *   BaseObject.SetTargetCreat(TargeTBaseObject);
+   *   if (Random(2) + (casterLevel - 1)) &gt; targetLevel then
+   *     if targetLevel &lt; g_Config.nMagTurnUndeadLevel then
+   *       if Random(100) &lt; ((nLevel shl 3) - nLevel + 15 + (casterLevel - targetLevel)) then
+   *         SetLastHiter;  m_WAbil.HP := 0;  Result := True;
+   * </pre>
+   *
+   * <p>Players default to {@code m_btLifeAttrib := 0} (ObjBase.pas:1244), so the {@code LA_UNDEAD}
+   * gate already refuses them; no wired monster is {@code m_boSuperMan}. {@code Struck} runs before
+   * every gate, so even a failed cast leaves the monster angry (and possibly frozen). The kill is
+   * {@code HP := 0} — death (drops, experience, corpse) goes through the same {@link #handleDeath}
+   * chain as any other kill, per the W14 synchronous-death convention.
+   *
+   * @return Delphi's {@code Result}: true only when the instant kill landed (drives {@code boTrain})
+   */
+  private boolean turnUndead(Player caster, Monster target, int skillLevel) {
+    long now = clock.getAsLong();
+    if (!target.template.undead()) return false;
+    monsterStruck(target, caster);
+    // The run-away arm only fires when Struck left the monster without a target — typically the
+    // caster stands in a safe zone, so the monster's own IsProperTarget(hiter) refused the retarget.
+    if (target.targetId == 0) target.runAwayUntil = now + TURN_UNDEAD_RUN_AWAY_MILLIS;
+    if (random.nextInt(WorldRandom.Stream.TURN_UNDEAD, 2)
+        + (caster.ability.level() - 1) <= target.ability().level()) return false;
+    if (target.ability().level() >= config.magTurnUndeadLevel()) return false;
+    int levelGap = caster.ability.level() - target.ability().level();
+    int killChance = (skillLevel << 3) - skillLevel + 15 + levelGap;
+    if (random.nextInt(WorldRandom.Stream.TURN_UNDEAD, 100) >= killChance) return false;
+    target.setAbility(target.ability().withHp(0));
+    handleDeath(target, caster);
+    return true;
+  }
+
+  /**
+   * {@code TAnimalObject.Struck} (ObjBase.pas:2794-2816): the shared "this monster was poked"
+   * path. Retargets to the attacker when it had no target, when its current target stands in its
+   * 3x3 neighbourhood ({@code GetAttackDir}, ObjBase.pas:18449), or on a {@code Random(6) = 0} coin
+   * otherwise — always provided the attacker is a proper target from the monster's side (alive,
+   * not inside a safe zone). {@code m_dwHitTick := m_dwHitTick + (150 - _MIN(130, level * 4))}
+   * gates the attack cadence, so the strike also buys a short flinch. The {@code m_nMeatQuality}
+   * penalty for {@code m_boAnimal} is not modelled (no肉 system). No wire frame is emitted.
+   */
+  private void monsterStruck(Monster monster, Player attacker) {
+    boolean retarget = monster.targetId == 0;
+    if (!retarget) {
+      WorldObject current = findObject(monster.targetId);
+      if (current != null && !monster.position.equals(current.position())
+          && chebyshev(monster.position, current.position()) <= 1) {
+        retarget = true;
+      } else {
+        retarget = random.nextInt(WorldRandom.Stream.STRUCK_RETARGET, 6) == 0;
+      }
+    }
+    if (retarget && isAttackTarget(attacker)) monster.targetId = attacker.id;
+    monster.lastAttackAt += 150 - Math.min(130, monster.ability().level() * 4);
   }
 
   /** {@code Random(10) >= target.m_nAntiMagic}: true when a hostile magic effect lands. */
@@ -4579,6 +4840,13 @@ public final class WorldEngine implements AutoCloseable {
         if (target instanceof Player cloaked) applyPrivateTransparent(cloaked, impact.power());
         continue;
       }
+      // RM_DOOPENHEALTH (ObjBase.pas:4623) is the 心灵启示 twin of the same shape: self-addressed
+      // to the target, so the caster is irrelevant at delivery, and the recipient always runs
+      // MakeOpenHealth — the m_boShowHP gate was already checked at cast time.
+      if (impact.kind() == MagicImpactKind.OPEN_HEALTH) {
+        if (target != null) makeOpenHealth(target);
+        continue;
+      }
       // RM_MAGSTRUCK (ObjBase.pas:2554) binds its victim at cast time and is delivered to the
       // object directly — unlike the RM_DELAYMAGIC bolts, whose `abs(nTargetX-x) <= nRage`
       // arrival check (ObjBase.pas:4579) is what the one-cell escape below models (W28).
@@ -4754,6 +5022,8 @@ public final class WorldEngine implements AutoCloseable {
       // RM_ABILITY refresh lands last (boNeedRecalc, ObjBase.pas:4243-4247).
       boolean needRecalc = expireDefenceUp(player, now);
       if (expireTransparent(player, now)) emitCharacterStatusChanged(player);
+      // 心灵启示's m_boShowHP walk (ObjBase.pas:4029): a revealed player's bar closes on expiry.
+      expireOpenHealth(player, now);
       if (needRecalc) {
         emit(player, new WorldEvent.AbilityChanged(
             player.id, player.ability, player.gold, player.job, player.weights()));
@@ -5916,7 +6186,18 @@ public final class WorldEngine implements AutoCloseable {
       }
       // TMonster.Run with m_boNoAttackMode (ObjMon.pas:449) skips the entire
       // target/chase/attack block, so a stationary dummy never even looks for a player.
+      // (Delphi's TTrainer is an ObjNpc-class object whose Run never reaches the m_boShowHP
+      // walk either, so a stationary monster keeps its 心灵启示 bar until it is re-cast.)
       if (monster.template.behavior() == MonsterBehavior.STATIONARY) continue;
+      // 心灵启示's m_boShowHP walk (ObjBase.pas:4029) for monsters.
+      expireOpenHealth(monster, now);
+      // 圣言术's m_boRunAwayMode (ObjMon.pas:447-460): while the fear freeze is running the
+      // whole chase/attack block is skipped — the monster stands still. TChickenDeer.Run
+      // re-evaluates the flag on every walk step of its own, so only AGGRESSIVE monsters freeze.
+      if (monster.template.behavior() == MonsterBehavior.AGGRESSIVE && monster.runAwayUntil != 0) {
+        if (now < monster.runAwayUntil) continue;
+        monster.runAwayUntil = 0;
+      }
       Player target = acquireTarget(monster);
       if (target == null) continue;
       int distance = monster.position.distanceTo(target.position);
@@ -6324,7 +6605,14 @@ public final class WorldEngine implements AutoCloseable {
      * delayed message is addressed to the friend and re-runs {@code MagMakePrivateTransparent}
      * there regardless of what happened to the caster in the meantime.
      */
-    TRANSPARENT
+    TRANSPARENT,
+    /**
+     * 心灵启示's delayed {@code RM_DOOPENHEALTH} (Magic.pas:527): the same self-addressed shape
+     * as {@link #TRANSPARENT} — the 1500 ms delivery re-runs {@code MakeOpenHealth} on the
+     * recipient, so the caster's fate inside the window is irrelevant and the target's own
+     * {@code m_boShowHP} gate is what the re-cast check reads.
+     */
+    OPEN_HEALTH
   }
 
   private record PendingMagicImpact(
@@ -6417,6 +6705,27 @@ public final class WorldEngine implements AutoCloseable {
 
     /** {@code m_wStatusTimeArr[POISON_DECHEALTH]}/{@code [POISON_DAMAGEARMOR]} timers. */
     PoisonStatus poison();
+
+    /**
+     * The 心灵启示显血 state ({@code m_boShowHP} plus its two timing fields), modelled as one
+     * mutable holder exactly like {@link #poison()}.
+     */
+    RevealedHealth revealedHealth();
+  }
+
+  /**
+   * 心灵启示's显血 state (ObjBase.pas:193-196/3595/3606/4029): {@code m_boShowHP} flips at the
+   * delayed {@code RM_DOOPENHEALTH} delivery, while {@code m_dwShowHPTick}/{@code m_dwShowHPInterval}
+   * are stamped on the target at <em>cast</em> time (Magic.pas:525-526) — so the visible window is
+   * measured from the cast, 1.5 s before the bar actually appears.
+   */
+  private static final class RevealedHealth {
+    /** {@code m_boShowHP}: true between MakeOpenHealth and BreakOpenHealth. */
+    boolean active;
+    /** {@code m_dwShowHPTick}: cast-time reference the expiry check measures from. */
+    long castAt;
+    /** {@code m_dwShowHPInterval}: {@code GetPower13(GetRPow(SC) * 2 + 30) * 1000}, in millis. */
+    long intervalMillis;
   }
 
   /**
@@ -6509,6 +6818,12 @@ public final class WorldEngine implements AutoCloseable {
      * ObjBase.pas:3364), which is why the pair is kept apart here too.
      */
     private boolean transparent;
+    /**
+     * 心灵启示's显血 state ({@code m_boShowHP} plus the two timing fields). While active the
+     * status word rebuilt by {@code charStatus} carries {@code STATE_OPENHEATH ($2)} — a latent
+     * bit, exactly like Delphi, which never repaints the word from Make/BreakOpenHealth itself.
+     */
+    private final RevealedHealth revealedHealth = new RevealedHealth();
     private long lastSavedAt;
     /** {@code m_dwDeathTick}: 0 while alive, the death timestamp otherwise. */
     private long diedAt;
@@ -6828,6 +7143,11 @@ public final class WorldEngine implements AutoCloseable {
     public PoisonStatus poison() {
       return poison;
     }
+
+    @Override
+    public RevealedHealth revealedHealth() {
+      return revealedHealth;
+    }
   }
 
   private static final class Monster implements WorldObject {
@@ -6845,6 +7165,13 @@ public final class WorldEngine implements AutoCloseable {
     private long diedAt;
     /** {@code m_boCoolEye}: rolled once at spawn from the Monster.DB {@code CoolEye} column. */
     private final boolean coolEye;
+    /** 心灵启示显血 state ({@code m_boShowHP} + timings), delivered by RM_DOOPENHEALTH. */
+    private final RevealedHealth revealedHealth = new RevealedHealth();
+    /**
+     * {@code m_boRunAwayMode} deadline (Magic.pas:907-909): while in the future an aggressive
+     * monster skips the whole chase/attack block — the 圣言术 fear freeze. 0 means idle.
+     */
+    private long runAwayUntil;
 
     private Monster(
         int id, MonsterTemplate template, GameMap map, Position position, Direction direction,
@@ -6919,6 +7246,11 @@ public final class WorldEngine implements AutoCloseable {
     @Override
     public PoisonStatus poison() {
       return poison;
+    }
+
+    @Override
+    public RevealedHealth revealedHealth() {
+      return revealedHealth;
     }
   }
 
@@ -7009,6 +7341,14 @@ public final class WorldEngine implements AutoCloseable {
     @Override
     public PoisonStatus poison() {
       return NEVER_POISONED;
+    }
+
+    /** NPCs are rejected by 心灵启示's target gate, so the显血 state is never consulted. */
+    private static final RevealedHealth NEVER_REVEALED = new RevealedHealth();
+
+    @Override
+    public RevealedHealth revealedHealth() {
+      return NEVER_REVEALED;
     }
   }
 }

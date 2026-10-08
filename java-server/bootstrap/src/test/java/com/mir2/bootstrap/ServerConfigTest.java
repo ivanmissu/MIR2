@@ -32,6 +32,8 @@ class ServerConfigTest {
     assertEquals(2, config.elecBlizzardRange());
     // M2Share.pas Setup.SnowWindRange defaults to one cell.
     assertEquals(1, config.snowWindRange());
+    // M2Share.pas:2080 Setup.MagTurnUndeadLevel defaults to 50.
+    assertEquals(50, config.magTurnUndeadLevel());
   }
 
   @Test
@@ -118,6 +120,38 @@ class ServerConfigTest {
         () -> ServerConfig.from(Map.of("MIR2_SNOW_WIND_RANGE", "0")));
     assertThrows(IllegalArgumentException.class,
         () -> ServerConfig.from(Map.of("MIR2_SNOW_WIND_RANGE", "13")));
+  }
+
+  @Test
+  void magTurnUndeadLevelMatchesDelphiDefaultsAndFlowsThroughCopies() {
+    ServerConfig defaults = ServerConfig.from(Map.of());
+    // M2Share.pas:2080 — 圣言术 only works on monsters strictly below this level; the
+    // FunctionConfig.dfm spin edit bounds it to 1..65535.
+    assertEquals(50, defaults.magTurnUndeadLevel());
+    assertEquals(1, ServerConfig.from(Map.of("MIR2_MAG_TURN_UNDEAD_LEVEL", "1"))
+        .magTurnUndeadLevel());
+    assertEquals(65535, ServerConfig.from(Map.of("MIR2_MAG_TURN_UNDEAD_LEVEL", "65535"))
+        .magTurnUndeadLevel());
+
+    ServerConfig copied = defaults.withSafeZoneSize(0)
+        .withWorldClockMode(com.mir2.world.WorldClock.Mode.MANUAL)
+        .withDisableTakeOffFile(Path.of("DisableTakeOffList.txt"))
+        .withFireBoomRange(3)
+        .withElecBlizzardRange(4)
+        .withSnowWindRange(5);
+    assertEquals(50, copied.magTurnUndeadLevel(), "unrelated copy helpers retain the ceiling");
+    assertEquals(7, defaults.withMagTurnUndeadLevel(7).magTurnUndeadLevel());
+    // MagTurnUndeadLevel is its own config field: moving it must not drag the ranges along.
+    ServerConfig widened = defaults.withMagTurnUndeadLevel(7);
+    assertEquals(1, widened.fireBoomRange());
+    assertEquals(2, widened.elecBlizzardRange());
+    assertEquals(1, widened.snowWindRange());
+    assertThrows(IllegalArgumentException.class, () -> defaults.withMagTurnUndeadLevel(0));
+    assertThrows(IllegalArgumentException.class, () -> defaults.withMagTurnUndeadLevel(65536));
+    assertThrows(IllegalArgumentException.class,
+        () -> ServerConfig.from(Map.of("MIR2_MAG_TURN_UNDEAD_LEVEL", "0")));
+    assertThrows(IllegalArgumentException.class,
+        () -> ServerConfig.from(Map.of("MIR2_MAG_TURN_UNDEAD_LEVEL", "65536")));
   }
 
   @Test
