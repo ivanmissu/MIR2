@@ -54,6 +54,7 @@ public sealed interface WorldEvent
         WorldEvent.NameColorChanged,
         WorldEvent.DayChanging,
         WorldEvent.LightChanged,
+        WorldEvent.CharacterStatusChanged,
         WorldEvent.ItemEquipped,
         WorldEvent.EquipRejected,
         WorldEvent.ItemUnequipped,
@@ -579,6 +580,25 @@ public sealed interface WorldEvent
     public LightChanged {
       if (objectId <= 0) throw new IllegalArgumentException("object id must be positive");
       if (light < 0 || light > 0xff) throw new IllegalArgumentException("light must be a byte value");
+    }
+  }
+
+  /**
+   * {@code TBaseObject.StatusChanged} (ObjBase.pas:20139): {@code SendRefMsg(RM_CHARSTATUSCHANGED,
+   * m_nHitSpeed, m_nCharStatus, 0, 0, '')}, which every watching {@code TPlayObject} turns into
+   * {@code SM_CHARSTATUSCHANGED} with {@code (recog = object id, param = LoWord(m_nCharStatus),
+   * tag = HiWord(m_nCharStatus), series = m_nHitSpeed)} (ObjBase.pas:5966). The client stores the
+   * word in {@code actor.m_nState} and renders the actor blended while
+   * {@code m_nState and $00800000 <> 0} — the {@code STATE_TRANSPARENT} bit the 隐身术 family sets.
+   *
+   * @param hitSpeed {@code m_nHitSpeed}, the attack-speed accumulator; no Java item grants one
+   *     yet, so every emitted frame carries Delphi's initial zero.
+   */
+  record CharacterStatusChanged(int objectId, int hitSpeed, int charStatus) implements WorldEvent {
+    public CharacterStatusChanged {
+      if (objectId <= 0) throw new IllegalArgumentException("object id must be positive");
+      if (hitSpeed < -128 || hitSpeed > 127)
+        throw new IllegalArgumentException("hit speed must be a ShortInt");
     }
   }
 

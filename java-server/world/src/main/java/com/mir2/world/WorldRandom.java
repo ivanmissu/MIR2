@@ -87,7 +87,20 @@ public final class WorldRandom {
      */
     PUSH_GATE,
     /** {@code MagPushArround}'s {@code Random(2)} extra push distance (Magic.pas:160). */
-    PUSH_DISTANCE
+    PUSH_DISTANCE,
+    /**
+     * {@code MagMakePrivateTransparent}'s adjacent-monster {@code Random(2) = 0}
+     * (Magic.pas:750): whether a monster standing within one cell of the cloaked player drops
+     * its target. Appended after {@link #PUSH_DISTANCE} so no existing seeded stream moves.
+     */
+    CLOAK_AGGRO,
+    /**
+     * {@code if Random(100) < Cert.m_btCoolEye then Cert.m_boCoolEye := True}
+     * (UsrEngn.pas:1950): the per-spawn roll that decides whether a monster can see through
+     * 隐身术. Monsters whose Monster.DB {@code CoolEye} column is zero never draw here, so
+     * every existing deterministic spawn vector keeps its draws.
+     */
+    COOL_EYE
   }
 
   private static final Stream[] STREAMS = Stream.values();
