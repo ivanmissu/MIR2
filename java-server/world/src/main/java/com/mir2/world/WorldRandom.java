@@ -79,7 +79,15 @@ public final class WorldRandom {
      */
     MAGIC_RESIST,
     /** {@code RM_MAGSTRUCK}: low-level animal targets pause walking for 800 + Random(1000) ms. */
-    MAGIC_STAGGER
+    MAGIC_STAGGER,
+    /**
+     * {@code MagPushArround}'s {@code Random(20) < 6 + nPushLevel * 3 + levelgap} push gate
+     * (Magic.pas:157). Appended after {@link #MAGIC_STAGGER} so no existing seeded stream
+     * changes its ordinal.
+     */
+    PUSH_GATE,
+    /** {@code MagPushArround}'s {@code Random(2)} extra push distance (Magic.pas:160). */
+    PUSH_DISTANCE
   }
 
   private static final Stream[] STREAMS = Stream.values();

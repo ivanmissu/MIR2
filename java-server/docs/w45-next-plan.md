@@ -1,7 +1,7 @@
 # W45 开发计划：`SKILL_FIREWIND`（抗拒火环）
 
-**状态：** 计划已完成源码核验，尚未实现。W44 的下一技能候选落地为本计划：目标是把法师的**纯位移**技能
-抗拒火环接入既有魔法门禁；不得把 Java 单测描述为 Delphi/真实客户端对拍证据，G4 仍未签发。
+**状态：** 本切片已落地（W45）。基线是 W44 的冰咆哮与 `CM_SPELL` 通道；本切片没有新增配置项、没有新增
+Delphi shadowdiff 场景。**G4 仍未签发**，Java 单测不等于 Delphi/真实客户端对拍证据。
 
 与 W42–W44 的三发范围伤害不同，本切片**不掷功率、不造成伤害**：整条分支只是把身边一圈对象推开，
 因此它的验收重心从 `RM_MAGSTRUCK` 转移到 `RM_PUSH`（Java `WorldEvent.ObjectPushed` → `SM_BACKSTEP`）。
@@ -36,44 +36,68 @@
   `spell=8/defSpell=0` → 零级 `GetSpellPoint` = **2**、`NeedL1=12`、`delay=30`、`power/maxPower=1`
   （本技能不掷功率，这两个字段不被读取）。
 
-## 实现范围
+## W45 已落地
 
-1. 新增 `SKILL_FIREWIND = 8` 常量与 `isPushArroundSkill(int)` 判定；把它接进
-   `castPlayerSpell` 的三处既有门禁：职业/等级/距离/法力/冷却、**跳过 `validSpellTarget` 单体目标校验**
-   （与地狱雷光同组）、并单独分派到 `castPushArround`，不再落到单体冲击链。
-2. 实现 `castPushArround`：以 `visibleIds(player.map, player.position, player.id)` 取施法者可见对象
-   （对应 Delphi `m_VisibleActors`，不是地图方形收集），按源码顺序逐项过滤
-   ——含边界 3×3、存活、非自身、`caster.level > target.level`、`isProperTarget`、等级/技能等级随机门；
-   通过后按 `GetNextDirection` 方向循环调用既有 `charPushed`，最多
-   `1 + max(0, level - 1) + Random(2)` 步，返回 0 即停。**不产生任何伤害、不做 MAC/魔法盾结算。**
-3. 两处 `Random` 都需要新的独立流枚举（`WorldRandom.Stream`），沿用
-   `MAGIC_STAGGER` 的追加做法，避免移动既有种子流编号：建议 `PUSH_GATE`（`Random(20)` 命中门）与
-   `PUSH_DISTANCE`（`Random(2)` 步数）。
-4. 任一被成功推动的对象令 `boTrain` 成立且整次施法只训练一次；一个都没推动则不训练，但施法仍耗蓝
-   并发出 `SM_MAGICFIRE`。推动步数由 `charPushed` 逐帧发出的 `RM_PUSH` 承载，无需新增世界事件；
-   gate 已把 `WorldEvent.ObjectPushed` 映射为 `SM_BACKSTEP`（`GameProtocolAdapter:255`）。
-   **本技能不引入任何新配置项**（Delphi 侧同样没有 `g_Config` 开关），因此不需要动
-   `ServerConfig`/`WorldEngine.Config`/部署文档的环境变量表。
-5. 能力矩阵仅把 `SKILL_FIREWIND:wizard` 标成 Java `implemented`，并明确 warrior/taoist 仍不可学习、
-   `SKILL_ENERGYREPULSOR`（37）不在本切片范围。
-6. 增加 `WorldPushArroundTest` 与 `GamePushArroundProtocolTest`：等级差与技能等级对命中门的影响、
-   3×3 含边界与非可见对象不参与、随机门失败不推动也不训练、多步推动与撞墙截断、
-   `RM_PUSH` 携带 `GetBackDir` 朝向、动物行走计时 +800ms、施法者自身与 NPC 被 `IsProperTarget` 排除、
-   法力 2 与 `SM_MAGICFIRE` `Series=1540`、无 `SM_STRUCK`、推动成功才有 `SM_MAGIC_LVEXP`。
-7. 更新本计划的验收记录（无新环境变量，部署文档无需改动）。必须实际运行权威 Maven verify；
-   若当前环境无法取得 Maven/JDK 或依赖，不得将手工检查写成 Maven 通过（W44 用的是
-   `jdk4py` + ECJ + `junit-platform-launcher` 的等价路径，只能是补充证据）。
+- `WorldEngine` 新增 `SKILL_FIREWIND = 8` 与 `isPushArroundSkill(int)`；该判定接进 `castPlayerSpell` 的三处既有
+  门禁：职业/等级/距离/法力/冷却共用同一路径、`validSpellTarget` 单体目标校验把抗拒火环列入跳过名单
+  （与地狱雷光/范围爆炸同组），并在 `SKILL_LIGHTFLOWER` 分支之后单独分派到 `castPushArround`，
+  不再落到单体冲击链。
+- 新增 `castPushArround`：先按 `CretInNearXY` 的既有规则吸附点击（吸附结果只随 `RM_MAGICFIRE` 下发），再以
+  `visibleIds(player.map, player.position, player.id)` 遍历施法者可见对象（不含自身），按源码顺序过滤
+  ——含边界 3×3、存活、`caster.level > target.level`（等级差）、随机门、`isProperTarget`；通过后
+  `Direction.getNextDirection` 取方向、循环调用既有 `charPushed` 最多
+  `1 + max(0, skillLevel - 1) + Random(2)` 步，任一格被挡立即 `break`。**不掷功率、不造成任何伤害、不做 MAC 或魔法盾结算。**
+- 两处 `Random` 使用新增的独立流 `PUSH_GATE`（`Random(20)` 命中门）与 `PUSH_DISTANCE`（`Random(2)` 步数），
+  追加在 `MAGIC_STAGGER` 之后，既有种子流编号不变。
+- 语义按源码逐条保留：随机门在 `IsProperTarget` **之前**掷（NPC 也会吃掉一次门掷）；`Inc(Result)` 在
+  `CharPushed` 之外，因此**撞墙零步也算推动并训练**；推动成功才 `trainSpellSkill`（`btLevel < 3` 与
+  `TrainLevel[btLevel] <= Level` 由既有 `PlayerSkill.train` 承载）；一个都没推动时仍耗蓝并广播 `SM_MAGICFIRE`。
+  推动步数逐格经 `charPushed` 发 `RM_PUSH`，gate 已将其映射为 `SM_BACKSTEP`，无需新增世界事件。
+- **本技能不引入任何新配置项**：Delphi 侧没有 `g_Config` 开关，`ServerConfig`/`WorldEngine.Config`/部署文档
+  均未改动。
+- `g4-capability-matrix.tsv` 只把 `SKILL_FIREWIND:wizard` 标为 `implemented`；战士/道士行仍因 Magic.DB 同名行
+  `learnable=no` 保持 `unimplemented`，`SKILL_ENERGYREPULSOR`（37）明确不在本切片范围。
 
-## 验收与边界
+## 验收覆盖
 
-- 建议门禁：`mvn -f java-server/pom.xml -pl world,gate,bootstrap,shadowdiff -am test`，最终按仓库 CI
-  运行完整 `mvn -f java-server/pom.xml --batch-mode --no-transfer-progress verify`。
-- 已知未建模项（须写入实现注释与能力矩阵，不以 Java↔Java 单测掩盖）：
-  `m_boStickMode`（钉住模式，抗拒火环推不动的对象）在 Java 对象模型里没有字段；
-  `IsProperTarget` 仍是既有 hostility 子集（未建模玩家攻击/保护模式、召唤物主人归属与独立 ghost）；
-  Delphi `CharPushed` 的 `MoveToMovingObject(..., False)` 与 Java `GameMap.move` 的占用语义差异需要在
-  实现时逐项比对，尤其是“推动路径上站着另一个对象”的分支（源码是 `Break`，不是跳过）。
-- `m_VisibleActors` 在 Delphi 里由可视范围刷新维护；Java 的 `visibleIds` 是按 `viewRange` 现算的
-  可见集合，两者在本切片的 ±1 格过滤下应等价，但刷新时机差异仍需记录在案。
-- 没有 Delphi 服务端实跑或真实 `mir2.exe` wire 差分，不能声称 G4 通过。W45 只交付 Java 行为切片
-  及其可复现测试证据。
+- `WorldPushArroundTest`（10 项）：相邻低等级目标被推一格、朝向回落 `GetBackDir`、无伤害、无 `SM_STRUCK`、
+  一次训练与耗蓝 2；技能等级 0–3 的步数公式（`1 + max(0, level-1)` 基线）；随机门对等级差与技能等级
+  的依赖（固定掷 19：gap 5 + 技能 0 被拒、同 gap + 技能 3 通过、gap 15 + 技能 0 通过）；含边界 3×3
+  （对角目标按 `GetNextDirection` 推出、隔一格对象不动）；**门掷早于 `IsProperTarget`**（NPC 只吃掉一次
+  `Random(20)`、没有 `Random(2)`）；撞墙零步仍训练；同级目标在掷骰前被跳过；被推动物行走计时 +800ms
+  （400ms 不动、800ms 后恢复追击）；职业/等级拒绝与超距 `OUT_OF_RANGE`。
+- `GamePushArroundProtocolTest`（2 项）：真实 `CM_SPELL` 发包 → `+GOOD`、`SM_MAGICFIRE` 的
+  `effectType=4 | effect=6<<8`（Series 1540）/ 吸附坐标 / 目标 id、耗蓝 2、`SM_BACKSTEP` 携带**推动后**的格子与
+  `nBackDir` 朝向（`CharPushed` 先改 `m_nCurrX/m_nCurrY` 再 `SendRefMsg`）、零条 `SM_STRUCK`、
+  `SM_MAGIC_LVEXP`（recog=8、等级 0、点数可见）；以及空 3×3 只广播施法与耗蓝、没有后退帧与训练帧。
+
+## 已执行的验证
+
+本轮沙箱没有 Maven，也没有 Maven Central 出网（只有 github.com / api.github.com / registry.npmjs.org /
+pypi.org 可达），因此沿用 W44 的等价手工路径：PyPI `jdk4py` 21.0.8.2 运行时 + GitHub blob API 取回的
+ECJ **3.46.100**（W44 记录的是 3.39.0；本仓库可用版本为 3.33.0/3.38.0/3.45.0/3.46.100）编译全部模块的
+`src/main/java` 与 `src/test/java`，依赖用与 `pom.xml` 同版本、从 GitHub 已提交的 `.m2` 目录按 blob SHA
+取回的 `junit-jupiter{,-api,-engine,-params}-5.10.3` / `junit-platform-{commons,engine,launcher}-1.10.3` /
+`opentest4j-1.3.0` / `apiguardian-api-1.1.2` / `sqlite-jdbc-3.46.1.0` / `slf4j-api-1.7.36`，
+再用 `junit-platform-launcher` 直接执行测试类。结果：**554 项测试通过、0 失败**
+（基线 542 项 + 本切片新增 12 项），`G4CapabilityMatrixTest` 在矩阵改动后同样通过。
+
+这条路径只是补充证据，不是 Maven 门禁：依赖解析、注解处理与 surefire 配置都没有经过 Maven 校验，
+权威门禁仍是 CI 的 `mvn -f java-server/pom.xml --batch-mode --no-transfer-progress verify`。
+
+## 已知边界与下一步
+
+- 已核对等价、无需记录的差异：Delphi `CharPushed` 的 `CanWalk(..., False)` + `MoveToMovingObject(..., False)`
+  在 Java 侧由 `GameMap.canWalk`（地形 + 占用）承担，推动路径上站着另一个对象时两边都是就地 `Break`，
+  剩余步数作废。
+- 仍未建模（已写入实现注释与能力矩阵）：`m_boStickMode`（钉住模式）在 Java 对象模型里没有字段，因此
+  当前没有推不动的对象；`IsProperTarget` 仍是既有 hostility 子集，未建模玩家攻击/保护模式、召唤物主人
+  归属与独立 ghost 状态；`m_VisibleActors` 在 Delphi 里由可视范围刷新维护，Java 的 `visibleIds` 是按
+  `viewRange` 现算的集合，两者在本切片的 ±1 格过滤下等价（`viewRange >= 1` 必然覆盖 3×3），刷新时机
+  差异仍记录在案。
+- 没有 Delphi 服务端实跑或真实 `mir2.exe` wire 差分，不能声称 G4 通过。W45 只交付 Java 行为切片及其
+  可复现测试证据。
+- 下一技能候选：`SKILL_ENERGYREPULSOR`（37，气功波）与 `SKILL_FIREWIND` 共用 `MagPushArround`，但 GEEM2
+  基线没有同编号行、Job 归属待校准，**不能**凭共用函数直接开放。Magic.DB 1–33 内尚未实现、且不依赖召唤物/
+  脚本系统的候选还有：幽灵盾（14）/神圣战甲术（15）一类的限时增益组、隐身术（18）/集体隐身术（19）组、
+  瞬息移动（21）、圣言术（32，仅亡灵）。下一次会话应先按 `w45` 的方法做逐分支源码核验，再决定切片顺序。

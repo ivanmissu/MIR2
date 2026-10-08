@@ -178,6 +178,7 @@ public final class WorldEngine implements AutoCloseable {
   private static final int SKILL_LIGHTENING = 11;
   private static final int SKILL_FIRECHARM = 13;
   private static final int SKILL_BIGHEALLING = 29;
+  private static final int SKILL_FIREWIND = 8;
   private static final int SKILL_FIREBOOM = 23;
   private static final int SKILL_LIGHTFLOWER = 24;
   private static final int SKILL_MAGIC_SHIELD = 31;
@@ -1778,6 +1779,7 @@ public final class WorldEngine implements AutoCloseable {
       return rejectSpell(player, magicId, WorldEvent.SpellRejection.LEVEL_TOO_LOW, "等级不足，无法使用该技能");
     if (!isDamageBolt(magicId) && !isLinePiercingSkill(magicId) && !isAreaHealingSkill(magicId)
         && !isAreaExplosionSkill(magicId) && !isElecBlizzardSkill(magicId)
+        && !isPushArroundSkill(magicId)
         && magicId != SKILL_HEALING && magicId != SKILL_MAGIC_SHIELD)
       return rejectSpell(player, magicId, WorldEvent.SpellRejection.UNSUPPORTED_SKILL, "该技能尚未开放");
 
@@ -1807,8 +1809,12 @@ public final class WorldEngine implements AutoCloseable {
     // nTargetX/nTargetY, so a click on empty ground with targetId = 0 is a legal cast.
     // 地狱雷光 likewise reads neither TargeTBaseObject nor the click cell: MagElecBlizzard
     // (Magic.pas:1191) only takes the caster's own coordinates.
+    // 抗拒火环 reads neither of them either — MagPushArround (Magic.pas:146) walks the caster's
+    // own m_VisibleActors and centres each candidate comparison on the caster's cell — so an
+    // empty-ground click with targetId = 0 is a legal cast here too.
     if (!isLinePiercingSkill(magicId) && !isAreaHealingSkill(magicId)
         && !isAreaExplosionSkill(magicId) && !isElecBlizzardSkill(magicId)
+        && !isPushArroundSkill(magicId)
         && !validSpellTarget(player, targetObject, target, magicId))
       return rejectSpell(player, magicId, WorldEvent.SpellRejection.INVALID_TARGET, "施法目标无效");
 
@@ -1875,6 +1881,15 @@ public final class WorldEngine implements AutoCloseable {
     // delay, no SetTargetCreat and no anti-magic-resist roll (see castElecBlizzard).
     if (isElecBlizzardSkill(magicId)) {
       castElecBlizzard(player, skill, magic, target, targetId, now);
+      return true;
+    }
+
+    // Magic.pas:384 — 抗拒火环 is a pure displacement branch: `if MagPushArround(PlayObject,
+    // UserMagic.btLevel) > 0 then boTrain := True;`. It rolls no power, deals no damage and
+    // never touches TargeTBaseObject; the click only rides along on the RM_MAGICFIRE frame
+    // (see castPushArround).
+    if (isPushArroundSkill(magicId)) {
+      castPushArround(player, skill, magic, target, targetId);
       return true;
     }
 
@@ -2498,6 +2513,16 @@ public final class WorldEngine implements AutoCloseable {
   }
 
   /**
+   * Magic.DB row 8 — 抗拒火环, the wizard's pure-displacement {@code MagPushArround} branch of
+   * W45. {@code SKILL_ENERGYREPULSOR}(37, 气功波, Magic.pas:676) calls the very same routine but
+   * the GEEM2 baseline has no row 37, so its job is still uncalibrated and it deliberately stays
+   * out of this slice.
+   */
+  private static boolean isPushArroundSkill(int magicId) {
+    return magicId == SKILL_FIREWIND;
+  }
+
+  /**
    * {@code SKILL_BIGHEALLING}(29, 群体治愈术, Magic.pas:532 → {@code MagBigHealing},
    * Magic.pas:172):
    *
@@ -2689,6 +2714,80 @@ public final class WorldEngine implements AutoCloseable {
     emitToObserversAndSelf(player, new WorldEvent.MagicFired(
         player.id, firedAt, firedTargetId, magic));
     if (hits > 0) trainSpellSkill(player, skill, magic);
+  }
+
+  /**
+   * {@code SKILL_FIREWIND}(8, 抗拒火环, Magic.pas:384 → {@code MagPushArround}, Magic.pas:146):
+   * the first wizard skill that neither damages nor heals anything. The whole case body is
+   * {@code if MagPushArround(PlayObject, UserMagic.btLevel) > 0 then boTrain := True;}, so the
+   * click coordinates and the bound {@code TargeTBaseObject} are never read — they only ride
+   * along on the trailing RM_MAGICFIRE frame exactly as {@code ClientSpellXY} left them (the
+   * skill does not clear {@code boSpellFire}).
+   *
+   * <p>{@code MagPushArround} walks {@code PlayObject.m_VisibleActors} — not the map square —
+   * and applies the following filter chain per object, in source order:
+   *
+   * <pre>
+   *   (abs(dx) &lt;= 1) and (abs(dy) &lt;= 1)                      // inclusive 3x3 around the caster
+   *   and (not m_boDeath) and (BaseObject &lt;&gt; PlayObject)
+   *   and (PlayObject.m_Abil.Level &gt; BaseObject.m_Abil.Level) // strict; the level gap feeds
+   *   and (not BaseObject.m_boStickMode)                       //   the random gate below
+   *   and (Random(20) &lt; 6 + nPushLevel * 3 + levelgap)         // rolled *before* IsProperTarget
+   *   and PlayObject.IsProperTarget(BaseObject)
+   * then push := 1 + _MAX(0, nPushLevel - 1) + Random(2);
+   *      CharPushed(GetNextDirection(caster, target), push); Inc(Result);
+   * </pre>
+   *
+   * <p>Two quirks are kept verbatim. The gate roll is drawn <em>before</em> the proper-target
+   * test, so an NPC (never a proper target) still consumes one draw once it cleared the level
+   * gate. And {@code Inc(Result)} sits outside {@code CharPushed}'s own return value, so a push
+   * that immediately hits a wall still counts as a push — and therefore still trains the skill —
+   * even though the victim never moved.
+   */
+  private void castPushArround(
+      Player player, PlayerSkill skill, MagicDefinition magic, Position requestedTarget,
+      int targetId) {
+    // CretInNearXY snapping as in every other ground-target spell (ObjBase.pas:16854): the
+    // snapped cell is only what the RM_MAGICFIRE frame carries.
+    WorldObject clicked = targetId != 0 ? findObject(targetId) : null;
+    boolean snapped = clicked != null && clicked.map() == player.map
+        && chebyshev(clicked.position(), requestedTarget) <= 1;
+    Position firedAt = snapped ? clicked.position() : requestedTarget;
+    int firedTargetId = snapped && clicked.ability().alive() ? clicked.id() : 0;
+
+    int skillLevel = skill.level();
+    int pushed = 0;
+    // m_VisibleActors, not GetMapBaseObjects: only objects already visible to the caster are
+    // candidates, and `visibleIds` excludes the caster itself (BaseObject <> PlayObject).
+    for (int id : visibleIds(player.map, player.position, player.id)) {
+      WorldObject candidate = findObject(id);
+      if (candidate == null) continue;
+      if (Math.abs(player.position.x() - candidate.position().x()) > 1
+          || Math.abs(player.position.y() - candidate.position().y()) > 1) continue;
+      if (!candidate.ability().alive()) continue;
+      // Delphi also requires `not BaseObject.m_boStickMode`; the Java object model has no such
+      // field yet, so nothing is currently pinned — a documented boundary, not a behaviour.
+      int levelGap = player.ability.level() - candidate.ability().level();
+      if (levelGap <= 0) continue;
+      if (random.nextInt(WorldRandom.Stream.PUSH_GATE, 20) >= 6 + skillLevel * 3 + levelGap)
+        continue;
+      if (!isProperTarget(player, candidate)) continue;
+      int steps = 1 + Math.max(0, skillLevel - 1)
+          + random.nextInt(WorldRandom.Stream.PUSH_DISTANCE, 2);
+      Direction direction = Direction.getNextDirection(player.position, candidate.position());
+      // CharPushed breaks out of its own step loop on the first blocked cell; the push has
+      // already counted for boTrain by then (Delphi's Inc(Result) is unconditional).
+      for (int step = 0; step < steps; step++) {
+        if (charPushed(candidate, direction) != 1) break;
+      }
+      pushed++;
+    }
+
+    emitToObserversAndSelf(player, new WorldEvent.MagicFired(
+        player.id, firedAt, firedTargetId, magic));
+    // DoSpell's boTrain is `MagPushArround(...) > 0`; an empty 3x3 still costs the mana that
+    // ClientSpellXY already spent before DoSpell ran.
+    if (pushed > 0) trainSpellSkill(player, skill, magic);
   }
 
   /**
