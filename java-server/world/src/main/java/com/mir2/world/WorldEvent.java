@@ -25,6 +25,8 @@ public sealed interface WorldEvent
         WorldEvent.LevelUp,
         WorldEvent.ItemsRemoved,
         WorldEvent.HealthChanged,
+        WorldEvent.HealthRevealed,
+        WorldEvent.HealthConcealed,
         WorldEvent.SkillLearned,
         WorldEvent.SkillTrainingChanged,
         WorldEvent.SkillsSent,
@@ -244,6 +246,30 @@ public sealed interface WorldEvent
   record HealthChanged(WorldObjectSnapshot object) implements WorldEvent {
     public HealthChanged {
       Objects.requireNonNull(object, "object");
+    }
+  }
+
+  /**
+   * {@code MakeOpenHealth} (ObjBase.pas:3606) fired for 心灵启示: the target's
+   * {@code m_boShowHP} just went true and its HP/MaxHP went out on {@code RM_OPENHEALTH} —
+   * the adapter turns it into {@code SM_OPENHEALTH(1100)} with recog = the object,
+   * param = HP, tag = MaxHP (ObjBase.pas:6288). Broadcast to the object's observers.
+   */
+  record HealthRevealed(WorldObjectSnapshot object) implements WorldEvent {
+    public HealthRevealed {
+      Objects.requireNonNull(object, "object");
+    }
+  }
+
+  /**
+   * {@code BreakOpenHealth} (ObjBase.pas:3595) fired when the 心灵启示 window lapsed:
+   * {@code m_boShowHP} cleared and {@code RM_CLOSEHEALTH} broadcast — the adapter turns it
+   * into {@code SM_CLOSEHEALTH(1101)} with recog = the object and everything else zero
+   * (ObjBase.pas:6297). Broadcast to the object's observers.
+   */
+  record HealthConcealed(int objectId) implements WorldEvent {
+    public HealthConcealed {
+      if (objectId <= 0) throw new IllegalArgumentException("object id must be positive");
     }
   }
 

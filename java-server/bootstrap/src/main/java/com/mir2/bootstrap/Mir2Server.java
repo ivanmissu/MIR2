@@ -132,7 +132,7 @@ public final class Mir2Server implements AutoCloseable {
           new WorldEngine.Config(Duration.ofMillis(config.worldTickMillis()), 12, 10_000,
               900, 5_000, 180_000, 200, config.saveIntervalSeconds() * 1_000L,
               config.testGold(), config.fireBoomRange(), config.elecBlizzardRange(),
-              config.snowWindRange()),
+              config.snowWindRange(), config.magTurnUndeadLevel()),
           worldMaps,
           store,
           store.itemDatabase(),

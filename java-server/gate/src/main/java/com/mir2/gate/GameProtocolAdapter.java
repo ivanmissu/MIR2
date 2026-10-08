@@ -262,6 +262,15 @@ public final class GameProtocolAdapter implements WorldEventSink {
       case WorldEvent.LevelUp levelUp -> sendLevelUp(levelUp);
       case WorldEvent.ItemsRemoved removed -> sendDeletedItems(removed);
       case WorldEvent.HealthChanged changed -> sendHealth(changed.object());
+      // RM_OPENHEALTH -> SM_OPENHEALTH (ObjBase.pas:6288-6295): recog = the revealed object,
+      // param = its HP, tag = its MaxHP, series = 0. 心灵启示's MakeOpenHealth broadcast.
+      case WorldEvent.HealthRevealed revealed -> output.accept(new GameOutbound.Packet(packet(
+          ProtocolConstants.SM_OPENHEALTH, revealed.object().id(),
+          revealed.object().ability().hp(), revealed.object().ability().maxHp(), 0, "")));
+      // RM_CLOSEHEALTH -> SM_CLOSEHEALTH (ObjBase.pas:6297-6302): recog = the object, every
+      // other word zero. BreakOpenHealth's broadcast when the reveal window lapses.
+      case WorldEvent.HealthConcealed concealed -> output.accept(new GameOutbound.Packet(packet(
+          ProtocolConstants.SM_CLOSEHEALTH, concealed.objectId(), 0, 0, 0, "")));
       case WorldEvent.ExperienceGained gained -> sendExperience(gained);
       case WorldEvent.ItemAppeared appeared -> sendItemShow(appeared.item());
       case WorldEvent.ItemDisappeared disappeared -> sendItemHide(disappeared.item());
