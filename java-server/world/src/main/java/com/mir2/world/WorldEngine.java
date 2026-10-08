@@ -177,6 +177,8 @@ public final class WorldEngine implements AutoCloseable {
   private static final int SKILL_SHOOTLIGHTEN = 10;
   private static final int SKILL_LIGHTENING = 11;
   private static final int SKILL_FIRECHARM = 13;
+  private static final int SKILL_HANGMAJINBUB = 14;
+  private static final int SKILL_DEJIWONHO = 15;
   private static final int SKILL_BIGHEALLING = 29;
   private static final int SKILL_FIREWIND = 8;
   private static final int SKILL_FIREBOOM = 23;
@@ -208,6 +210,32 @@ public final class WorldEngine implements AutoCloseable {
    * not scaled by the skill level.
    */
   private static final int BIG_HEALING_RANGE = 1;
+  /**
+   * {@code MagMakeDefenceArea(nTargetX, nTargetY, 3, nPower, btState)} (Magic.pas:453/458): the
+   * 幽灵盾/神圣战甲术 square half-extent. Hard-coded in the source — no {@code g_Config} switch,
+   * so this slice adds no environment variable.
+   */
+  private static final int DEFENCE_AREA_RANGE = 3;
+  /**
+   * {@code GetPower13(60)} (Magic.pas:452/457): the literal both defence buffs scale into
+   * seconds — one third flat (20) plus two thirds scaling with the skill level.
+   */
+  private static final int DEFENCE_SECONDS_BASE = 60;
+  /**
+   * {@code RecalcAbilitys} (ObjBase.pas:3418-3421): while {@code STATE_DEFENCEUP} /
+   * {@code STATE_MAGDEFENCEUP} is live the working ability gains {@code 2 + (m_Abil.Level div 7)}
+   * on the <em>upper</em> AC/MAC bound only.
+   */
+  private static final int DEFENCE_UP_BASE_BONUS = 2;
+  private static final int DEFENCE_UP_LEVEL_DIVISOR = 7;
+  /** {@code g_sMagDefenceUpTime} (M2Share.pas:3142, String.ini:149). */
+  private static final String MAG_DEFENCE_UP_MESSAGE = "魔法防御力增加%d秒";
+  /** {@code g_sDefenceUpTime} (M2Share.pas:3141, String.ini:148). */
+  private static final String DEFENCE_UP_MESSAGE = "防御力增加%d秒";
+  /** The {@code STATE_MAGDEFENCEUP} expiry hint (ObjBase.pas:4181). */
+  private static final String MAG_DEFENCE_UP_EXPIRED_MESSAGE = "魔法防御力恢复正常";
+  /** The {@code STATE_DEFENCEUP} expiry hint (ObjBase.pas:4175). */
+  private static final String DEFENCE_UP_EXPIRED_MESSAGE = "防御力恢复正常";
   /** Magic.pas:437 {@code TargeTBaseObject.m_btLifeAttrib = LA_UNDEAD} lightning multiplier. */
   private static final double LIGHTENING_UNDEAD_MULTIPLIER = 1.5;
   /** Beam reach of 地狱火: the {@code GetNextPosition(..., 5, ...)} end cell (Magic.pas:389). */
@@ -1779,7 +1807,7 @@ public final class WorldEngine implements AutoCloseable {
       return rejectSpell(player, magicId, WorldEvent.SpellRejection.LEVEL_TOO_LOW, "等级不足，无法使用该技能");
     if (!isDamageBolt(magicId) && !isLinePiercingSkill(magicId) && !isAreaHealingSkill(magicId)
         && !isAreaExplosionSkill(magicId) && !isElecBlizzardSkill(magicId)
-        && !isPushArroundSkill(magicId)
+        && !isPushArroundSkill(magicId) && !isDefenceBuffSkill(magicId)
         && magicId != SKILL_HEALING && magicId != SKILL_MAGIC_SHIELD)
       return rejectSpell(player, magicId, WorldEvent.SpellRejection.UNSUPPORTED_SKILL, "该技能尚未开放");
 
@@ -1812,9 +1840,12 @@ public final class WorldEngine implements AutoCloseable {
     // 抗拒火环 reads neither of them either — MagPushArround (Magic.pas:146) walks the caster's
     // own m_VisibleActors and centres each candidate comparison on the caster's cell — so an
     // empty-ground click with targetId = 0 is a legal cast here too.
+    // 幽灵盾/神圣战甲术 (Magic.pas:451/456) only read the click coordinates as the centre of
+    // MagMakeDefenceArea's square; TargeTBaseObject is never touched, so — as with 群体治愈术 —
+    // an empty-ground click with targetId = 0 is a legal cast.
     if (!isLinePiercingSkill(magicId) && !isAreaHealingSkill(magicId)
         && !isAreaExplosionSkill(magicId) && !isElecBlizzardSkill(magicId)
-        && !isPushArroundSkill(magicId)
+        && !isPushArroundSkill(magicId) && !isDefenceBuffSkill(magicId)
         && !validSpellTarget(player, targetObject, target, magicId))
       return rejectSpell(player, magicId, WorldEvent.SpellRejection.INVALID_TARGET, "施法目标无效");
 
@@ -1842,10 +1873,12 @@ public final class WorldEngine implements AutoCloseable {
     WorldEvent cast = new WorldEvent.ObjectSpellCast(player.snapshot(), target, magic);
     for (int viewerId : visibleIds(player.map, player.position, player.id)) emit(players.get(viewerId), cast);
 
-    // Magic.pas:415-497: 灵魂火符/施毒术 gate RM_MAGICFIRE behind a spent 护身符 charge — the
-    // RM_SPELL cast pose above already went out unconditionally, but a caster with no charm
-    // never gets the projectile broadcast at all (see castAmuletGatedSpell).
-    if (magicId == SKILL_FIRECHARM || magicId == SKILL_AMYOUNSUL) {
+    // Magic.pas:415-497: the whole 灵魂火符..集体隐身术 case block gates RM_MAGICFIRE behind a
+    // spent 护身符 charge — the RM_SPELL cast pose above already went out unconditionally, but a
+    // caster with no charm never gets the projectile broadcast at all (see
+    // castAmuletGatedSpell). W46 brings 幽灵盾/神圣战甲术 (the first two rows of that block that
+    // need no summon, transparency or trap subsystem) onto the same gate.
+    if (magicId == SKILL_FIRECHARM || magicId == SKILL_AMYOUNSUL || isDefenceBuffSkill(magicId)) {
       castAmuletGatedSpell(player, magicId, skill, magic, target, targetId, targetObject, now);
       return true;
     }
@@ -2420,22 +2453,32 @@ public final class WorldEngine implements AutoCloseable {
   }
 
   /**
-   * {@code SKILL_FIRECHARM}(13)/{@code SKILL_AMYOUNSUL}(6) share one 护身符 gate (Magic.pas:
-   * 415-497): {@code boSpellFail} starts {@code True} and only flips once {@code CheckAmulet}
-   * finds a charge to spend. A caster with none never gets {@code RM_MAGICFIRE} — the outer
-   * {@code ClientSpellXY} answers with {@code RM_MAGICFIREFAIL} instead ({@link
-   * WorldEvent.SpellFizzled}) even though mana was already spent and the cast pose already
-   * played.
+   * {@code SKILL_FIRECHARM}(13)/{@code SKILL_AMYOUNSUL}(6) — and, since W46,
+   * {@code SKILL_HANGMAJINBUB}(14)/{@code SKILL_DEJIWONHO}(15) — share one 护身符 gate
+   * (Magic.pas:415-497): {@code boSpellFail} starts {@code True} and only flips once
+   * {@code CheckAmulet} finds a charge to spend. A caster with none never gets
+   * {@code RM_MAGICFIRE} — the outer {@code ClientSpellXY} answers with {@code RM_MAGICFIREFAIL}
+   * instead ({@link WorldEvent.SpellFizzled}) even though mana was already spent and the cast
+   * pose already played.
    */
   private void castAmuletGatedSpell(Player player, int magicId, PlayerSkill skill,
       MagicDefinition magic, Position target, int targetId, WorldObject targetObject, long now) {
-    int amuletType = magicId == SKILL_FIRECHARM ? 1 : 2;
+    // Magic.pas:359 asks CheckAmulet for nType = 2 (药粉) for 施毒术; the whole 13..19 block at
+    // Magic.pas:428 — which now includes 幽灵盾/神圣战甲术 — asks for nType = 1 (护身符).
+    int amuletType = magicId == SKILL_AMYOUNSUL ? 2 : 1;
     Optional<AmuletCharge> amulet = findAmulet(player, amuletType, 1);
     if (amulet.isEmpty()) {
       emit(player, new WorldEvent.SpellFizzled(player.id, magicId));
       return;
     }
     consumeAmulet(player, amulet.get(), 1);
+    // 幽灵盾/神圣战甲术 apply their status immediately, and DoSpell broadcasts RM_MAGICFIRE only
+    // after the case body returns (Magic.pas:716), so this branch owns the ordering itself: the
+    // per-target hints and RM_ABILITY frames must reach the wire before the cast frame.
+    if (isDefenceBuffSkill(magicId)) {
+      castDefenceArea(player, skill, magic, target, targetId);
+      return;
+    }
     emitToObserversAndSelf(player, new WorldEvent.MagicFired(player.id, target, targetId, magic));
     if (magicId == SKILL_FIRECHARM) {
       if (targetObject != null && passesMagicResist(targetObject)) {
@@ -2478,6 +2521,128 @@ public final class WorldEngine implements AutoCloseable {
     int point = (int) Math.rint(skill.level() / 3.0 * (power / (double) AMYOUNSUL_POINT_DIVISOR));
     pendingMagicImpacts.add(new PendingMagicImpact(
         now + POISON_APPLY_DELAY_MILLIS, kind, player.id, targetId, target, power, point));
+  }
+
+  /**
+   * {@code SKILL_HANGMAJINBUB}(14, 幽灵盾, Magic.pas:451) and {@code SKILL_DEJIWONHO}(15,
+   * 神圣战甲术, Magic.pas:456): the two rows of the 护身符-gated 13..19 block that differ only in
+   * the {@code btState} byte handed to {@code MagMakeDefenceArea} — 1 selects {@code
+   * MagDefenceUp} ({@code STATE_MAGDEFENCEUP}, magic defence), 0 selects {@code DefenceUp}
+   * ({@code STATE_DEFENCEUP}, physical defence).
+   */
+  private static boolean isDefenceBuffSkill(int magicId) {
+    return magicId == SKILL_HANGMAJINBUB || magicId == SKILL_DEJIWONHO;
+  }
+
+  /**
+   * The shared body of 幽灵盾/神圣战甲术:
+   *
+   * <pre>
+   *   nPower := GetAttackPower(GetPower13(60) + LoWord(SC) * 10,
+   *                            SmallInt(HiWord(SC) - LoWord(SC)) + 1);   // Magic.pas:452/457
+   *   if MagMakeDefenceArea(nTargetX, nTargetY, 3, nPower, btState) &gt; 0 then boTrain := True;
+   * </pre>
+   *
+   * <p>{@code MagMakeDefenceArea} (ObjBase.pas:24207) walks the inclusive
+   * {@code (nX ± 3) x (nY ± 3)} square around the <em>clicked</em> cell — not around the caster —
+   * and for every non-ghost moving object that {@code IsProperFriend} accepts calls
+   * {@code DefenceUp}/{@code MagDefenceUp}, then {@code Inc(Result)} <em>outside</em> that call's
+   * own return value. So a target whose remaining window already outlasts the new roll still
+   * counts, and the skill trains as long as one friend was in the square.
+   *
+   * <p>Neither branch touches {@code TargeTBaseObject}: the click only supplies the square's
+   * centre and rides along on the trailing RM_MAGICFIRE frame. {@code CretInNearXY}
+   * (ObjBase.pas:16854) still snaps the click onto a referenced object within one cell, so the
+   * square — and the broadcast — centre on that object's cell.
+   */
+  private void castDefenceArea(
+      Player player, PlayerSkill skill, MagicDefinition magic, Position requestedTarget,
+      int targetId) {
+    WorldObject clicked = targetId != 0 ? findObject(targetId) : null;
+    boolean snapped = clicked != null && clicked.map() == player.map
+        && chebyshev(clicked.position(), requestedTarget) <= 1;
+    Position center = snapped ? clicked.position() : requestedTarget;
+    int firedTargetId = snapped && clicked.ability().alive() ? clicked.id() : 0;
+
+    boolean magical = magic.id() == SKILL_HANGMAJINBUB;
+    // Rolled once per cast, before the square walk, exactly as MagBigExplosion does — an empty
+    // square still pays for the roll and for the charm.
+    int seconds = rollDefenceSeconds(player, skill, magic);
+    int affected = 0;
+    for (int id : player.map.objectsInSquare(center, DEFENCE_AREA_RANGE)) {
+      WorldObject candidate = findObject(id);
+      if (!isDefenceAreaFriend(player, candidate)) continue;
+      applyDefenceUp((Player) candidate, seconds, magical);
+      affected++;
+    }
+
+    emitToObserversAndSelf(player, new WorldEvent.MagicFired(player.id, center, firedTargetId, magic));
+    if (affected > 0) trainSpellSkill(player, skill, magic);
+  }
+
+  /**
+   * {@code TBaseObject.DefenceUp} (ObjBase.pas:24255) / {@code MagDefenceUp} (ObjBase.pas:24309),
+   * which are byte-for-byte the same routine against two different status slots. Both keep the
+   * <em>longer</em> of the running window and the new roll, but refresh
+   * {@code m_dwStatusArrTick} unconditionally — so the surviving window restarts its countdown
+   * from now either way, which is what {@code Math.max} on the absolute timestamp reproduces.
+   * The hint, {@code RecalcAbilitys} and {@code RM_ABILITY} are unconditional too: a target that
+   * gained no time still gets repainted and told how long the (unchanged) window is.
+   */
+  private void applyDefenceUp(Player target, int seconds, boolean magical) {
+    long candidate = clock.getAsLong() + Math.max(0, seconds) * 1_000L;
+    if (magical) {
+      target.magDefenceUpUntil = Math.max(target.magDefenceUpUntil, candidate);
+    } else {
+      target.defenceUpUntil = Math.max(target.defenceUpUntil, candidate);
+    }
+    emit(target, new WorldEvent.SystemMessage(target.id,
+        String.format(magical ? MAG_DEFENCE_UP_MESSAGE : DEFENCE_UP_MESSAGE, seconds)));
+    recalculateAbilities(target);
+    // SendMsg(Self, RM_ABILITY, 0, 0, 0, 0, '') — and nothing else: unlike the equipment path
+    // this does not drag RM_SUBABILITY or RM_WEIGHTCHANGED along.
+    emit(target, new WorldEvent.AbilityChanged(
+        target.id, target.ability, target.gold, target.job, target.weights()));
+  }
+
+  /**
+   * {@code GetAttackPower(GetPower13(60) + LoWord(m_WAbil.SC) * 10,
+   * SmallInt(HiWord(m_WAbil.SC) - LoWord(m_WAbil.SC)) + 1)} (Magic.pas:452/457): the roll doubles
+   * as the buff's duration in <em>seconds</em>. Magic.DB gives both rows
+   * {@code Power = MaxPower = DefPower = DefMaxPower = 0}, so {@code GetPower13(60)} reduces to
+   * {@code ROUND(40 / 4 * (btLevel + 1) + 20)} — 30/40/50/60 at skill levels 0..3 — plus ten
+   * seconds per point of minimum 道术, and the second argument is the usual power <em>spread</em>
+   * (HiSC - LoSC + 1), which {@code GetAttackPower} turns into an inclusive {@code Random(n + 1)}
+   * draw. Delphi's player-only {@code m_nPowerRate}/power-item/color modifiers stay outside the
+   * Java player model, as in every earlier power roll.
+   */
+  private int rollDefenceSeconds(Player player, PlayerSkill skill, MagicDefinition magic) {
+    int base = magic.scalePower13(DEFENCE_SECONDS_BASE, skill.level())
+        + rollExclusive(magic.defPower(), magic.defMaxPower())
+        + player.ability.minSc() * 10;
+    int spread = player.ability.maxSc() - player.ability.minSc() + 1;
+    return attackPower(base, base + spread, playerLuck(player));
+  }
+
+  /**
+   * The {@code HAM_GROUP} arm of {@code IsProperFriend} (ObjBase.pas:24143) as
+   * {@code MagMakeDefenceArea} reaches it: {@code cret = Self} or {@code IsGroupMember(cret)},
+   * and only for {@code RC_PLAYOBJECT}. Monsters are never friends here — a tamed slave would be
+   * one through {@code m_Master}, which the Java object model does not carry yet, the same
+   * boundary W40 recorded for 群体治愈术.
+   *
+   * <p>Unlike {@link #isAreaHealFriend} this predicate carries no alive filter, because
+   * {@code MagMakeDefenceArea} filters on {@code not m_boGhost} alone and {@code IsProperFriend}
+   * never reads {@code m_boDeath}. The difference is unreachable rather than observable: a
+   * character leaves its party the instant it dies (ObjBase.pas:21044, {@code 人物死亡立即退组}),
+   * which {@link #handleDeath} reproduces through {@code leaveGroup}, and a dead caster cannot
+   * start a cast at all — so no corpse can ever satisfy {@code cret = Self} or
+   * {@code IsGroupMember(cret)} here.
+   */
+  private static boolean isDefenceAreaFriend(Player caster, WorldObject candidate) {
+    if (!(candidate instanceof Player target) || target.map != caster.map) return false;
+    if (target.id == caster.id) return true;
+    return caster.group != null && caster.group == target.group && caster.group.contains(target.id);
   }
 
   /** {@code Random(10) >= target.m_nAntiMagic}: true when a hostile magic effect lands. */
@@ -3662,6 +3827,19 @@ public final class WorldEngine implements AutoCloseable {
     Ability base = player.baseAbility;
     int maxHp = clampWord(base.maxHp() + bonus.hp());
     int maxMp = clampWord(base.maxMp() + bonus.mp());
+    // ObjBase.pas:3418-3421, straight after the worn-set addition and still inside the same
+    // RecalcAbilitys pass: 神圣战甲术 (STATE_DEFENCEUP) lifts the upper AC bound and 幽灵盾
+    // (STATE_MAGDEFENCEUP) the upper MAC bound, each by 2 + (m_Abil.Level div 7). The lower
+    // bound is untouched, so the *minimum* roll of a buffed character is unchanged.
+    long now = clock.getAsLong();
+    int stateBonus = DEFENCE_UP_BASE_BONUS + base.level() / DEFENCE_UP_LEVEL_DIVISOR;
+    int defenceUpBonus = player.defenceUpUntil > now ? stateBonus : 0;
+    int magDefenceUpBonus = player.magDefenceUpUntil > now ? stateBonus : 0;
+    // Remember exactly what this pass put on the working ability: Player.rebase has to take the
+    // same amount back off before the naked m_Abil is persisted, or a timed buff would leak into
+    // the character record (and compound on every following cast).
+    player.appliedDefenceUpBonus = defenceUpBonus;
+    player.appliedMagDefenceUpBonus = magDefenceUpBonus;
     player.ability = new Ability(
         Math.min(player.ability.hp(), maxHp),
         maxHp,
@@ -3670,9 +3848,9 @@ public final class WorldEngine implements AutoCloseable {
         base.minDc() + bonus.minDc(),
         base.maxDc() + bonus.maxDc(),
         base.minAc() + bonus.minAc(),
-        base.maxAc() + bonus.maxAc(),
+        base.maxAc() + bonus.maxAc() + defenceUpBonus,
         base.minMac() + bonus.minMac(),
-        base.maxMac() + bonus.maxMac(),
+        base.maxMac() + bonus.maxMac() + magDefenceUpBonus,
         base.minMc() + bonus.minMc(),
         base.maxMc() + bonus.maxMc(),
         base.minSc() + bonus.minSc(),
@@ -4334,6 +4512,38 @@ public final class WorldEngine implements AutoCloseable {
         player.magicShieldLevel = 0;
         emit(player, new WorldEvent.SystemMessage(player.id, "魔法盾效果已消失"));
       }
+      expireDefenceUp(player, now);
+    }
+  }
+
+  /**
+   * {@code TBaseObject.Run}'s status-array countdown (ObjBase.pas:4155-4190): each live
+   * {@code m_wStatusTimeArr} slot loses one per second, and the {@code STATE_DEFENCEUP} /
+   * {@code STATE_MAGDEFENCEUP} arms raise {@code boNeedRecalc} plus their green hint when the
+   * counter reaches zero. The recalculation itself is shared: one {@code RecalcAbilitys} and one
+   * {@code RM_ABILITY} follow the whole array walk (ObjBase.pas:4243-4247), so two statuses
+   * lapsing in the same second still produce a single ability refresh — but two hints.
+   *
+   * <p>Slots are walked in index order ({@code STATE_DEFENCEUP = 9} before
+   * {@code STATE_MAGDEFENCEUP = 10}, Common/Grobal2.pas:91-92), which is the order the hints
+   * arrive in.
+   */
+  private void expireDefenceUp(Player player, long now) {
+    boolean needRecalc = false;
+    if (player.defenceUpUntil != 0 && player.defenceUpUntil <= now) {
+      player.defenceUpUntil = 0;
+      emit(player, new WorldEvent.SystemMessage(player.id, DEFENCE_UP_EXPIRED_MESSAGE));
+      needRecalc = true;
+    }
+    if (player.magDefenceUpUntil != 0 && player.magDefenceUpUntil <= now) {
+      player.magDefenceUpUntil = 0;
+      emit(player, new WorldEvent.SystemMessage(player.id, MAG_DEFENCE_UP_EXPIRED_MESSAGE));
+      needRecalc = true;
+    }
+    if (needRecalc) {
+      recalculateAbilities(player);
+      emit(player, new WorldEvent.AbilityChanged(
+          player.id, player.ability, player.gold, player.job, player.weights()));
     }
   }
 
@@ -5983,6 +6193,21 @@ public final class WorldEngine implements AutoCloseable {
     /** Transient STATE_BUBBLEDEFENCEUP: deliberately absent from PlayerState (relog clears it). */
     private long magicShieldUntil;
     private int magicShieldLevel;
+    /**
+     * Transient {@code m_wStatusTimeArr[STATE_DEFENCEUP]} (神圣战甲术, AC) and
+     * {@code [STATE_MAGDEFENCEUP]} (幽灵盾, MAC), modelled as absolute "until" timestamps like
+     * every other timed buff here. Delphi keeps them in the runtime status array only, so — as
+     * with 魔法盾 — they are deliberately absent from {@link PlayerState} and a relog clears them.
+     */
+    private long defenceUpUntil;
+    private long magDefenceUpUntil;
+    /**
+     * The AC/MAC the last {@code RecalcAbilitys} pass actually put on the working ability for the
+     * two statuses above. {@link #rebase} subtracts exactly these, so the naked {@code m_Abil}
+     * that {@link #state()} persists never carries a timed buff.
+     */
+    private int appliedDefenceUpBonus;
+    private int appliedMagDefenceUpBonus;
     private long lastSavedAt;
     /** {@code m_dwDeathTick}: 0 while alive, the death timestamp otherwise. */
     private long diedAt;
@@ -6249,9 +6474,11 @@ public final class WorldEngine implements AutoCloseable {
           Math.max(0, working.minDc() - bonus.minDc()),
           Math.max(0, working.maxDc() - bonus.maxDc()),
           Math.max(0, working.minAc() - bonus.minAc()),
-          Math.max(0, working.maxAc() - bonus.maxAc()),
+          // Both defence statuses live on the working ability only, so rebase strips them the
+          // same way it strips the worn set (see recalculateAbilities).
+          Math.max(0, working.maxAc() - bonus.maxAc() - appliedDefenceUpBonus),
           Math.max(0, working.minMac() - bonus.minMac()),
-          Math.max(0, working.maxMac() - bonus.maxMac()),
+          Math.max(0, working.maxMac() - bonus.maxMac() - appliedMagDefenceUpBonus),
           Math.max(0, working.minMc() - bonus.minMc()),
           Math.max(0, working.maxMc() - bonus.maxMc()),
           Math.max(0, working.minSc() - bonus.minSc()),
