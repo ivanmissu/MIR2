@@ -189,6 +189,21 @@ public final class WorldEngine implements AutoCloseable {
   private static final int SKILL_SHOWHP = 28;
   /** 圣言术 {@code SKILL_KILLUNDEAD}(32, Magic.pas:572): the Wizard instant-kill vs undead. */
   private static final int SKILL_KILLUNDEAD = 32;
+  /** 火墙 {@code SKILL_EARTHFIRE}(22, Magic.pas:501): the Wizard cross of fire-burn events. */
+  private static final int SKILL_EARTHFIRE = 22;
+  /** {@code ET_FIRE = 5} (Grobal2.pas:102): the {@code TFireBurnEvent} event type on the wire. */
+  private static final int ET_FIRE = 5;
+  /**
+   * {@code TFireBurnEvent.Run}'s 3000 ms damage gate (Event.pas:241): the redeclared
+   * {@code m_dwRunTick} starts at zero, so the first burn lands on the first engine pass.
+   */
+  private static final long FIRE_WALL_TICK_MILLIS = 3_000;
+  /**
+   * {@code sDisableInSafeZoneFireCross} (Magic.pas:1140): the safe-zone refusal hint, verbatim
+   * including its three ASCII dots, sent with {@code c_Red, t_Notice} when
+   * {@code g_Config.boDisableInSafeZoneFireCross} refuses the cast.
+   */
+  private static final String FIRE_CROSS_SAFE_ZONE_MESSAGE = "安全区不允许使用...";
   /**
    * {@code SendDelayMsg(TargeTBaseObject, RM_DOOPENHEALTH, ..., 1500)} (Magic.pas:527): the
    * 心灵启示 reveal lands 1.5 s after a successful cast.
@@ -225,6 +240,11 @@ public final class WorldEngine implements AutoCloseable {
   private static final int DEFAULT_MAG_TURN_UNDEAD_LEVEL = 50;
   /** {@code EditMagTurnUndeadLevel.MaxValue} (FunctionConfig.dfm): 65535, MinValue 1. */
   private static final int MAX_MAG_TURN_UNDEAD_LEVEL = 65535;
+  /**
+   * {@code g_Config.boDisableInSafeZoneFireCross} (M2Share.pas:2070): when true, 火墙 refuses
+   * to be laid on a safe-zone cell. Ships False in Delphi — safe-zone fire walls are allowed.
+   */
+  private static final boolean DEFAULT_DISABLE_FIRE_CROSS_IN_SAFE_ZONE = false;
   /**
    * {@code GetMapBaseObjects(m_PEnvir, nX, nY, 1, ...)} (Magic.pas:180): 群体治愈术 collects the
    * inclusive 3x3 square around the click — the constant is hard-coded, not a config value and
@@ -379,7 +399,8 @@ public final class WorldEngine implements AutoCloseable {
       int fireBoomRange,
       int elecBlizzardRange,
       int snowWindRange,
-      int magTurnUndeadLevel) {
+      int magTurnUndeadLevel,
+      boolean disableFireCrossInSafeZone) {
 
     public Config {
       Objects.requireNonNull(tickInterval, "tickInterval");
@@ -409,6 +430,17 @@ public final class WorldEngine implements AutoCloseable {
             + MAX_MAG_TURN_UNDEAD_LEVEL);
     }
 
+    /** Compatibility constructor retaining the pre-W49 canonical signature. */
+    public Config(Duration tickInterval, int viewRange, int maxCommandsPerTick,
+        long hitIntervalMillis, long corpseLingerMillis, long itemLingerMillis,
+        long regenIntervalMillis, long saveIntervalMillis, long testGold, int fireBoomRange,
+        int elecBlizzardRange, int snowWindRange, int magTurnUndeadLevel) {
+      this(tickInterval, viewRange, maxCommandsPerTick, hitIntervalMillis, corpseLingerMillis,
+          itemLingerMillis, regenIntervalMillis, saveIntervalMillis, testGold, fireBoomRange,
+          elecBlizzardRange, snowWindRange, magTurnUndeadLevel,
+          DEFAULT_DISABLE_FIRE_CROSS_IN_SAFE_ZONE);
+    }
+
     /** Compatibility constructor retaining the pre-W48 canonical signature. */
     public Config(Duration tickInterval, int viewRange, int maxCommandsPerTick,
         long hitIntervalMillis, long corpseLingerMillis, long itemLingerMillis,
@@ -416,7 +448,8 @@ public final class WorldEngine implements AutoCloseable {
         int elecBlizzardRange, int snowWindRange) {
       this(tickInterval, viewRange, maxCommandsPerTick, hitIntervalMillis, corpseLingerMillis,
           itemLingerMillis, regenIntervalMillis, saveIntervalMillis, testGold, fireBoomRange,
-          elecBlizzardRange, snowWindRange, DEFAULT_MAG_TURN_UNDEAD_LEVEL);
+          elecBlizzardRange, snowWindRange, DEFAULT_MAG_TURN_UNDEAD_LEVEL,
+          DEFAULT_DISABLE_FIRE_CROSS_IN_SAFE_ZONE);
     }
 
     /** Compatibility constructor retaining the pre-W44 canonical signature. */
@@ -482,6 +515,12 @@ public final class WorldEngine implements AutoCloseable {
   private final List<Spawner> spawners = new ArrayList<>();
   private final Map<Integer, GroundItem> groundItems = new LinkedHashMap<>();
   private final Map<Integer, Long> itemDropTimes = new HashMap<>();
+  /**
+   * The {@code g_EventManager} (Event.pas:68) slice this engine implements so far: the
+   * {@code TFireBurnEvent} cross arms of 火墙 (Magic.pas:1135). Insertion-ordered, ticked by
+   * {@link #tickFireWalls}; pure in-memory state, never persisted, exactly like Delphi.
+   */
+  private final Map<Integer, FireWallEvent> fireWalls = new LinkedHashMap<>();
   private final List<PendingMagicImpact> pendingMagicImpacts = new ArrayList<>();
   private final ConcurrentLinkedQueue<Pending<?>> commands = new ConcurrentLinkedQueue<>();
   private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(
@@ -1589,6 +1628,7 @@ public final class WorldEngine implements AutoCloseable {
     resolvePendingMagicImpacts();
     expireSkillBuffs();
     tickPoison();
+    tickFireWalls();
     regenSpawners();
     updateMonsters();
     decayPkPoints();
@@ -1717,6 +1757,11 @@ public final class WorldEngine implements AutoCloseable {
         .toList();
     emit(player, new WorldEvent.MapEntered(
         player.snapshot(), map.info(), visible, visibleItems(map, position), dayBright(map)));
+    // SearchViewRange's first sweep (ObjBase.pas:25764-25774) reports the fire walls already
+    // burning in view as SM_SHOWEVENT frames right after the map bootstrap.
+    for (FireWallEvent fire : visibleFireWalls(map, position)) {
+      emit(player, new WorldEvent.EventAppeared(fire.id(), ET_FIRE, fire.position(), 0));
+    }
     // TPlayObject login sequence (ObjBase.pas:16572) sends RM_SENDUSEITEMS so the client
     // knows what the character is wearing. RM_WEIGHTCHANGED is not part of that sequence —
     // the Delphi login path only refreshes weight when something actually changes it.
@@ -1814,7 +1859,13 @@ public final class WorldEngine implements AutoCloseable {
     emit(player, new WorldEvent.MoveAccepted(movedPlayer, source, movement));
     emitOwnVisibilityChanges(player, visibleBefore, visibleAfter);
     emitMovementToObservers(movedPlayer, source, movement, visibleBefore, visibleAfter);
+    // TBaseObject.Walk's event scan (ObjBase.pas:20204-20229) runs as soon as the step lands:
+    // stepping onto a fire wall cell hurts immediately, before the view sweep below reports
+    // any event change (Delphi queues the RM_MAGSTRUCK_MINE and the next SearchViewRange
+    // delivers SM_SHOWEVENT/SM_HIDEEVENT later still).
+    struckByFireWallOnStep(player);
     emitItemVisibilityChanges(player, source, target);
+    emitFireWallVisibilityChanges(player, source, target);
     return MoveResult.accepted(movedPlayer);
   }
 
@@ -1906,6 +1957,7 @@ public final class WorldEngine implements AutoCloseable {
         && !isPushArroundSkill(magicId) && !isDefenceBuffSkill(magicId)
         && !isCloakSkill(magicId)
         && !isShowHpSkill(magicId) && !isTurnUndeadSkill(magicId)
+        && !isFireWallSkill(magicId)
         && magicId != SKILL_HEALING && magicId != SKILL_MAGIC_SHIELD)
       return rejectSpell(player, magicId, WorldEvent.SpellRejection.UNSUPPORTED_SKILL, "该技能尚未开放");
 
@@ -1943,10 +1995,12 @@ public final class WorldEngine implements AutoCloseable {
     // an empty-ground click with targetId = 0 is a legal cast.
     // 隐身术 casts on the caster's own cell and 集体隐身术 on the group's cell; neither branch
     // reads TargeTBaseObject either (Magic.pas:476/481), so both accept an empty-ground click.
+    // 火墙 (Magic.pas:501) likewise reads only the click coordinates — MagMakeFireCross never
+    // touches TargeTBaseObject — so an empty-ground click with targetId = 0 is a legal cast.
     if (!isLinePiercingSkill(magicId) && !isAreaHealingSkill(magicId)
         && !isAreaExplosionSkill(magicId) && !isElecBlizzardSkill(magicId)
         && !isPushArroundSkill(magicId) && !isDefenceBuffSkill(magicId)
-        && !isCloakSkill(magicId)
+        && !isCloakSkill(magicId) && !isFireWallSkill(magicId)
         && !validSpellTarget(player, targetObject, target, magicId))
       return rejectSpell(player, magicId, WorldEvent.SpellRejection.INVALID_TARGET, "施法目标无效");
 
@@ -2041,6 +2095,14 @@ public final class WorldEngine implements AutoCloseable {
     // castShowHp.
     if (isShowHpSkill(magicId)) {
       castShowHp(player, skill, magic, target, targetId, targetObject, now);
+      return true;
+    }
+
+    // Magic.pas:501 — 火墙 lays the TFireBurnEvent cross on the clicked cell; the branch reads
+    // neither TargeTBaseObject nor any target state, and RM_MAGICFIRE fires unconditionally at
+    // DoSpell's tail even when the safe-zone gate refuses the cast — see castFireWall.
+    if (isFireWallSkill(magicId)) {
+      castFireWall(player, skill, magic, target, targetId, now);
       return true;
     }
 
@@ -2802,6 +2864,16 @@ public final class WorldEngine implements AutoCloseable {
   }
 
   /**
+   * Magic.DB row 22 — 火墙 (Wizard, Magic.pas:501 → {@code MagMakeFireCross},
+   * Magic.pas:1135-1170): the last learnable row of the 1–33 block, and the engine's first
+   * map-event (fire wall object) spell. The branch reads only the click coordinates; its effect
+   * is a persistent {@code TFireBurnEvent} cross, not a delayed impact.
+   */
+  private static boolean isFireWallSkill(int magicId) {
+    return magicId == SKILL_EARTHFIRE;
+  }
+
+  /**
    * {@code GetPower13(30) + GetRPow(PlayObject.m_WAbil.SC) * 3} (Magic.pas:477/481), in seconds.
    *
    * <p>{@code GetRPow} (Magic.pas:73) draws one value from {@code [LoWord(SC), HiWord(SC)]}
@@ -3128,6 +3200,212 @@ public final class WorldEngine implements AutoCloseable {
     }
     if (retarget && isAttackTarget(attacker)) monster.targetId = attacker.id;
     monster.lastAttackAt += 150 - Math.min(130, monster.ability().level() * 4);
+  }
+
+  /**
+   * {@code SKILL_EARTHFIRE}(22, 火墙, Magic.pas:501 → {@code MagMakeFireCross},
+   * Magic.pas:1135-1170): the engine's first map-event spell. The branch reads neither
+   * {@code TargeTBaseObject} nor any target state — the click coordinates alone steer the cross,
+   * so an empty-ground cast with targetId = 0 is legal (like 抗拒火环/群体治愈术). Delphi
+   * evaluates both argument expressions before {@code MagMakeFireCross}'s safe-zone gate runs,
+   * so the power and duration rolls happen even on a refused cast; the refusal still burns the
+   * mana (spent before DoSpell's case) and still broadcasts {@code RM_MAGICFIRE} (boSpellFire
+   * is never cleared on this branch), but trains nothing.
+   *
+   * <p>Once past the gate, the cross is laid arm by arm in Delphi's order — (x, y-1), (x-1, y),
+   * (x, y), (x+1, y), (x, y+1) — each arm skipped when the cell already carries any event
+   * ({@code TEnvirnoment.GetEvent} has no type filter, Envir.pas:1420; only fire walls exist in
+   * this engine, so "any event" = "a fire wall"). {@code Result := 1} is unconditional at the
+   * tail, so a fully occupied cross still trains — and still spent the mana.
+   *
+   * <p>Visibility follows Delphi's {@code SearchViewRange} sweep (ObjBase.pas:25764-25774):
+   * the client learns the flames <em>after</em> the cast frame, so the engine emits
+   * {@code SM_MAGICFIRE} first and the {@link WorldEvent.EventAppeared} broadcasts second.
+   * Arms landing outside the map are created in Delphi but never registered on a cell —
+   * invisible and unable to hit anything — so this engine does not register them either.
+   */
+  private void castFireWall(
+      Player player, PlayerSkill skill, MagicDefinition magic, Position requestedTarget,
+      int targetId, long now) {
+    // CretInNearXY snapping as in every other ground-target spell (ObjBase.pas:16854): the
+    // snapped cell is only what the RM_MAGICFIRE frame carries.
+    WorldObject clicked = targetId != 0 ? findObject(targetId) : null;
+    boolean snapped = clicked != null && clicked.map() == player.map
+        && chebyshev(clicked.position(), requestedTarget) <= 1;
+    Position center = snapped ? clicked.position() : requestedTarget;
+    int firedTargetId = snapped && clicked.ability().alive() ? clicked.id() : 0;
+
+    // Delphi evaluates the GetAttackPower(...) and GetPower(10) + ... arguments before
+    // MagMakeFireCross's safe-zone gate, so both rolls precede the refusal as well.
+    int damage = rollMcAttackPower(player, skill, magic);
+    long durationMillis = rollFireWallSeconds(player, skill, magic) * 1_000L;
+
+    if (config.disableFireCrossInSafeZone() && player.map.isSafeZone(center)) {
+      // Magic.pas:1143-1146: SysMsg + exit with Result = 0 — no fire, no training, but the
+      // mana is already spent and RM_MAGICFIRE still goes out at DoSpell's tail.
+      emit(player, new WorldEvent.SystemMessage(player.id, FIRE_CROSS_SAFE_ZONE_MESSAGE));
+      emitToObserversAndSelf(player, new WorldEvent.MagicFired(player.id, center, firedTargetId, magic));
+      return;
+    }
+
+    List<FireWallEvent> created = new ArrayList<>();
+    // MagMakeFireCross's arm order (Magic.pas:1148-1164): up, left, center, right, down.
+    for (Position cell : List.of(
+        center.translate(Direction.UP, 1), center.translate(Direction.LEFT, 1), center,
+        center.translate(Direction.RIGHT, 1), center.translate(Direction.DOWN, 1))) {
+      if (!player.map.contains(cell) || fireWallAt(player.map, cell) != null) continue;
+      FireWallEvent fire = new FireWallEvent(
+          allocateObjectId(), player.map, cell, damage, player.id, now, durationMillis);
+      fireWalls.put(fire.id(), fire);
+      created.add(fire);
+    }
+
+    emitToObserversAndSelf(player, new WorldEvent.MagicFired(player.id, center, firedTargetId, magic));
+    for (FireWallEvent fire : created) {
+      WorldEvent appeared = new WorldEvent.EventAppeared(fire.id(), ET_FIRE, fire.position(), 0);
+      for (int viewerId : visibleIds(fire.map(), fire.position(), 0)) {
+        emit(players.get(viewerId), appeared);
+      }
+    }
+    // MagMakeFireCross returns 1 unconditionally once the safe-zone gate passed, so the cast
+    // trains even when every arm's cell was already occupied.
+    trainSpellSkill(player, skill, magic);
+  }
+
+  /**
+   * The {@code GetPower(10) + (Word(GetRPow(PlayObject.m_WAbil.MC)) shr 1)} duration argument
+   * (Magic.pas:506), in seconds — {@code GetPower(10)} is {@link #getMagicPower} with the
+   * literal 10 (row 22's DefPower/DefMaxPower = 3/3 make it 5/8/11/13 s at skill levels 0..3),
+   * and {@code GetRPow} (Magic.pas:73) draws one inclusive value from the working ability's
+   * MC range — the same shape {@link #rollTransparentSeconds} already uses for SC — halved by
+   * the unsigned {@code shr 1}.
+   */
+  private int rollFireWallSeconds(Player player, PlayerSkill skill, MagicDefinition magic) {
+    int minMc = player.ability.minMc();
+    int maxMc = player.ability.maxMc();
+    int rpow = random.between(WorldRandom.Stream.MAGIC, minMc, maxMc);
+    return getMagicPower(magic, skill.level(), 10) + (rpow >>> 1);
+  }
+
+  /**
+   * The periodic half of the {@code g_EventManager} slice (Event.pas:102/239/277): per fire
+   * wall, in insertion order —
+   *
+   * <ol>
+   *   <li>the owner sweep: a dead or departed caster stops the fire from hurting anyone, while
+   *       the flames keep rendering until expiry (Event.pas:282 clears {@code m_OwnBaseObject}
+   *       on ghost/death; Delphi re-checks every 500 ms, this engine folds the window into the
+   *       damage tick per the W14 synchronous-death convention);
+   *   <li>the damage gate: every {@link #FIRE_WALL_TICK_MILLIS} the fire burns every living
+   *       proper target standing on its cell — {@code GeTBaseObjects(cell, True)} collects the
+   *       cell's moving objects, and {@code IsProperTarget} filters them (alive, same map,
+   *       not the caster, not an NPC). The gate's {@code lastDamageAt} starts at 0, so the
+   *       first tick after creation burns immediately, exactly like Delphi's zero-initialised
+   *       redeclared {@code m_dwRunTick};
+   *   <li>expiry: strictly past the duration the fire closes — removed from the registry and
+   *       {@code SM_HIDEEVENT} broadcast to the cell's viewers (Delphi's {@code Close} unmaps
+   *       the event and the next {@code SearchViewRange} sweep reports the disappearance).
+   * </ol>
+   */
+  private void tickFireWalls() {
+    long now = clock.getAsLong();
+    List<FireWallEvent> expired = new ArrayList<>();
+    for (FireWallEvent fire : fireWalls.values()) {
+      if (fire.ownerId() != 0) {
+        WorldObject owner = findObject(fire.ownerId());
+        if (owner == null || !owner.ability().alive()) fire.clearOwner();
+      }
+      if (fire.ownerId() != 0 && now - fire.lastDamageAt() > FIRE_WALL_TICK_MILLIS) {
+        fire.tickDamage(now);
+        WorldObject owner = findObject(fire.ownerId());
+        for (int id : fire.map().objectsInSquare(fire.position(), 0)) {
+          WorldObject target = findObject(id);
+          if (owner instanceof Player player && isProperTarget(player, target)) {
+            applyFireWallDamage(owner, target, fire.damage());
+          }
+        }
+      }
+      if (now - fire.createdAt() > fire.durationMillis()) expired.add(fire);
+    }
+    for (FireWallEvent fire : expired) {
+      fireWalls.remove(fire.id());
+      WorldEvent disappeared = new WorldEvent.EventDisappeared(fire.id(), fire.position());
+      for (int viewerId : visibleIds(fire.map(), fire.position(), 0)) {
+        emit(players.get(viewerId), disappeared);
+      }
+    }
+  }
+
+  /**
+   * {@code RM_MAGSTRUCK_MINE} (ObjBase.pas:4501-4520, Grobal2.pas:8030): the fire wall's damage
+   * chain. Unlike {@code RM_MAGSTRUCK} it carries no walk stagger; {@code GetMagStruckDamage}
+   * (ObjBase.pas:22441) rolls the victim's inclusive MAC range and applies the 魔法盾 branch
+   * with no attacker-side undead bonus ({@code BaseObject = nil}); the result then flows through
+   * the shared {@link #applyDamage} path — poison-armor multiplier, PK flag, armour wear,
+   * {@code SM_STRUCK} with lTag2 = 1 (magical), revival ring and the ordinary death chain, so a
+   * monster killed by fire credits its experience and loot to the caster.
+   */
+  private void applyFireWallDamage(WorldObject owner, WorldObject target, int rawDamage) {
+    int defence = random.between(WorldRandom.Stream.MAGIC,
+        target.ability().minMac(), target.ability().maxMac());
+    int damage = applyMagicShield(target, Math.max(0, rawDamage - defence));
+    applyDamage(target, owner, damage, true);
+  }
+
+  /**
+   * {@code TBaseObject.Walk}'s event scan (ObjBase.pas:20204-20229): after any base object —
+   * player or monster — lands on a cell carrying a damaging event with a live owner that
+   * {@code IsProperTarget}s the walker, the walker takes one immediate {@code RM_MAGSTRUCK_MINE}.
+   * The step is never blocked and the caster never burns himself ({@code IsProperTarget} excludes
+   * self). Teleports bypass {@code Walk} in Delphi, so they never trigger this.
+   */
+  private void struckByFireWallOnStep(WorldObject walker) {
+    FireWallEvent fire = fireWallAt(walker.map(), walker.position());
+    if (fire == null || fire.ownerId() == 0) return;
+    if (!(findObject(fire.ownerId()) instanceof Player owner)) return;
+    if (!isProperTarget(owner, walker)) return;
+    applyFireWallDamage(owner, walker, fire.damage());
+  }
+
+  /** {@code TEnvirnoment.GetEvent} (Envir.pas:1420): the fire wall standing on {@code cell}. */
+  private FireWallEvent fireWallAt(GameMap map, Position cell) {
+    for (FireWallEvent fire : fireWalls.values()) {
+      if (fire.map() == map && fire.position().equals(cell)) return fire;
+    }
+    return null;
+  }
+
+  /** The active fire walls inside {@code center}'s view square, in registration order. */
+  private List<FireWallEvent> visibleFireWalls(GameMap map, Position center) {
+    List<FireWallEvent> result = new ArrayList<>();
+    for (FireWallEvent fire : fireWalls.values()) {
+      if (fire.map() == map && fire.position().distanceTo(center) <= config.viewRange()) {
+        result.add(fire);
+      }
+    }
+    return List.copyOf(result);
+  }
+
+  /**
+   * The event half of {@code SearchViewRange}'s sweep (ObjBase.pas:25764-25774): after a move,
+   * fire walls that left the player's view square get {@code SM_HIDEEVENT} and the newcomers
+   * get {@code SM_SHOWEVENT} — the same diff shape {@link #emitItemVisibilityChanges} uses for
+   * ground items. Delphi delivers these on its periodic rescan; the engine reports them
+   * immediately on the move instead, which is observably equivalent.
+   */
+  private void emitFireWallVisibilityChanges(Player player, Position source, Position target) {
+    List<FireWallEvent> before = visibleFireWalls(player.map, source);
+    List<FireWallEvent> after = visibleFireWalls(player.map, target);
+    for (FireWallEvent hidden : before) {
+      if (!after.contains(hidden)) {
+        emit(player, new WorldEvent.EventDisappeared(hidden.id(), hidden.position()));
+      }
+    }
+    for (FireWallEvent shown : after) {
+      if (!before.contains(shown)) {
+        emit(player, new WorldEvent.EventAppeared(shown.id(), ET_FIRE, shown.position(), 0));
+      }
+    }
   }
 
   /** {@code Random(10) >= target.m_nAntiMagic}: true when a hostile magic effect lands. */
@@ -4534,6 +4812,9 @@ public final class WorldEngine implements AutoCloseable {
     }
     for (GroundItem item : visibleItems(destination, player.position)) {
       emit(player, new WorldEvent.ItemAppeared(item));
+    }
+    for (FireWallEvent fire : visibleFireWalls(destination, player.position)) {
+      emit(player, new WorldEvent.EventAppeared(fire.id(), ET_FIRE, fire.position(), 0));
     }
     return MoveResult.accepted(snapshot);
   }
@@ -6329,6 +6610,9 @@ public final class WorldEngine implements AutoCloseable {
     Set<Integer> visibleAfter = new LinkedHashSet<>(visibleIds(monster.map, target, monster.id));
     WorldObjectSnapshot snapshot = monster.snapshot();
     emitMovementToObservers(snapshot, source, MovementKind.WALK, visibleBefore, visibleAfter);
+    // Monsters share TBaseObject.Walk (ObjBase.pas:20169), so a monster stepping onto a fire
+    // wall cell takes the same immediate burn a player would.
+    struckByFireWallOnStep(monster);
   }
 
   private void removeMonster(Monster monster) {
