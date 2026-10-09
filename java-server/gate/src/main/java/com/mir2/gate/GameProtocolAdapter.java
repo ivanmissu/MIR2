@@ -257,6 +257,20 @@ public final class GameProtocolAdapter implements WorldEventSink {
       case WorldEvent.ObjectRushFailed failed -> sendRushFailed(failed);
       case WorldEvent.ObjectAttacked attacked -> sendAttack(attacked);
       case WorldEvent.ObjectStruck struck -> sendStruck(struck);
+      // RM_SHOWEVENT -> SM_SHOWEVENT (ObjBase.pas:6268-6277): recog = the event id,
+      // param = the event type (ET_FIRE = 5 for 火墙's TFireBurnEvent), tag = x, series = y,
+      // body = TShortMessage{Ident = eventParam, wMsg = 0}; the client rebuilds a TClEvent
+      // from those fields (ClMain.pas:4389-4396).
+      case WorldEvent.EventAppeared appeared -> output.accept(new GameOutbound.Packet(packet(
+          ProtocolConstants.SM_SHOWEVENT, appeared.eventId(), appeared.eventType(),
+          appeared.position().x(), appeared.position().y(),
+          shortMessage(appeared.eventParam(), 0))));
+      // RM_HIDEEVENT -> SM_HIDEEVENT (ObjBase.pas:6259-6267): recog = the event id the
+      // client's EventMan.DelEventById consumes (ClMain.pas:4397-4400), param = 0,
+      // tag = x, series = y, no body.
+      case WorldEvent.EventDisappeared disappeared -> output.accept(new GameOutbound.Packet(
+          packet(ProtocolConstants.SM_HIDEEVENT, disappeared.eventId(), 0,
+              disappeared.position().x(), disappeared.position().y(), "")));
       case WorldEvent.ObjectDied died -> sendDeath(died);
       case WorldEvent.ObjectRevived revived -> sendAlive(revived.object());
       case WorldEvent.LevelUp levelUp -> sendLevelUp(levelUp);
@@ -932,6 +946,13 @@ public final class GameProtocolAdapter implements WorldEventSink {
   private static String messageBodyWl(int param1, int param2, int tag1, int tag2) {
     byte[] bytes = ByteBuffer.allocate(16).order(ByteOrder.LITTLE_ENDIAN)
         .putInt(param1).putInt(param2).putInt(tag1).putInt(tag2).array();
+    return new String(SixBitCodec.encode(bytes), StandardCharsets.ISO_8859_1);
+  }
+
+  /** {@code TShortMessage} (Grobal2.pas:700): two little-endian words, as SM_SHOWEVENT's body. */
+  private static String shortMessage(int ident, int wMsg) {
+    byte[] bytes = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN)
+        .putShort((short) ident).putShort((short) wMsg).array();
     return new String(SixBitCodec.encode(bytes), StandardCharsets.ISO_8859_1);
   }
 

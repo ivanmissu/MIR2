@@ -27,6 +27,8 @@ public sealed interface WorldEvent
         WorldEvent.HealthChanged,
         WorldEvent.HealthRevealed,
         WorldEvent.HealthConcealed,
+        WorldEvent.EventAppeared,
+        WorldEvent.EventDisappeared,
         WorldEvent.SkillLearned,
         WorldEvent.SkillTrainingChanged,
         WorldEvent.SkillsSent,
@@ -270,6 +272,38 @@ public sealed interface WorldEvent
   record HealthConcealed(int objectId) implements WorldEvent {
     public HealthConcealed {
       if (objectId <= 0) throw new IllegalArgumentException("object id must be positive");
+    }
+  }
+
+  /**
+   * {@code RM_SHOWEVENT} → {@code SM_SHOWEVENT(804)} (ObjBase.pas:6268-6277, client
+   * ClMain.pas:4389): a map event object entered the recipient's view — the first wired
+   * producer is 火墙's {@code TFireBurnEvent} cross (Event.pas:226). Wire shape:
+   * recog = event id, param = event type ({@code ET_FIRE = 5}), tag = x, series = y,
+   * body = {@code TShortMessage{Ident = eventParam, wMsg = 0}}; the client builds a
+   * {@code TClEvent} from exactly those fields and registers it with its EventMan.
+   */
+  record EventAppeared(int eventId, int eventType, Position position, int eventParam)
+      implements WorldEvent {
+    public EventAppeared {
+      if (eventId <= 0) throw new IllegalArgumentException("event id must be positive");
+      if (eventType < 0 || eventType > 0xff)
+        throw new IllegalArgumentException("event type must be a byte");
+      Objects.requireNonNull(position, "position");
+      if (eventParam < 0 || eventParam > 0xffff)
+        throw new IllegalArgumentException("event param must be a word");
+    }
+  }
+
+  /**
+   * {@code RM_HIDEEVENT} → {@code SM_HIDEEVENT(805)} (ObjBase.pas:6259-6267, client
+   * ClMain.pas:4397 {@code EventMan.DelEventById(msg.Recog)}): the event left the recipient's
+   * view or expired. Wire shape: recog = event id, param = 0, tag = x, series = y, no body.
+   */
+  record EventDisappeared(int eventId, Position position) implements WorldEvent {
+    public EventDisappeared {
+      if (eventId <= 0) throw new IllegalArgumentException("event id must be positive");
+      Objects.requireNonNull(position, "position");
     }
   }
 

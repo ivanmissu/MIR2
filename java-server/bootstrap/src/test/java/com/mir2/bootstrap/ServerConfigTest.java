@@ -34,6 +34,8 @@ class ServerConfigTest {
     assertEquals(1, config.snowWindRange());
     // M2Share.pas:2080 Setup.MagTurnUndeadLevel defaults to 50.
     assertEquals(50, config.magTurnUndeadLevel());
+    // M2Share.pas:2070 Setup.DisableInSafeZoneFireCross defaults to False.
+    assertFalse(config.disableFireCrossInSafeZone());
   }
 
   @Test
@@ -152,6 +154,34 @@ class ServerConfigTest {
         () -> ServerConfig.from(Map.of("MIR2_MAG_TURN_UNDEAD_LEVEL", "0")));
     assertThrows(IllegalArgumentException.class,
         () -> ServerConfig.from(Map.of("MIR2_MAG_TURN_UNDEAD_LEVEL", "65536")));
+  }
+
+  @Test
+  void disableFireCrossInSafeZoneMatchesDelphiDefaultsAndFlowsThroughCopies() {
+    ServerConfig defaults = ServerConfig.from(Map.of());
+    // M2Share.pas:2070 — boDisableInSafeZoneFireCross ships False: safe-zone fire walls are
+    // allowed unless the operator opts out.
+    assertFalse(defaults.disableFireCrossInSafeZone());
+    assertTrue(ServerConfig.from(Map.of("MIR2_DISABLE_FIRE_CROSS_IN_SAFE_ZONE", "true"))
+        .disableFireCrossInSafeZone());
+    assertFalse(ServerConfig.from(Map.of("MIR2_DISABLE_FIRE_CROSS_IN_SAFE_ZONE", "false"))
+        .disableFireCrossInSafeZone());
+
+    ServerConfig copied = defaults.withSafeZoneSize(0)
+        .withWorldClockMode(com.mir2.world.WorldClock.Mode.MANUAL)
+        .withDisableTakeOffFile(Path.of("DisableTakeOffList.txt"))
+        .withFireBoomRange(3)
+        .withElecBlizzardRange(4)
+        .withSnowWindRange(5)
+        .withMagTurnUndeadLevel(7);
+    assertFalse(copied.disableFireCrossInSafeZone(), "unrelated copy helpers retain the switch");
+    assertTrue(defaults.withDisableFireCrossInSafeZone(true).disableFireCrossInSafeZone());
+    // The switch is its own config field: moving it must not drag the others along.
+    ServerConfig flipped = defaults.withDisableFireCrossInSafeZone(true);
+    assertEquals(50, flipped.magTurnUndeadLevel());
+    assertEquals(1, flipped.fireBoomRange());
+    assertThrows(IllegalArgumentException.class,
+        () -> ServerConfig.from(Map.of("MIR2_DISABLE_FIRE_CROSS_IN_SAFE_ZONE", "maybe")));
   }
 
   @Test

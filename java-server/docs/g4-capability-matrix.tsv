@@ -291,8 +291,8 @@ SM	SM_SPACEMOVE_HIDE	800	yes	none	protocol-only	-	Grobal2.pas	瞬息移动离场
 SM	SM_SPACEMOVE_SHOW	801	yes	none	protocol-only	-	Grobal2.pas	瞬息移动入场帧——技能切片
 SM	SM_RECONNECT	802	yes	none	protocol-only	-	Grobal2.pas	重连提示（跨服/换服流程）
 SM	SM_GHOST	803	yes	gate-game	implemented	GameProtocolAdapterTest	Grobal2.pas	目标离场/不可见应答
-SM	SM_SHOWEVENT	804	yes	none	protocol-only	-	Grobal2.pas	事件对象显示（攻城/活动）
-SM	SM_HIDEEVENT	805	yes	none	protocol-only	-	Grobal2.pas	事件对象隐藏
+SM	SM_SHOWEVENT	804	yes	gate-game	implemented	WorldFireWallTest,GameFireWallProtocolTest	Grobal2.pas	事件对象显示——W49 火墙首个落地：RM_SHOWEVENT→SM_SHOWEVENT（ObjBase.pas:6268-6277），recog=事件 id、param=事件类型（ET_FIRE=5）、tag=x、series=y、body=TShortMessage{Ident=eventParam, wMsg=0}；SearchViewRange（ObjBase.pas:25764-25774）三态 sweep 的引擎事件驱动等价：铺火/进图/传送/移动进入视野即广播，火墙到期或移出视野即 SM_HIDEEVENT；客户端 ClMain.pas:4389 TClEvent.Create(recog, LoWord(tag), series, param) 注册 EventMan；G4 未签发
+SM	SM_HIDEEVENT	805	yes	gate-game	implemented	WorldFireWallTest,GameFireWallProtocolTest	Grobal2.pas	事件对象隐藏——W49 火墙首个落地：RM_HIDEEVENT→SM_HIDEEVENT（ObjBase.pas:6259-6267），recog=事件 id、param=0、tag=x、series=y、无 body；火墙严格大于时长到期（Event.pas:278 Close）或玩家移出 ±12 视野时广播；客户端 ClMain.pas:4397 EventMan.DelEventById(recog)；G4 未签发
 SM	SM_SPACEMOVE_HIDE2	806	yes	none	protocol-only	-	Grobal2.pas	瞬息移动扩展帧
 SM	SM_SPACEMOVE_SHOW2	807	yes	none	protocol-only	-	Grobal2.pas	瞬息移动扩展帧
 SM	SM_TIMECHECK_MSG	810	yes	none	protocol-only	-	Grobal2.pas	计时校验（反外挂）
@@ -387,7 +387,7 @@ SKILL	SKILL_SPACEMOVE:warrior	21	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	瞬
 SKILL	SKILL_SPACEMOVE:wizard	21	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	瞬息移动；GEEM2 Magic.DB 同名行 job=wizard learnable=yes
 SKILL	SKILL_SPACEMOVE:taoist	21	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	瞬息移动；GEEM2 Magic.DB 同名行 job=wizard learnable=no
 SKILL	SKILL_EARTHFIRE:warrior	22	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	火墙；GEEM2 Magic.DB 同名行 job=wizard learnable=no
-SKILL	SKILL_EARTHFIRE:wizard	22	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	火墙；GEEM2 Magic.DB 同名行 job=wizard learnable=yes
+SKILL	SKILL_EARTHFIRE:wizard	22	n/a	gate-game	implemented	WorldFireWallTest,GameFireWallProtocolTest	Grobal2.pas:SKILL_*	火墙；GEEM2 Magic.DB 同名行 job=wizard learnable=yes；W49 接入：Magic.pas:501 分支（纯地面点击，不读 TargeTBaseObject）+ MagMakeFireCross（Magic.pas:1135）铺十字 TFireBurnEvent（5 格各跳过已有事件的格子，Result=1 无条件训练）；威力复用 爆裂火焰/地狱雷光 的 GetAttackPower(GetPower(MPow)+LoMC, HiMC-LoMC+1) 链（rollMcAttackPower），时长 GetPower(10)+(GetRPow(MC) shr 1) 秒；TFireBurnEvent（Event.pas:226）首烧立即、之后每 3000ms 烧格上活物（GeTBaseObjects + IsProperTarget），业主死亡/离线后停伤但火焰照烧到期；RM_MAGSTRUCK_MINE（ObjBase.pas:4501）= MAC 闭区间 roll + 魔法盾减免 + applyDamage(magical=true)（SM_STRUCK lTag2=1、无停顿、无魔法躲避），击杀归业主走死亡链；Walk 踩火即时伤害（ObjBase.pas:20204，玩家怪物共用）；安全区门 g_Config.boDisableInSafeZoneFireCross（默认 false）命中时只发「安全区不允许使用...」+照常扣蓝播 SM_MAGICFIRE、不训练；事件经 SM_SHOWEVENT(804)/SM_HIDEEVENT(805) 同步（SearchViewRange 语义，ObjBase.pas:25764-25774）；新增配置 MIR2_DISABLE_FIRE_CROSS_IN_SAFE_ZONE；G4 未签发
 SKILL	SKILL_EARTHFIRE:taoist	22	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	火墙；GEEM2 Magic.DB 同名行 job=wizard learnable=no
 SKILL	SKILL_FIREBOOM:warrior	23	n/a	n/a	unimplemented	-	Grobal2.pas:SKILL_*	爆裂火焰；GEEM2 Magic.DB 同名行 job=wizard learnable=no
 SKILL	SKILL_FIREBOOM:wizard	23	n/a	gate-game	implemented	WorldAreaExplosionTest,GameAreaExplosionProtocolTest	Grobal2.pas:SKILL_*	爆裂火焰；GEEM2 Magic.DB 同名行 job=wizard learnable=yes；W42 接入：MIR2_FIREBOOM_RANGE(1–12) 方形、整次共享 GetAttackPower、SetTargetCreat、RM_MAGSTRUCK 对象绑定/MAC/魔法受击标记/命中训练；当前 IsProperTarget 仍受 Java 攻击模式/召唤物模型边界限制，G4 未签发
