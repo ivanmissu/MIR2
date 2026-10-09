@@ -29,6 +29,8 @@ public sealed interface WorldEvent
         WorldEvent.HealthConcealed,
         WorldEvent.EventAppeared,
         WorldEvent.EventDisappeared,
+        WorldEvent.SpaceMoveHidden,
+        WorldEvent.SpaceMoveShown,
         WorldEvent.SkillLearned,
         WorldEvent.SkillTrainingChanged,
         WorldEvent.SkillsSent,
@@ -304,6 +306,33 @@ public sealed interface WorldEvent
     public EventDisappeared {
       if (eventId <= 0) throw new IllegalArgumentException("event id must be positive");
       Objects.requireNonNull(position, "position");
+    }
+  }
+
+  /**
+   * {@code RM_SPACEMOVE_FIRE2} → {@code SM_SPACEMOVE_HIDE2(806)} (Magic.pas:959, player
+   * conversion ObjBase.pas:6207-6222): the 瞬息移动 caster announces its departure from the
+   * cell it is about to leave. Delivered to the caster and everyone in range of the *old*
+   * cell, i.e. before the coordinates change; the client silently ignores the frame when the
+   * recog is its own actor (ClMain.pas:4552). Wire shape: recog = the moving object, every
+   * other word zero, no body.
+   */
+  record SpaceMoveHidden(int objectId) implements WorldEvent {
+    public SpaceMoveHidden {
+      if (objectId <= 0) throw new IllegalArgumentException("object id must be positive");
+    }
+  }
+
+  /**
+   * {@code RM_SPACEMOVE_SHOW2} → {@code SM_SPACEMOVE_SHOW2(807)} (ObjBase.pas:4432, player
+   * conversion ObjBase.pas:6226-6256): the mover materialises on its landing cell. Wire
+   * shape: recog = the object, param = x, tag = y, series = {@code MakeWord(direction, light)},
+   * body = {@code TCharDesc{feature, status}} — the name/color block Delphi appends only for a
+   * non-empty {@code sMsg} is absent here because {@code SpaceMove} passes {@code ''}.
+   */
+  record SpaceMoveShown(WorldObjectSnapshot object) implements WorldEvent {
+    public SpaceMoveShown {
+      Objects.requireNonNull(object, "object");
     }
   }
 
