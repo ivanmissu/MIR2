@@ -102,7 +102,7 @@
     搜索 `[g4-gate] -> FAIL`。
   - 本地同一清单 16/16 全绿（JRE 25、Temurin 21、`LANG=C.UTF-8`），但本地用的是 ECJ 合并的 fat JAR，不是 CI 的 Maven shade JAR。
 - [ ] **待办（偶发 FAIL 追踪）**：若 G4 作业再次失败，必须先读出失败行，再判断是否为时序敏感行（`duo-death-pk`、`ai-matrix` 等长耗时行）。
-- [ ] **优先级冲突（待用户确认）**：主计划 `GameOfMir/doc/mir2-java-development-plan.md` 约 L51 的优先级是
-  ①Netty 门禁 ②env-lint ③公会 ④技能 / NPC 脚本。本周选择技能 shadowdiff 切片时，没有先经用户确认。
-  这是本周的一个未决决策，不视为已定。
+- [x] **优先级冲突（已由用户确认）**：主计划 `GameOfMir/doc/mir2-java-development-plan.md` 约 L51 的优先级是
+  ①Netty 门禁 ②env-lint ③公会 ④技能 / NPC 脚本。W51 原先未经确认就选了技能 shadowdiff 切片。
+  用户确认**保留 W51 方向**，并将其视为 ④ 技能批次的一部分；①–③ 顺延，主计划文档本周未改动。
 - [ ] 下一候选（W52）：范围技能 shadowdiff（FireBoom 23 / LightFlower 24 / SnowWind 33），需先为每个技能确定木桩布局与脚本
