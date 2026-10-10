@@ -14,8 +14,31 @@
 - 编译器：ECJ 3.46.100，`-21 -nowarn -proc:none`，主代码 124 个源文件、测试 114 个源文件，全部编译通过。
 - 测试：JUnit Jupiter 5.14.2 / Platform 1.14.2 控制台启动器；sqlite-jdbc 3.46.1.0（SHA-1 与上游 `.sha1` 核对一致）
   + slf4j-api 2.0.17。
-- 与 CI 的差异：沙箱无法访问 Maven Central，因此使用本地 ECJ 链路；PR 上的 `java-server.yml` 会以 `mvn verify` 独立复跑全部单测，
-  并以 `shadowdiff-smoke` 作业跑 embedded 自对拍。`g4-release-gate.sh` 的整批跑批目前不在 CI 中，需按下文复现命令人工执行。
+- 与 CI 的差异：沙箱无法访问 Maven Central，因此本地单测使用 ECJ 链路；CI 的 `java-server.yml` 以 `mvn verify` 复跑全部单测，
+  以 `shadowdiff-smoke` 跑 embedded 自对拍，并以 `g4-release-gate` 作业（manifest 驱动，整批 16 行）跑门禁，JAR 由 Maven shade 构建。
+
+## CI 状态（05b557d，未绿）
+
+| 作业 | 结果 |
+|---|---|
+| `test`（`mvn verify`） | 通过 |
+| `Bot-swarm`、`Wiretool`、`Shadowdiff embedded self-comparison` | 通过 |
+| `G4 release gate (manifest-driven)` | **失败**（脚本退出码 1，即某个 blocking 行判 FAIL） |
+
+- 失败行未知。沙箱无法读取该 run 的作业日志与 `g4-release-gate` 产物（blob 存储 EOF / 被拦截），
+  `gh run rerun --failed` 与 `rerun-failed-jobs` 接口均被拒绝（"cannot be rerun" / 403）。
+- 同一 commit 之前 `master` 上 `4aa30ba` 的 G4 作业（run 38013037017）通过；W51 对 healing 路径无改动。
+- 本地复现（同一清单、同一 `--jar` 参数，均为 16/16 PASS、exit 0）：
+
+  | 环境 | 结果 |
+  |---|---|
+  | JRE 25，`LANG` 未设 | 16/16 PASS |
+  | Temurin 21.0.8，`LANG` 未设 | 16/16 PASS |
+  | Temurin 21.0.8，`LANG=C.UTF-8` | 16/16 PASS |
+
+- 残余差异：本地 JAR 为手工合并的 fat JAR（ECJ 编译），CI 为 Maven shade 构建。`shade` 配置仅过滤签名文件并合并
+  services，没有 minimizeJar，两者类内容应等价，但这一点未经 CI 产物验证。
+- 在 CI 门禁绿之前，本证据不作为 G4 通过证据。
 
 ## 单测与全量回归
 
