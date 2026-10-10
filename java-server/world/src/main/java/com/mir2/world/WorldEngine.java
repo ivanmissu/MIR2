@@ -191,6 +191,12 @@ public final class WorldEngine implements AutoCloseable {
   private static final int SKILL_KILLUNDEAD = 32;
   /** 火墙 {@code SKILL_EARTHFIRE}(22, Magic.pas:501): the Wizard cross of fire-burn events. */
   private static final int SKILL_EARTHFIRE = 22;
+  /**
+   * 瞬息移动 {@code SKILL_SPACEMOVE}(21, Magic.pas:495): the Wizard self-teleport onto a
+   * random cell of the home map — the last learnable row of Magic.DB 1–33 and the engine's
+   * first map-displacement subsystem.
+   */
+  private static final int SKILL_SPACEMOVE = 21;
   /** {@code ET_FIRE = 5} (Grobal2.pas:102): the {@code TFireBurnEvent} event type on the wire. */
   private static final int ET_FIRE = 5;
   /**
@@ -214,6 +220,13 @@ public final class WorldEngine implements AutoCloseable {
    * an aggressive monster that did not take the caster as its target.
    */
   private static final long TURN_UNDEAD_RUN_AWAY_MILLIS = 10_000L;
+  /** {@code Random(11) < nLevel * 2 + 4} (Magic.pas:957): 瞬息移动's success gate bound. */
+  private static final int SPACE_MOVE_GATE_BOUND = 11;
+  /**
+   * {@code if n14 >= 201 then Break} (ObjBase.pas:4384): how many cells {@code GetRandXY}
+   * inspects before it gives up and {@code SpaceMove} restores the caster's old coordinates.
+   */
+  private static final int GET_RAND_XY_ATTEMPTS = 201;
   private static final int DEFAULT_FIREBOOM_RANGE = 1;
   private static final int MAX_FIREBOOM_RANGE = 12;
   /**
@@ -1695,6 +1708,9 @@ public final class WorldEngine implements AutoCloseable {
     List<Integer> visibleIds = visibleIds(map, position, 0);
     Player player = new Player(id, characterId, name, map, position, direction, feature, status,
         restored.ability(), restored.backpack(), restored.equipment(), job, sink);
+    // m_sHomeMap: this engine's characters always re-enter on the configured spawn map, so the
+    // login map *is* the home map that 瞬息移动's MapRandomMove targets (Magic.pas:962).
+    player.homeMapId = map.id();
     for (PlayerSkill skill : restored.skills()) {
       // Unknown rows are retained in storage by SqliteStore but not exposed to a world whose
       // vetted Magic.DB intersection cannot resolve them.
@@ -1957,7 +1973,7 @@ public final class WorldEngine implements AutoCloseable {
         && !isPushArroundSkill(magicId) && !isDefenceBuffSkill(magicId)
         && !isCloakSkill(magicId)
         && !isShowHpSkill(magicId) && !isTurnUndeadSkill(magicId)
-        && !isFireWallSkill(magicId)
+        && !isFireWallSkill(magicId) && !isSpaceMoveSkill(magicId)
         && magicId != SKILL_HEALING && magicId != SKILL_MAGIC_SHIELD)
       return rejectSpell(player, magicId, WorldEvent.SpellRejection.UNSUPPORTED_SKILL, "该技能尚未开放");
 
@@ -1997,10 +2013,12 @@ public final class WorldEngine implements AutoCloseable {
     // reads TargeTBaseObject either (Magic.pas:476/481), so both accept an empty-ground click.
     // 火墙 (Magic.pas:501) likewise reads only the click coordinates — MagMakeFireCross never
     // touches TargeTBaseObject — so an empty-ground click with targetId = 0 is a legal cast.
+    // 瞬息移动 (Magic.pas:495) reads neither: MagSaceMove only takes the caster, and the click
+    // rides along on the RM_MAGICFIRE frame the branch broadcasts itself.
     if (!isLinePiercingSkill(magicId) && !isAreaHealingSkill(magicId)
         && !isAreaExplosionSkill(magicId) && !isElecBlizzardSkill(magicId)
         && !isPushArroundSkill(magicId) && !isDefenceBuffSkill(magicId)
-        && !isCloakSkill(magicId) && !isFireWallSkill(magicId)
+        && !isCloakSkill(magicId) && !isFireWallSkill(magicId) && !isSpaceMoveSkill(magicId)
         && !validSpellTarget(player, targetObject, target, magicId))
       return rejectSpell(player, magicId, WorldEvent.SpellRejection.INVALID_TARGET, "施法目标无效");
 
@@ -2103,6 +2121,14 @@ public final class WorldEngine implements AutoCloseable {
     // DoSpell's tail even when the safe-zone gate refuses the cast — see castFireWall.
     if (isFireWallSkill(magicId)) {
       castFireWall(player, skill, magic, target, targetId, now);
+      return true;
+    }
+
+    // Magic.pas:495 — 瞬息移动 teleports the caster itself: the branch broadcasts RM_MAGICFIRE
+    // at its head (and clears boSpellFire so DoSpell's tail stays silent), then MagSaceMove
+    // rolls the gate and MapRandomMove relocates the caster — see castSpaceMove.
+    if (isSpaceMoveSkill(magicId)) {
+      castSpaceMove(player, skill, magic, target, targetId);
       return true;
     }
 
@@ -2874,6 +2900,16 @@ public final class WorldEngine implements AutoCloseable {
   }
 
   /**
+   * Magic.DB row 21 — 瞬息移动 (Wizard, Magic.pas:495 → {@code MagSaceMove}, Magic.pas:951):
+   * the caster teleports itself onto a random walkable cell of its home map. The branch reads
+   * neither {@code TargeTBaseObject} nor the click cell for its effect — the coordinates only
+   * ride along on the {@code RM_MAGICFIRE} frame the branch broadcasts itself.
+   */
+  private static boolean isSpaceMoveSkill(int magicId) {
+    return magicId == SKILL_SPACEMOVE;
+  }
+
+  /**
    * {@code GetPower13(30) + GetRPow(PlayObject.m_WAbil.SC) * 3} (Magic.pas:477/481), in seconds.
    *
    * <p>{@code GetRPow} (Magic.pas:73) draws one value from {@code [LoWord(SC), HiWord(SC)]}
@@ -3270,6 +3306,151 @@ public final class WorldEngine implements AutoCloseable {
     // MagMakeFireCross returns 1 unconditionally once the safe-zone gate passed, so the cast
     // trains even when every arm's cell was already occupied.
     trainSpellSkill(player, skill, magic);
+  }
+
+  /**
+   * {@code SKILL_SPACEMOVE}(21, 瞬息移动, Magic.pas:495 → {@code MagSaceMove}, Magic.pas:951-971) —
+   * the engine's first map-displacement spell. The branch is the only one in Magic.DB 1–33 that
+   * broadcasts {@code RM_MAGICFIRE} <em>itself</em> and then clears {@code boSpellFire}, so the
+   * cast frame reaches the wire <em>before</em> the caster moves and {@code DoSpell}'s tail
+   * (Magic.pas:713) stays silent.
+   *
+   * <p>Past the {@code Random(11) < nLevel * 2 + 4} gate — 4/11, 6/11, 8/11, 10/11 at skill
+   * levels 0..3 — Delphi announces the departure ({@code RM_SPACEMOVE_FIRE2}), then hands the
+   * caster to {@code MapRandomMove(m_sHomeMap, 1)}. {@code Result := True} sits inside the gate
+   * but <em>outside</em> the move, so a missing home map or an exhausted {@code GetRandXY}
+   * search still trains — and a failed gate still spent the mana (deducted before the case)
+   * while showing the cast pose, training nothing and moving nobody.
+   */
+  private void castSpaceMove(
+      Player player, PlayerSkill skill, MagicDefinition magic, Position requestedTarget,
+      int targetId) {
+    // CretInNearXY snapping (ObjBase.pas:9227, applied in ClientSpellXY before DoSpell): the
+    // snapped cell only rides along on the frame — MagSaceMove ignores the coordinates.
+    WorldObject clicked = targetId != 0 ? findObject(targetId) : null;
+    boolean snapped = clicked != null && clicked.map() == player.map
+        && chebyshev(clicked.position(), requestedTarget) <= 1;
+    Position center = snapped ? clicked.position() : requestedTarget;
+    int firedTargetId = snapped && clicked.ability().alive() ? clicked.id() : 0;
+
+    // Magic.pas:496 — the branch's own cast frame, ahead of everything else it does.
+    emitToObserversAndSelf(player,
+        new WorldEvent.MagicFired(player.id, center, firedTargetId, magic));
+
+    // MagSaceMove's gate (Magic.pas:957): a failure leaves the caster exactly where it stands.
+    if (random.nextInt(WorldRandom.Stream.SPACE_MOVE, SPACE_MOVE_GATE_BOUND)
+        >= skill.level() * 2 + 4) {
+      return;
+    }
+
+    // RM_SPACEMOVE_FIRE2 -> SM_SPACEMOVE_HIDE2 (Magic.pas:959), sent while the caster still
+    // stands on the old cell, so the recipients are that cell's observers (plus the caster,
+    // whose own client silently ignores the frame — ClMain.pas:4552).
+    emitToObserversAndSelf(player, new WorldEvent.SpaceMoveHidden(player.id));
+
+    // MapRandomMove (ObjBase.pas:9810): a home map that is not loaded, or a GetRandXY search
+    // that never lands, simply leaves the caster in place — the training below still happens.
+    GameMap home = maps.get(player.homeMapId);
+    if (home != null) {
+      Position landing = randomMapCell(home, mapRandomMoveStart(home));
+      if (landing != null) relocatePlayer(player, home, landing);
+    }
+    trainSpellSkill(player, skill, magic);
+  }
+
+  /**
+   * {@code MapRandomMove}'s start cell (ObjBase.pas:9819-9827): a margin derived from the map's
+   * <em>height</em> alone and applied to both axes, then two left-closed/right-open draws.
+   * Delphi's {@code Random} yields 0 for a non-positive bound; {@link WorldRandom#nextInt}
+   * insists on a positive one, so a degenerate map is clamped to the same observable value.
+   */
+  private Position mapRandomMoveStart(GameMap map) {
+    int edge = map.height() < 150 ? (map.height() < 30 ? 2 : 20) : 50;
+    int x = random.nextInt(WorldRandom.Stream.SPACE_MOVE,
+        Math.max(1, map.width() - edge - 1)) + edge;
+    int y = random.nextInt(WorldRandom.Stream.SPACE_MOVE,
+        Math.max(1, map.height() - edge - 1)) + edge;
+    return new Position(x, y);
+  }
+
+  /**
+   * {@code SpaceMove}'s nested {@code GetRandXY} (ObjBase.pas:4360-4385): at most
+   * {@link #GET_RAND_XY_ATTEMPTS} cells are inspected, each miss advancing x by 10 (3 on maps
+   * narrower than 80 cells) and — once x runs past the right margin — wrapping through a fresh
+   * {@code Random(wWidth)} while y advances by the same rule.
+   *
+   * <p>Delphi asks {@code CanWalk(x, y, True)}, whose {@code boFlag} explicitly ignores actors
+   * standing on the cell (Envir.pas:392-427), so a random move may land on top of somebody.
+   * This engine keeps one moving object per cell, so the test also requires a free cell; the
+   * stepping rule, the wrap bounds and the attempt cap stay verbatim, which keeps both the draw
+   * stream and the landing cell identical to Delphi wherever a walkable cell is also free.
+   */
+  private Position randomMapCell(GameMap map, Position start) {
+    int step = map.width() < 80 ? 3 : 10;
+    int margin = map.height() < 150 ? (map.height() < 50 ? 2 : 15) : 50;
+    int x = start.x();
+    int y = start.y();
+    for (int attempt = 0; attempt < GET_RAND_XY_ATTEMPTS; attempt++) {
+      Position candidate = new Position(x, y);
+      if (map.isTerrainWalkable(candidate) && map.objectAt(candidate) == 0) return candidate;
+      if (x < map.width() - margin - 1) {
+        x += step;
+      } else {
+        x = random.nextInt(WorldRandom.Stream.SPACE_MOVE, Math.max(1, map.width()));
+        if (y < map.height() - margin - 1) {
+          y += step;
+        } else {
+          y = random.nextInt(WorldRandom.Stream.SPACE_MOVE, Math.max(1, map.height()));
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
+   * {@code TBaseObject.SpaceMove}'s same-server branch (ObjBase.pas:4410-4445): the caster is
+   * unmapped, moved and remapped, then told to drop its scene ({@code RM_CLEAROBJECTS}) and load
+   * the — possibly unchanged — map ({@code RM_CHANGEMAP}) before {@code RM_SPACEMOVE_SHOW2}
+   * announces it to everyone in range of the landing cell. The {@code *2} variant is chosen over
+   * {@code RM_SPACEMOVE_SHOW} because {@code MapRandomMove} passes {@code nInt = 1}
+   * (ObjBase.pas:4431).
+   *
+   * <p>Delphi lets the periodic {@code SearchViewRange} sweep refill both the mover's scene and
+   * the observers'. The Java engine is event-driven instead, so — exactly as the gate teleport
+   * in {@link #teleportPlayer} — the appearances, ground items and fire walls of the landing
+   * cell are pushed explicitly, and the observers of the cell being left additionally receive
+   * {@code SM_DISAPPEAR} on top of the hide frame.
+   */
+  private void relocatePlayer(Player player, GameMap destination, Position landing) {
+    GameMap origin = player.map;
+    Position source = player.position;
+    List<Integer> originObservers = visibleIds(origin, source, player.id);
+    origin.remove(player.id, source);
+    player.map = destination;
+    player.position = landing;
+    destination.place(player.id, landing);
+    WorldObjectSnapshot snapshot = player.snapshot();
+
+    // Self: SM_CLEAROBJECTS + SM_CHANGEMAP + SM_MAPDESCRIPTION (ObjBase.pas:4427-4428).
+    emit(player,
+        new WorldEvent.PlayerMapChanged(snapshot, destination.info(), dayBright(destination)));
+    WorldEvent disappeared = new WorldEvent.ObjectDisappeared(player.id);
+    for (int viewerId : originObservers) emit(players.get(viewerId), disappeared);
+    // Self + the landing cell's observers: SM_SPACEMOVE_SHOW2 (ObjBase.pas:4432).
+    emitToObserversAndSelf(player, new WorldEvent.SpaceMoveShown(snapshot));
+    List<Integer> destinationObservers = visibleIds(destination, landing, player.id);
+    WorldEvent appeared = new WorldEvent.ObjectAppeared(snapshot);
+    for (int viewerId : destinationObservers) emit(players.get(viewerId), appeared);
+    for (int objectId : destinationObservers) {
+      WorldObject other = findObject(objectId);
+      if (other != null) emit(player, new WorldEvent.ObjectAppeared(other.snapshot()));
+    }
+    for (GroundItem item : visibleItems(destination, landing)) {
+      emit(player, new WorldEvent.ItemAppeared(item));
+    }
+    for (FireWallEvent fire : visibleFireWalls(destination, landing)) {
+      emit(player, new WorldEvent.EventAppeared(fire.id(), ET_FIRE, fire.position(), 0));
+    }
   }
 
   /**
@@ -7037,6 +7218,14 @@ public final class WorldEngine implements AutoCloseable {
     private final String name;
     // m_PEnvir equivalent: reassigned by EnterAnotherMap when a gate teleports the player.
     private GameMap map;
+    /**
+     * {@code m_sHomeMap} (ObjBase.pas:73): the 回城地图 瞬息移动's {@code MapRandomMove} jumps
+     * to (Magic.pas:962). Delphi persists it on the character record and rewrites it from
+     * {@code GetHomePoint} whenever the player stands next to a start point; this engine has
+     * no such column, so {@link #enter} stamps the map the player logged into — the same map
+     * every login resolves to through {@code MIR2_MAP_ID}.
+     */
+    private String homeMapId = "";
     private final int baseFeature;
     /**
      * {@code m_nCharStatus}: the actor's status word, rebuilt by {@code GetCharStatus}

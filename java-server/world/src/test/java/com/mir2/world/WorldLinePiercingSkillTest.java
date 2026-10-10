@@ -26,8 +26,11 @@ import org.junit.jupiter.api.Test;
 class WorldLinePiercingSkillTest {
   private static final int SKILL_FIRE = 9;
   private static final int SKILL_SHOOTLIGHTEN = 10;
-  /** 瞬息移动 (Magic.DB row 21, wizard, NeedL1 21): still outside the implemented set (red line). */
-  private static final int SKILL_SPACEMOVE = 21;
+  /**
+   * 诱惑之光 (Magic.DB row 20, wizard, NeedL1 13): the control skill that stays outside the
+   * implemented set — its 宠物 subsystem is still a red line (W50 ships 瞬息移动(21) instead).
+   */
+  private static final int SKILL_TAMMING = 20;
 
   private final AtomicLong now = new AtomicLong();
 
@@ -343,18 +346,18 @@ class WorldLinePiercingSkillTest {
   void castGatesStillApplyBeforeTheBeam() {
     RecordingStore store = new RecordingStore();
     UUID id = UUID.randomUUID();
-    // The wizard knows 疾光电影 and — as the control — 瞬息移动 (21), which stays unimplemented.
+    // The wizard knows 疾光电影 and — as the control — 诱惑之光 (20), which stays unimplemented.
     store.save(new PlayerState(id, levelAbility(LevelAbilities.JOB_WIZARD, 26), List.of(),
         Equipment.empty(), 0, 0, 0,
-        List.of(PlayerSkill.learned(SKILL_SHOOTLIGHTEN), PlayerSkill.learned(SKILL_SPACEMOVE))));
+        List.of(PlayerSkill.learned(SKILL_SHOOTLIGHTEN), PlayerSkill.learned(SKILL_TAMMING))));
 
     try (WorldEngine world = engine(store)) {
       List<WorldEvent> events = new ArrayList<>();
       WorldObjectSnapshot wizard = enter(world, id, "法师", 5, 5, LevelAbilities.JOB_WIZARD, events);
       events.clear();
 
-      // 瞬息移动 is a wizard-row skill still outside the implemented set, line or not.
-      assertFalse(run(world, world.castSpell(wizard.id(), SKILL_SPACEMOVE, new Position(10, 5), 0)));
+      // 诱惑之光 is a wizard-row skill still outside the implemented set, line or not.
+      assertFalse(run(world, world.castSpell(wizard.id(), SKILL_TAMMING, new Position(10, 5), 0)));
       assertEquals(WorldEvent.SpellRejection.UNSUPPORTED_SKILL,
           one(events, WorldEvent.SpellRejected.class).reason());
 

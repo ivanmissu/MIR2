@@ -292,6 +292,18 @@ public final class GameProtocolAdapter implements WorldEventSink {
       case WorldEvent.GoldPickedUp pickedUp -> sendGoldPickedUp(pickedUp);
       case WorldEvent.ObjectDisappeared disappeared -> output.accept(new GameOutbound.Packet(
           packet(ProtocolConstants.SM_DISAPPEAR, disappeared.objectId(), 0, 0, 0, "")));
+      // RM_SPACEMOVE_FIRE2 -> SM_SPACEMOVE_HIDE2 (ObjBase.pas:6207-6222): 瞬息移动's departure
+      // frame, recog = the mover and every other word zero; no body. Broadcast while the caster
+      // is still on its old cell, and ignored by the client for its own actor
+      // (ClMain.pas:4552).
+      case WorldEvent.SpaceMoveHidden hidden -> output.accept(new GameOutbound.Packet(
+          packet(ProtocolConstants.SM_SPACEMOVE_HIDE2, hidden.objectId(), 0, 0, 0, "")));
+      // RM_SPACEMOVE_SHOW2 -> SM_SPACEMOVE_SHOW2 (ObjBase.pas:6226-6256): recog = the mover,
+      // param = x, tag = y, series = MakeWord(direction, light) and a bare TCharDesc body —
+      // Delphi only appends the name/color block for a non-empty sMsg (ObjBase.pas:6247), and
+      // SpaceMove passes ''.
+      case WorldEvent.SpaceMoveShown shown -> sendObjectAction(
+          ProtocolConstants.SM_SPACEMOVE_SHOW2, shown.object());
       case WorldEvent.DoorOpened opened -> output.accept(new GameOutbound.Packet(
           packet(ProtocolConstants.SM_OPENDOOR_OK, 0, opened.position().x(), opened.position().y(), 0, "")));
       case WorldEvent.DoorClosed closed -> output.accept(new GameOutbound.Packet(

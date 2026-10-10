@@ -121,7 +121,16 @@ public final class WorldRandom {
      * pass at 4/6, 5/6, 6/6 and 6/6. Kept apart from {@link #MAGIC} so a failed reveal cannot
      * perturb the SC-range draw that follows it on success.
      */
-    SHOW_HP
+    SHOW_HP,
+    /**
+     * 瞬息移动 ({@code MagSaceMove} + {@code MapRandomMove} + {@code SpaceMove.GetRandXY},
+     * Magic.pas:957 / ObjBase.pas:9826 / ObjBase.pas:4370-4381): the {@code Random(11) < btLevel
+     * * 2 + 4} success gate, the two {@code Random(w - edge - 1)} start-cell draws and the
+     * {@code Random(wWidth)}/{@code Random(wHeight)} wraps of the 201-step walkable search. One
+     * stream for the whole branch because the draws are issued back to back inside a single
+     * cast; appending keeps every pre-W50 seeded stream unmoved.
+     */
+    SPACE_MOVE
   }
 
   private static final Stream[] STREAMS = Stream.values();
