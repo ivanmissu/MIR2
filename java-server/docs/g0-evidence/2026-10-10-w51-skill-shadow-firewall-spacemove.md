@@ -17,16 +17,16 @@
 - 与 CI 的差异：沙箱无法访问 Maven Central，因此本地单测使用 ECJ 链路；CI 的 `java-server.yml` 以 `mvn verify` 复跑全部单测，
   以 `shadowdiff-smoke` 跑 embedded 自对拍，并以 `g4-release-gate` 作业（manifest 驱动，整批 16 行）跑门禁，JAR 由 Maven shade 构建。
 
-## CI 状态（05b557d，未绿）
+## CI 状态
 
-| 作业 | 结果 |
-|---|---|
-| `test`（`mvn verify`） | 通过 |
-| `Bot-swarm`、`Wiretool`、`Shadowdiff embedded self-comparison` | 通过 |
-| `G4 release gate (manifest-driven)` | **失败**（脚本退出码 1，即某个 blocking 行判 FAIL） |
+| run | commit | 结果 |
+|---|---|---|
+| 38014544715 | `05b557d`（代码） | G4 作业 **失败**（脚本退出码 1，即某个 blocking 行判 FAIL）；其余作业通过 |
+| 38017716504 | `85a75a4`（仅文档改动，代码与 `05b557d` 相同） | **全部作业通过**，含 `test`、`G4 release gate` |
 
-- 失败行未知。沙箱无法读取该 run 的作业日志与 `g4-release-gate` 产物（blob 存储 EOF / 被拦截），
+- 首次失败的行仍**未定位**。沙箱无法读取 run 38014544715 的作业日志与 `g4-release-gate` 产物（blob 存储 EOF / 被拦截），
   `gh run rerun --failed` 与 `rerun-failed-jobs` 接口均被拒绝（"cannot be rerun" / 403）。
+- 同代码重跑通过，因此视为偶发失败，**根因未证实**。G4 作业只跑一次通过不能证明它稳定；后续若再失败，须先读出失败行。
 - 同一 commit 之前 `master` 上 `4aa30ba` 的 G4 作业（run 38013037017）通过；W51 对 healing 路径无改动。
 - 本地复现（同一清单、同一 `--jar` 参数，均为 16/16 PASS、exit 0）：
 
@@ -38,7 +38,7 @@
 
 - 残余差异：本地 JAR 为手工合并的 fat JAR（ECJ 编译），CI 为 Maven shade 构建。`shade` 配置仅过滤签名文件并合并
   services，没有 minimizeJar，两者类内容应等价，但这一点未经 CI 产物验证。
-- 在 CI 门禁绿之前，本证据不作为 G4 通过证据。
+- 本证据是 Java↔Java 对拍的确定性证据，不构成 G4 签发（见顶部说明）。
 
 ## 单测与全量回归
 

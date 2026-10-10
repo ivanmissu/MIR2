@@ -95,11 +95,13 @@
 - [x] 本地全量编译 + 单测：**642/642 全绿**（W50 基线 636 → +6；沙箱 ECJ 链路，日志 `w51-run1`）
 - [x] CI 单测：`java-server.yml` 的 `test`（`mvn verify`）作业在 `05b557d` 上通过
 - [x] 证据：`docs/g0-evidence/2026-10-10-w51-skill-shadow-firewall-spacemove.md`
-- [ ] **CI G4 门禁未绿（阻塞项）**：`05b557d` 上 run 38014544715 的 `G4 release gate (manifest-driven)` 作业失败，
-  退出码 1（即有 blocking 行判 FAIL，非脚本错误）。失败行未知：沙箱无法下载日志与 `g4-release-gate` 产物，
-  `gh run rerun` 与 REST 重跑均被拒绝。本地同一清单 16/16 全绿，已覆盖 JRE 25、Temurin 21 与 `LANG=C.UTF-8` 三套环境，
-  但本地使用的是 ECJ 合并的 fat JAR，不是 CI 的 Maven shade JAR。在 CI 绿之前，不得声称门禁通过。
-  失败行可在 GitHub 该 run 的 G4 作业第 5 步日志中搜索 `[g4-gate] -> FAIL` 读出。
+- [x] CI G4 门禁：`05b557d` 上首次 run 38014544715 的 G4 作业失败（退出码 1，即有 blocking 行判 FAIL）。
+  随后 `85a75a4`（相对 `05b557d` 仅改文档，代码相同）的 run 38017716504 **G4 作业通过**，其余作业也全部通过。
+  - 首次失败的行仍**未定位**：沙箱无法下载日志与产物，`gh run rerun` 被拒绝。
+  - 因此按偶发失败处理，**未证明根因**。如需定位，可在 GitHub 上打开 run 38014544715 的 G4 作业第 5 步，
+    搜索 `[g4-gate] -> FAIL`。
+  - 本地同一清单 16/16 全绿（JRE 25、Temurin 21、`LANG=C.UTF-8`），但本地用的是 ECJ 合并的 fat JAR，不是 CI 的 Maven shade JAR。
+- [ ] **待办（偶发 FAIL 追踪）**：若 G4 作业再次失败，必须先读出失败行，再判断是否为时序敏感行（`duo-death-pk`、`ai-matrix` 等长耗时行）。
 - [ ] **优先级冲突（待用户确认）**：主计划 `GameOfMir/doc/mir2-java-development-plan.md` 约 L51 的优先级是
   ①Netty 门禁 ②env-lint ③公会 ④技能 / NPC 脚本。本周选择技能 shadowdiff 切片时，没有先经用户确认。
   这是本周的一个未决决策，不视为已定。
