@@ -203,24 +203,82 @@ public final class ShadowDiffMain {
   private static int runSkillScenario(Map<String, String> options, Duration settle,
       boolean strictMessages, Path reportDir, String account, String password,
       String serverName) throws Exception {
+    SkillCase skillCase = SkillCase.parse(options.getOrDefault("skill-case", "healing"));
     List<Op> script = options.containsKey("script")
         ? loadScript(options, account, account)
-        : Op.areaHealingScript();
+        : skillCase.script();
+    int monsters = (int) longOption(options, "monsters", skillCase.monsters());
     Path workDir = Files.createTempDirectory("mir2-shadowdiff-skills-");
     long seed = longOption(options, "seed", 20260922);
     long rightSeed = longOption(options, "right-seed", seed);
     List<SeededAccount> accounts = List.of(new SeededAccount(
-        account, password, LevelAbilities.JOB_TAOIST, 31, 80,
-        List.of(PlayerSkill.learned(29)), List.of(), 0));
+        account, password, skillCase.job(), skillCase.level(), skillCase.healthDeficit(),
+        List.of(skillCase.learned()), List.of(), 0));
     try (EmbeddedWorld left = EmbeddedWorld.boot(workDir.resolve("left"), "skills-left",
-            serverName, seed, 0, "trainer", com.mir2.world.WorldClock.Mode.MANUAL,
+            serverName, seed, monsters, "trainer", com.mir2.world.WorldClock.Mode.MANUAL,
             accounts, null);
         EmbeddedWorld right = EmbeddedWorld.boot(workDir.resolve("right"), "skills-right",
-            serverName, rightSeed, 0, "trainer", com.mir2.world.WorldClock.Mode.MANUAL,
+            serverName, rightSeed, monsters, "trainer", com.mir2.world.WorldClock.Mode.MANUAL,
             accounts, null)) {
       return compare(left.target(), right.target(), script, settle, strictMessages,
           reportDir, account, password, serverName);
     }
+  }
+
+  /**
+   * One seeded setup for {@code --skills}. Each case pins the job, level, deficit, learned row
+   * and stationary-dummy count its script was written against; the default
+   * {@code --skill-case healing} run uses exactly the W41 setup and script.
+   *
+   * <ul>
+   *   <li>{@code healing} — W41 群体治愈术 (29) on a level-31 Taoist with an 80 HP deficit.</li>
+   *   <li>{@code firewall} — W51 火墙 (22, SKILL_EARTHFIRE) on a level-25 Wizard beside a
+   *       stationary dummy ring: the cross burns the dummy through the shared
+   *       {@code TFireBurnEvent} clock, so the MAGIC-stream damage rolls are observable.</li>
+   *   <li>{@code spacemove} — W51 瞬息移动 (21) on a level-25 Wizard: the cast frame, the
+   *       Random(11) success gate and the MapRandomMove landing cell are all wire-visible.</li>
+   * </ul>
+   */
+  enum SkillCase {
+    HEALING("healing", LevelAbilities.JOB_TAOIST, 31, 80, PlayerSkill.learned(29), 0,
+        Op::areaHealingScript),
+    FIREWALL("firewall", LevelAbilities.JOB_WIZARD, 25, 0, PlayerSkill.learned(22), 8,
+        Op::fireWallScript),
+    SPACEMOVE("spacemove", LevelAbilities.JOB_WIZARD, 25, 0, new PlayerSkill(21, 3, 0, 0), 0,
+        Op::spaceMoveScript);
+
+    private final String cliName;
+    private final int job;
+    private final int level;
+    private final int healthDeficit;
+    private final PlayerSkill learned;
+    private final int monsters;
+    private final java.util.function.Supplier<List<Op>> script;
+
+    SkillCase(String cliName, int job, int level, int healthDeficit, PlayerSkill learned,
+        int monsters, java.util.function.Supplier<List<Op>> script) {
+      this.cliName = cliName;
+      this.job = job;
+      this.level = level;
+      this.healthDeficit = healthDeficit;
+      this.learned = learned;
+      this.monsters = monsters;
+      this.script = script;
+    }
+
+    static SkillCase parse(String value) {
+      for (SkillCase skillCase : values()) {
+        if (skillCase.cliName.equals(value)) return skillCase;
+      }
+      throw new IllegalArgumentException("--skill-case must be one of healing, firewall, spacemove");
+    }
+
+    int job() { return job; }
+    int level() { return level; }
+    int healthDeficit() { return healthDeficit; }
+    PlayerSkill learned() { return learned; }
+    int monsters() { return monsters; }
+    List<Op> script() { return script.get(); }
   }
 
   /**
@@ -688,6 +746,9 @@ public final class ShadowDiffMain {
                                80 HP 缺口和已学 29 号群体治愈术；真实 CM_SPELL 后以 MANUAL
                                时钟 tick 16（800 ms）观察 MP、HP 与 SM_MAGIC_LVEXP 技能熟练度。
                                需要两侧同种子；--right-seed 是该场景的非空转负控制。
+        --skill-case NAME      （--skills，W51）选择技能场景：healing（默认，即 W41 群体治愈）、
+                               firewall（火墙 22：十字火墙烧木桩，灼烧伤害走 MAGIC 流）、
+                               spacemove（瞬息移动 21：施法帧 + 成功门 + MapRandomMove 落点）。
         --ai                   （embedded）**会动的怪对拍**（W23）：两侧世界改用 MANUAL 世界时钟
                                （时间只在 tick op 推进），默认放 4 只鸡并用内置 AI 脚本。
                                怪物走位/攻击节拍因此只由 tick 数决定，与两台主机的墙钟无关；
