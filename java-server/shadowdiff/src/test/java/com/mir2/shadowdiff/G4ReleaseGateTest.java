@@ -69,11 +69,16 @@ final class G4ReleaseGateTest {
       "shadowdiff-persistence",
       "shadowdiff-lock",
       "shadowdiff-skills",
-      "shadowdiff-skills-negative");
+      "shadowdiff-skills-negative",
+      "shadowdiff-skills-firewall",
+      "shadowdiff-skills-firewall-negative",
+      "shadowdiff-skills-spacemove",
+      "shadowdiff-skills-spacemove-negative");
 
   /** Every listed row must prove the harness observes a deliberate divergence. */
   private static final Set<String> NEGATIVE_CONTROL_IDS = Set.of(
-      "shadowdiff-ai-negative", "shadowdiff-skills-negative");
+      "shadowdiff-ai-negative", "shadowdiff-skills-negative",
+      "shadowdiff-skills-firewall-negative", "shadowdiff-skills-spacemove-negative");
 
   private record Row(String id, String kind, String blocking, String expect,
       String command, String artifact, String scope, String notes) {}
@@ -182,7 +187,9 @@ final class G4ReleaseGateTest {
 
   @org.junit.jupiter.api.Test
   void skillsRowsDriveTheDedicatedSpellScenario() {
-    for (String id : List.of("shadowdiff-skills", "shadowdiff-skills-negative")) {
+    for (String id : List.of("shadowdiff-skills", "shadowdiff-skills-negative",
+        "shadowdiff-skills-firewall", "shadowdiff-skills-firewall-negative",
+        "shadowdiff-skills-spacemove", "shadowdiff-skills-spacemove-negative")) {
       Row row = rows().stream().filter(candidate -> candidate.id().equals(id)).findFirst()
           .orElseGet(() -> fail("the skills row disappeared from the manifest: " + id));
       assertTrue(ShadowDiffMain.Args.parse(shadowdiffArgs(row)).containsKey("skills"),

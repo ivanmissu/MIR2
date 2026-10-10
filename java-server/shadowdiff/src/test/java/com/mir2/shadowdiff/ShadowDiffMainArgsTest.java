@@ -48,6 +48,18 @@ class ShadowDiffMainArgsTest {
   }
 
   @Test
+  void skillCaseIsAValuedOptionThatDefaultsToTheHealingScenario() {
+    Map<String, String> options = ShadowDiffMain.Args.parse(new String[] {
+        "--embedded", "--skills", "--skill-case", "spacemove", "--seed", "20260922"});
+    assertEquals("true", options.get("skills"));
+    assertEquals("spacemove", options.get("skill-case"),
+        "--skill-case must consume its value rather than leaking it as a positional");
+    assertEquals(ShadowDiffMain.SkillCase.HEALING, ShadowDiffMain.SkillCase.parse("healing"));
+    assertEquals(ShadowDiffMain.SkillCase.FIREWALL, ShadowDiffMain.SkillCase.parse("firewall"));
+    assertEquals(ShadowDiffMain.SkillCase.SPACEMOVE, ShadowDiffMain.SkillCase.parse("spacemove"));
+  }
+
+  @Test
   void aiMatrixIsPinnedToExactlyTheExistingP2FirstTenTemplates() {
     assertEquals(List.of(
         "chicken", "deer", "scarecrow", "hookcat", "rakecat",

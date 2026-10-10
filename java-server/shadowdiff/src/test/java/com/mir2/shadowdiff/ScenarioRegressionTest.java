@@ -1,6 +1,8 @@
 package com.mir2.shadowdiff;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.charset.StandardCharsets;
@@ -78,6 +80,76 @@ class ScenarioRegressionTest {
     assertEquals(1, status,
         "a different MAGIC stream must produce a visible spell-state divergence: "
             + markdown.replace('\n', ' '));
+  }
+
+  @Test
+  void skillsFireWallScenarioBurnsTheDummyIdenticallyOnBothServers(@TempDir Path reports)
+      throws Exception {
+    Path report = reports.resolve("skills-firewall");
+    int status = ShadowDiffMain.run(new String[] {
+        "--embedded", "--skills", "--skill-case", "firewall", "--strict-messages",
+        "--seed", "20260922", "--report-dir", report.toString()});
+    String markdown = readReport(report);
+    assertEquals(0, status,
+        "the 火墙 cross must burn, expire and train identically on both sides: "
+            + markdown.replace('\n', ' '));
+    assertTrue(markdown.contains("spell 22 18 20"));
+    assertTrue(markdown.contains("struck other dmg=8 hp=9991/9999"),
+        "the first MAGIC-stream burn on the dummy must be observed on the wire");
+    assertTrue(markdown.contains("skills=[magic=22 level=0 train=3 key=0]"),
+        "the cast must train the skill and the row must survive the relog");
+  }
+
+  @Test
+  void skillsFireWallWrongSeedIsDetected(@TempDir Path reports) throws Exception {
+    Path report = reports.resolve("skills-firewall-negative");
+    int status = ShadowDiffMain.run(new String[] {
+        "--embedded", "--skills", "--skill-case", "firewall",
+        "--seed", "20260922", "--right-seed", "99999",
+        "--report-dir", report.toString()});
+    assertEquals(1, status, "a different MAGIC stream must perturb the burn damage: "
+        + readReport(report).replace('\n', ' '));
+  }
+
+  @Test
+  void skillsSpaceMoveScenarioRelocatesTheCasterIdentically(@TempDir Path reports)
+      throws Exception {
+    Path report = reports.resolve("skills-spacemove");
+    int status = ShadowDiffMain.run(new String[] {
+        "--embedded", "--skills", "--skill-case", "spacemove", "--strict-messages",
+        "--seed", "20260922", "--report-dir", report.toString()});
+    String markdown = readReport(report);
+    assertEquals(0, status,
+        "the 瞬息移动 relocation must match on both sides: " + markdown.replace('\n', ' '));
+    assertTrue(markdown.contains("spell 21 20 20"));
+    assertTrue(markdown.contains("cell=(248,208)"),
+        "the seeded level-3 gate must pass, so the caster must actually leave (20,20)");
+  }
+
+  @Test
+  void skillsSpaceMoveWrongSeedIsDetected(@TempDir Path reports) throws Exception {
+    Path report = reports.resolve("skills-spacemove-negative");
+    int status = ShadowDiffMain.run(new String[] {
+        "--embedded", "--skills", "--skill-case", "spacemove",
+        "--seed", "20260922", "--right-seed", "99999",
+        "--report-dir", report.toString()});
+    assertEquals(1, status, "a different SPACE_MOVE stream must land the caster elsewhere: "
+        + readReport(report).replace('\n', ' '));
+  }
+
+  @Test
+  void unknownSkillCaseIsAUsageErrorBeforeAnyServerBoots(@TempDir Path reports) {
+    assertThrows(IllegalArgumentException.class, () -> ShadowDiffMain.run(new String[] {
+        "--embedded", "--skills", "--skill-case", "summon",
+        "--report-dir", reports.resolve("bogus").toString()}));
+    assertFalse(Files.exists(reports.resolve("bogus")),
+        "a rejected case name must not leave a report behind");
+  }
+
+  private static String readReport(Path report) throws java.io.IOException {
+    Path reportFile = report.resolve("shadow-report.md");
+    return Files.exists(reportFile)
+        ? Files.readString(reportFile, StandardCharsets.UTF_8) : "<shadow report missing>";
   }
 
   @Test

@@ -341,6 +341,61 @@ public record Op(Kind kind, Direction direction, String text, long millis, Strin
   }
 
   /**
+   * The W51 火墙 script ({@code SKILL_EARTHFIRE}=22). The embedded runner seeds a level-25
+   * Wizard at (20,20) with a learned 火墙 row and a ring of eight stationary dummies. The
+   * ground-click cast is centred on a dummy's cell, so the five-cell cross engulfs it.
+   *
+   * <p>Timeline, all on the MANUAL clock: the cast lands on tick 0; {@code TFireBurnEvent}
+   * burns on the first manager pass and then every 3000 ms (60 ticks), while the flames
+   * expire strictly after their rolled duration. The 301 pumped ticks therefore cover the
+   * immediate burn, several periodic burns and the expiry of a level-0 wall, and every burn
+   * is a MAGIC-stream damage roll that a wrong {@code --right-seed} must perturb.
+   */
+  public static List<Op> fireWallScript() {
+    return parseScript("""
+        # --- seeded level-25 Wizard at the fixed spawn cell (20,20) ---
+        bag
+        # --- CM_SPELL: ground click on the dummy cell (Recog=cell, Tag=22, no target id) ---
+        spell 22 18 20
+        # --- first burn lands on the first manager pass, then one burn per 3000 ms ---
+        tick 1
+        tick 60
+        tick 60
+        tick 120
+        tick 60
+        # --- flames expired and the burn tally must survive the persistence round trip ---
+        relog
+        bag
+        """);
+  }
+
+  /**
+   * The W51 瞬息移动 script ({@code SKILL_SPACEMOVE}=21). The embedded runner seeds a
+   * level-25 Wizard at (20,20) with a learned 瞬息移动 row. The ground-click cast on the
+   * caster's own cell is legal and un-targeted; the Random(11) success gate and the
+   * MapRandomMove landing cell are both drawn from the seeded SPACE_MOVE stream.
+   *
+   * <p>The cast frame (SM_MAGICFIRE) leaves before the caster moves, the departure
+   * (SM_SPACEMOVE_HIDE2) and arrival (SM_SPACEMOVE_SHOW2) frames bracket the relocation, and
+   * a failed gate leaves the caster in place with only the cast frame and the mana spend.
+   * The relog proves the landing cell is what the next login restores.
+   */
+  public static List<Op> spaceMoveScript() {
+    return parseScript("""
+        # --- seeded level-25 Wizard at the fixed spawn cell (20,20) ---
+        bag
+        # --- CM_SPELL: un-targeted ground click on the caster's own cell (Recog=cell, Tag=21) ---
+        spell 21 20 20
+        # --- the gate outcome and any relocation are already on the wire; let the clock settle ---
+        tick 1
+        tick 20
+        # --- the landing cell must persist through the relog ---
+        relog
+        bag
+        """);
+  }
+
+  /**
    * The moving-monster comparison script (W23). Unlike {@link #pveScript()}, whose trainer
    * dummy is inert, this drives live AI: the monsters around the spawn acquire the player,
    * chase and attack.
