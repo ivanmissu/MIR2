@@ -351,9 +351,8 @@ public final class ShadowDiffMain {
             account, password, serverName);
       } catch (Exception error) {
         status = 2;
-        note = error.getClass().getSimpleName() + ": "
-            + String.valueOf(error.getMessage()).replace('|', '/').replace('\n', ' ');
-        System.err.printf(Locale.ROOT, "[shadowdiff] AI matrix row %s failed: %s%n", kind, error);
+        note = describeFailure(error);
+        System.err.printf(Locale.ROOT, "[shadowdiff] AI matrix row %s failed: %s%n", kind, note);
       }
       rows.add(new AiMatrixRow(kind, status, note));
     }
@@ -376,7 +375,43 @@ public final class ShadowDiffMain {
     Files.writeString(summary, markdown, StandardCharsets.UTF_8);
     System.out.printf(Locale.ROOT, "%n[shadowdiff] AI matrix=%d/%d PASS, report: %s%n",
         passed, rows.size(), summary.toAbsolutePath());
+    if (passed != rows.size()) {
+      // The gate's failure fingerprint reads this line out of the log (the raw Actions log is
+      // unreadable from restricted environments), so name every failed row *and* its root
+      // cause here instead of leaving a bare PASS-count for the reader to chase.
+      List<String> failed = new ArrayList<>();
+      for (AiMatrixRow row : rows) {
+        if (row.status() != 0) failed.add(row.kind() + " (" + row.note() + ")");
+      }
+      System.out.printf(Locale.ROOT, "[shadowdiff] AI matrix failed rows: %s%n",
+          String.join(", ", failed));
+    }
     return passed == rows.size() ? 0 : 1;
+  }
+
+  /**
+   * One-line description of a failure for the matrix table and the log. The whole {@code cause}
+   * chain matters: an {@code UncheckedIOException("failed reading MonItems/…")} hides the real
+   * reason (closed zip, disk error…) in its cause, and the log tail is often the only thing a
+   * restricted CI environment can read. Ends with the first {@code com.mir2} frame so a
+   * failure still points at our own code. Never contains a newline (the note is a table cell).
+   */
+  static String describeFailure(Throwable error) {
+    StringBuilder description = new StringBuilder();
+    for (Throwable current = error; current != null; current = current.getCause()) {
+      if (description.length() > 0) description.append(" <- ");
+      description.append(current.getClass().getSimpleName());
+      if (current.getMessage() != null) description.append(": ").append(current.getMessage());
+      if (current.getCause() == current) break;
+    }
+    for (StackTraceElement frame : error.getStackTrace()) {
+      if (frame.getClassName().startsWith("com.mir2.")) {
+        description.append(" @ ").append(frame.getClassName()).append('.')
+            .append(frame.getMethodName()).append(':').append(frame.getLineNumber());
+        break;
+      }
+    }
+    return description.toString().replace('|', '/').replace('\n', ' ').replace('\r', ' ');
   }
 
   private record AiMatrixRow(String kind, int status, String note) {}

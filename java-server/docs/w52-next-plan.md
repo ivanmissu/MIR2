@@ -115,6 +115,26 @@ W51 的 CI G4 作业失败过一次（run 38014544715），但沙箱读不到 jo
 ```
 
 汇总 Markdown 同步出现「失败行明细」表与该行日志尾部；随后还原清单、复核 22 行全绿。
+（第一次实验是把 `expect` 改成 `exit-1`，被 `G4ReleaseGateTest.negativeControlsStillDemandDivergence`
+挡下——`test` 作业因此变红、G4 作业被跳过。这本身是个正面结果：清单契约拦住了非法编辑，而且 `test`
+作业的 `Maven test failure` 注解**指名了失败的测试与判据**，正是「CI 失败可在沙箱侧读出」的样例。
+最终采用不破坏契约的做法：临时插入一行 `expect=exit-0`、命令真实发散（右种子 99999）的探针行。）
+
+**矩阵行的根因也要能读**：`--ai-all` 的行失败时原来只打印异常类与 message（例如
+`UncheckedIOException: failed reading MonItems/hookcat.txt`），真正的原因藏在 cause 里。
+本周让 `ShadowDiffMain` 输出**整条 cause 链 + 第一个 `com.mir2` 栈帧**（`describeFailure`），
+失败时追加一行 `[shadowdiff] AI matrix failed rows: <kind> (<cause chain>)`——这行会落进日志尾部，
+正是门禁指纹要读的地方。配套单测 `ShadowDiffMainArgsTest.failureNotesKeepTheCauseChainAndTheMir2Frame`。
+
+**W51 那次 CI 失败查到了哪一步（诚实记录）**：G4 作业的第 5 步 `Run the G4 release gate (shadowdiff rows)`
+失败（01:56:08 → 02:06:24，其余 4 个作业全绿），但**具体哪一行至今未定位**——那时脚本还不打印指纹，
+job 日志与 artifact 在沙箱内不可读。为排除「构建产物自身有问题」这一整类原因，本周做了两件事：
+
+1. 从 `dist` 分支取回 CI 自己构建的 `mir2-shadowdiff.jar`（`source_commit=03a0bb4`，sha256 与
+   `*.sha256` 一致），逐条比对：579 个条目、11 个 `db/MonItems/*` 资源与仓库源码**逐字节相同**；
+2. 用这个 **CI 产物**完整跑了一遍 22 行门禁：**22 行全绿**（含 `shadowdiff-ai-matrix` 10/10 PASS，
+   192 s）——本机无法复现 W51 的失败。因此 W51 失败仍记为「未定位」，但下次它若重现，
+   指纹通道会把行 id 与原因直接贴到 check-run 注解里。
 
 ## 边界与刻意不做
 
@@ -139,8 +159,21 @@ W51 的 CI G4 作业失败过一次（run 38014544715），但沙箱读不到 jo
 - [x] `ScenarioRegressionTest`(+6) / `OpTest`(+1) / `ShadowDiffMainArgsTest`(+1)
 - [x] `g4-capability-matrix.tsv` evidence / notes 列更新
 - [x] CI 失败可读性：门禁脚本 FAILING ROWS / FAIL DIAG + workflow 注解与 job summary
-- [x] 本地全量编译 + 单测（沙箱 ECJ + jdk4py 链路）：`~/tools/test.sh` → **650 successful / 0 failed**（W51 为 642）
+- [x] 本地全量编译 + 单测（沙箱 ECJ + jdk4py 链路）：`~/tools/test.sh` → **650 successful / 0 failed**（W51 为 642）；
+  收尾补测后复跑：**653 successful / 0 failed**（+3 = cause 链 1 + 指纹契约 2）
 - [x] 本地全量门禁 22 行跑批：**22 行全绿、exit 0**（`maven-verify` SKIP，7 条负向行如期 `exit-1`，11.5 min）
 - [x] 推送分支 + PR [#78](https://github.com/ivanmissu/MIR2/pull/78) + CI 复核：run 38202881179 五个作业全绿（含 G4 门禁作业，22 行清单首次在 CI 跑通）；提交 b9baa61 的 check-run 可用 `gh api` 逐一复核
 - [x] 失败指纹接线缺陷修复 + 两条回归测试（定义早于调用 / workflow 消费指纹）
+- [x] 矩阵行失败输出整条 cause 链 + 首个 `com.mir2` 栈帧（`describeFailure` + 单测）
+- [x] CI 产物核验：`dist` 分支的 `mir2-shadowdiff.jar` 与仓库资源逐字节相同；用它跑 22 行门禁全绿
+- [ ] CI 失败路径端到端验证（临时探针行 → 读 check-run 注解 → 还原）
+
+## 下一候选（W53）
+
+- **首选**：`--skill-case` 第二批——**31 魔法盾 `SKILL_SHIELD`**（时长型 buff，MANUAL 时钟下 tick
+  可精确推进，命中率/燃烧秒数都是种子与脚本的纯函数）或 **32 圣言术 `SKILL_KILLUNDEAD`**
+  （`Magic.pas:572-577`，对不死目标的即死判定；木桩继续用 W52 引入的 `scarecrow`）。
+  两者在能力矩阵里都是 `implemented`，且尚无 shadowdiff 行。
+- 备选：按主计划优先级切换到 ①Netty 或 ②env-lint（W51 已由需求方确认保留 ④ 技能批次方向）。
+- 红线技能（16/17/20/30 与 34–41 扩展段）、57 怪行为扩展、`Market_Def` 不在候选内。
 - [x] 证据：`docs/g0-evidence/2026-10-12-w52-area-skill-shadowdiff.md`（含 650/650 实跑数与 §5 CI 可读性）

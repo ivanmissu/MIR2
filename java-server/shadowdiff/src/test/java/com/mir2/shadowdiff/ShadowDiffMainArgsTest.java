@@ -111,4 +111,27 @@ class ShadowDiffMainArgsTest {
     assertThrows(IllegalArgumentException.class,
         () -> ShadowDiffMain.Args.parse(new String[] {"garbage"}));
   }
+  /**
+   * A failed AI-matrix row ends up in the G4 failure fingerprint as a one-line note, so the
+   * note must keep the whole cause chain (an {@code UncheckedIOException} hides the real
+   * reason in its cause) and point at the first {@code com.mir2} frame — a bare
+   * {@code failed reading MonItems/…} is exactly the un-actionable line this replaced.
+   */
+  @org.junit.jupiter.api.Test
+  void failureNotesKeepTheCauseChainAndTheMir2Frame() {
+    java.io.IOException root = new java.io.IOException("zip file closed");
+    Throwable wrapped =
+        new java.io.UncheckedIOException("failed reading MonItems/hookcat.txt", root);
+    String note = ShadowDiffMain.describeFailure(wrapped);
+    assertTrue(note.contains("UncheckedIOException: failed reading MonItems/hookcat.txt"), note);
+    assertTrue(note.contains("<- IOException: zip file closed"),
+        "the cause chain must survive into the fingerprint: " + note);
+    assertTrue(note.contains("@ com.mir2."),
+        "the note must point at our own frame so the failure is locatable: " + note);
+    assertFalse(note.contains("\n") || note.contains("\r"),
+        "the note is a single-line table cell / log line: " + note);
+    assertEquals(note, note.replace('|', '/'), "the note must survive a Markdown table cell");
+  }
+
+
 }

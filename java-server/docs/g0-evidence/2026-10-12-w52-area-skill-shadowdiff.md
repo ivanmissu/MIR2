@@ -27,6 +27,7 @@ fireboom|lightflower|snowwind` 三个新对拍场景、正负对照、`g4-releas
 |---|---|---|
 | W51 基线（改动前，`--class` 全量跑） | **642 / 642** 全绿 | 与 W51 证据记录的基线一致 |
 | W52（改动后） | **650 / 650** 全绿 | +8：`ScenarioRegressionTest`(+6)、`OpTest`(+1)、`ShadowDiffMainArgsTest`(+1) |
+| W52 收尾（可读性修复后） | **653 / 653** 全绿 | +3：`ShadowDiffMainArgsTest`(+1 cause 链)、`G4ReleaseGateTest`(+2 指纹契约) |
 
 新增用例：
 
@@ -156,7 +157,35 @@ W51 的 G4 作业在 run `38014544715` 失败过一次（同代码重跑 `380177
 ```
 
 汇总 `g4-release-gate.md` 出现「失败行明细」表（诊断同上）与该行日志尾部 40 行。清单随即还原，
-22 行跑批复核仍全绿。**历史失败仍
+22 行跑批复核仍全绿。
+
+**第一次尝试被清单契约拦下（记录在案）**：最初的实验直接把一行正向 `expect` 改成 `exit-1`，
+`G4ReleaseGateTest.negativeControlsStillDemandDivergence` 判为非法（「只有声明过的负向对照才能期望非零退出」），
+`test` 作业变红、G4 作业被 `needs: test` 跳过。两个结论：① 契约确实在守门，非法清单编辑进不了 G4；
+② `test` 作业的 `Maven test failure` 注解**指名了失败的测试方法与判据**（`gh api .../check-runs/<id>/annotations`
+可读）——这本身就是「CI 失败可在沙箱侧读出」的成功样例。最终实验改用不破坏契约的临时探针行
+（`expect=exit-0`，命令用右种子 99999 故意发散）。
+
+**矩阵行根因可读性**：`--ai-all` 行失败时原先只打印 `异常类: message`，真正原因藏在 cause 链里
+（典型：`UncheckedIOException: failed reading MonItems/<怪>.txt` ← `IOException`）。现在
+`ShadowDiffMain.describeFailure` 输出整条 cause 链与第一个 `com.mir2` 栈帧，失败时追加
+`[shadowdiff] AI matrix failed rows: <kind> (<cause chain>)`；该行落进日志尾部，正是门禁指纹读取的位置。
+单测：`ShadowDiffMainArgsTest.failureNotesKeepTheCauseChainAndTheMir2Frame`。
+
+**W51 CI 失败：查到的与没查到的。** `actions/runs/38014544715/jobs` 显示唯一失败作业是
+`G4 release gate (manifest-driven)`，失败步骤是第 5 步 `Run the G4 release gate (shadowdiff rows)`
+（01:56:08 → 02:06:24），其余 4 个作业全绿；**具体行至今未定位**（当时脚本尚无指纹，日志/artifact 不可读）。
+为排除「CI 构建产物本身有问题」，本周：
+
+1. 从 `dist` 分支取回 CI 自建 `mir2-shadowdiff.jar`（`dist-manifest.txt`: `source_commit=03a0bb4`，
+   `build_run=38204644199`；sha256 与随附 `.sha256` 一致）；
+2. 逐条比对：579 个条目、`db/MonItems/` 下 11 个资源与仓库 `world/src/main/resources/db/MonItems/`
+   **逐字节哈希相同**；
+3. 用**这个 CI 产物**完整跑 22 行门禁：**全绿**（`shadowdiff-ai-matrix` 10/10 PASS，192 s）。
+
+结论：本机无法复现 W51 的失败，其成因仍为未知（本地唯一复现过的同类 `MonItems` 读失败是上一会话
+在跑批中重建 JAR 所致，已证伪为环境自伤）。可执行的部分已交付：下次它若重现，指纹通道会直接给出行 id、
+该行的结论行/verdict 行与日志尾部。**历史失败仍
 未定位**：本地用同一清单连跑两遍（16 行）只有一次异常，且经查是本次会话**在跑批过程中重建
 fat JAR** 导致的运行时读 zip 失败（`--ai-all` 的 3/10 行报
 `UncheckedIOException: failed reading MonItems/…`，与代码无关，已用同一 JAR 单独复跑该怪物
