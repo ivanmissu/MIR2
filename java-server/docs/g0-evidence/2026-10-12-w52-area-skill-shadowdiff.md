@@ -134,7 +134,29 @@ W51 的 G4 作业在 run `38014544715` 失败过一次（同代码重跑 `380177
    并把汇总 Markdown 追加进 `$GITHUB_STEP_SUMMARY`。
 
 两者都能用 `gh api repos/ivanmissu/MIR2/check-runs/<id>` 读到（本次实测：现有失败作业的
-`annotations` 可读，`output.summary` 因当前没有任何步骤写 summary 而为 `null`）。**历史失败仍
+`annotations` 可读，`output.summary` 因当前没有任何步骤写 summary 而为 `null`）。
+
+**接线缺陷——由实跑发现并修复。** 首次验证失败路径时，`FAIL DIAG <id>:` 后面是**空的**：
+`row_diagnosis()` 被定义在跑批循环**之后**，而 bash 只在控制流到达定义处才生成函数，于是循环里的
+调用报 `command not found`（stderr 进了行日志，stdout 只收到空串）。修复三处：
+
+1. 函数上移到跑批循环之前，并在注释里写明「必须早于调用」，防止回退；
+2. 诊断回退顺序改为「report 结论行 → 该行 `[shadowdiff] verdict=` 行 → 日志末行」，覆盖
+   「实跑是绿的、只是退出码与 `expect` 不符」这种清单配置错误（原实现只回退到日志末行，
+   那种日志末行往往是 `INFO: MIR2 Java server stopped`，等于没有信息）；
+3. `G4ReleaseGateTest` 增加两条回归测试：`row_diagnosis` 的定义位置必须早于首次调用；
+   workflow 必须 grep 指纹、发 `::error` 注解、写 `$GITHUB_STEP_SUMMARY`，且 `PIPESTATUS[0]`
+   不能被 `tee` 吞掉。（负向自检：把定义挪回循环之后，测试如期变红。）
+
+**失败路径实测**：把一行正向的 `expect` 临时反转为 `exit-1` 后单跑该行，门禁 exit 1，stdout：
+
+```
+[g4-gate] FAILING ROWS: shadowdiff-skills-fireboom
+[g4-gate] FAIL DIAG shadowdiff-skills-fireboom: 状态差异 0 步，应答差异 0 步，消息集合差异 0 步，共 9 步。
+```
+
+汇总 `g4-release-gate.md` 出现「失败行明细」表（诊断同上）与该行日志尾部 40 行。清单随即还原，
+22 行跑批复核仍全绿。**历史失败仍
 未定位**：本地用同一清单连跑两遍（16 行）只有一次异常，且经查是本次会话**在跑批过程中重建
 fat JAR** 导致的运行时读 zip 失败（`--ai-all` 的 3/10 行报
 `UncheckedIOException: failed reading MonItems/…`，与代码无关，已用同一 JAR 单独复跑该怪物

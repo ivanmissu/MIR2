@@ -100,6 +100,22 @@ W51 的 CI G4 作业失败过一次（run 38014544715），但沙箱读不到 jo
   （job 日志与 artifact 走 `*.blob.core.windows.net` / `results-receiver.actions.githubusercontent.com`，
   实测均为 EOF）。
 
+**接线缺陷（本周实跑发现并修复）**：`row_diagnosis()` 最初定义在跑批循环**之后**。bash 只在控制流
+到达定义处才生成函数，因此循环里的调用报 `command not found`（stderr 被重定向进日志，stdout 收到空串），
+`FAIL DIAG` 行**恒为空**——恰好在 CI 最需要它的时候失效。修复：函数上移到循环之前，并补两条回归测试
+（定义必须早于首次调用；workflow 必须消费指纹，且 `PIPESTATUS[0]` 不能被 `tee` 吞掉）。同时把诊断的
+回退顺序改为「report 结论行 → 该行 `[shadowdiff] verdict=` 行 → 日志末行」，以覆盖「实跑是绿的、
+只是退出码与 `expect` 不符」这种清单配置错误。
+
+**失败路径验证**：本地把一行正向的 `expect` 临时反转为 `exit-1`，门禁如期望红（exit 1）并打印
+
+```
+[g4-gate] FAILING ROWS: shadowdiff-skills-fireboom
+[g4-gate] FAIL DIAG shadowdiff-skills-fireboom: 状态差异 0 步，应答差异 0 步，消息集合差异 0 步，共 9 步。
+```
+
+汇总 Markdown 同步出现「失败行明细」表与该行日志尾部；随后还原清单、复核 22 行全绿。
+
 ## 边界与刻意不做
 
 - **不新增技能实现**：23/24/33 的引擎语义一行未改（W42/W43/W44 交付），本周只加对拍场景与门禁。
@@ -125,5 +141,6 @@ W51 的 CI G4 作业失败过一次（run 38014544715），但沙箱读不到 jo
 - [x] CI 失败可读性：门禁脚本 FAILING ROWS / FAIL DIAG + workflow 注解与 job summary
 - [x] 本地全量编译 + 单测（沙箱 ECJ + jdk4py 链路）：`~/tools/test.sh` → **650 successful / 0 failed**（W51 为 642）
 - [x] 本地全量门禁 22 行跑批：**22 行全绿、exit 0**（`maven-verify` SKIP，7 条负向行如期 `exit-1`，11.5 min）
-- [ ] 推送分支 + PR + CI 复核
+- [x] 推送分支 + PR [#78](https://github.com/ivanmissu/MIR2/pull/78) + CI 复核：run 38202881179 五个作业全绿（含 G4 门禁作业，22 行清单首次在 CI 跑通）；提交 b9baa61 的 check-run 可用 `gh api` 逐一复核
+- [x] 失败指纹接线缺陷修复 + 两条回归测试（定义早于调用 / workflow 消费指纹）
 - [x] 证据：`docs/g0-evidence/2026-10-12-w52-area-skill-shadowdiff.md`（含 650/650 实跑数与 §5 CI 可读性）

@@ -72,6 +72,30 @@ selected() {
   return 1
 }
 
+# One-line diagnosis for a failing row: the shadowdiff report's own verdict line when the
+# row produced one (state/ack/message diff counts), else the row's own shadowdiff verdict
+# (which catches "ran green but exited with the wrong code"), else the log's last non-empty
+# line (a crash, a usage error, a missing JAR...). MUST stay above the run loop: bash only
+# materialises a function once control reaches its definition, so a helper defined below
+# the loop would be "command not found" at the call site and the fingerprint would print an
+# empty diagnosis exactly when CI needs it most.
+row_diagnosis() {
+  local artifact_dir="$1" log="$2" report line
+  for report in "$artifact_dir/shadow-report.md" "$artifact_dir"/*/shadow-report.md; do
+    [[ -f "$report" ]] || continue
+    line="$(grep -m1 -E '^状态差异' "$report" 2>/dev/null || true)"
+    if [[ -n "$line" ]]; then
+      echo "$line"
+      return 0
+    fi
+  done
+  line="$(grep -m1 -E '\[shadowdiff\] verdict=' "$log" 2>/dev/null || true)"
+  if [[ -z "$line" ]]; then
+    line="$(grep -v '^[[:space:]]*$' "$log" 2>/dev/null | tail -n 1 || true)"
+  fi
+  echo "${line:0:200}"
+}
+
 command -v java >/dev/null 2>&1 || { echo "[g4-gate] 环境缺少 java（需要 JDK 21）" >&2; exit 2; }
 
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -133,23 +157,6 @@ for index in "${!rows_id[@]}"; do
   fi
   echo "[g4-gate] -> $verdict (exit $code, ${elapsed}s, 日志 $log)"
 done
-
-# One-line diagnosis for a failing row: the shadowdiff report's own verdict line when the
-# row produced one (state/ack/message diff counts), otherwise the log's last non-empty line
-# (a crash, a usage error, a missing JAR...).
-row_diagnosis() {
-  local artifact_dir="$1" log="$2" report line
-  for report in "$artifact_dir/shadow-report.md" "$artifact_dir"/*/shadow-report.md; do
-    [[ -f "$report" ]] || continue
-    line="$(grep -m1 -E '^状态差异' "$report" 2>/dev/null || true)"
-    if [[ -n "$line" ]]; then
-      echo "$line"
-      return 0
-    fi
-  done
-  line="$(grep -v '^[[:space:]]*$' "$log" 2>/dev/null | tail -n 1 || true)"
-  echo "${line:0:200}"
-}
 
 {
   echo "# G4 发布门禁跑批汇总"
