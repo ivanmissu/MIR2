@@ -396,6 +396,109 @@ public record Op(Kind kind, Direction direction, String text, long millis, Strin
   }
 
   /**
+   * The W52 爆裂火焰 script ({@code SKILL_FIREBOOM}=23, {@code MagBigExplosion},
+   * Magic.pas:510 → 1170). The embedded runner seeds a level-25 Wizard at (20,20) with a
+   * learned 爆裂火焰 row and the same eight-dummy ring the 火墙 case uses. The spell is a
+   * ground-target square of {@code MIR2_FIREBOOM_RANGE} cells (default 1, a 3×3), so clicking
+   * the north arm of the ring engulfs five dummies and clicking the south arm engulfs the
+   * other five — two independent {@code GetAttackPower} rolls, one shared by every target of
+   * its cast.
+   *
+   * <p>Unlike 火墙 there is no delayed burn event: {@code RM_MAGSTRUCK} is delivered inline,
+   * so the {@code struck other dmg=… hp=…} combat census of the cast op itself is the
+   * comparison surface, together with the immediate MP spend and the SM_MAGIC_LVEXP training
+   * line. The dummies are stationary trainers with 9999 HP, so nothing dies and the only
+   * randomness in the whole script is the two seeded damage rolls — exactly what
+   * {@code --right-seed} must perturb.
+   *
+   * <p>The two casts are 29 pumped ticks (1450 ms) apart, clearing the shared
+   * 1350 ms {@code CM_SPELL} interval plus the row's 60 ms delay without consulting wall
+   * time.
+   */
+  public static List<Op> fireBoomScript() {
+    return parseScript("""
+        # --- seeded level-25 Wizard at the fixed spawn cell (20,20) ---
+        bag
+        # --- CM_SPELL: ground click on the ring's north arm (3x3 square, radius 1) ---
+        spell 23 20 19
+        # --- the blast is instant: the five struck reports are already in this op's bucket ---
+        tick 1
+        # --- clear the 1350 ms spell interval (29 x 50 ms), then blow the south arm too:
+        #     a second, independent shared-power roll ---
+        tick 29
+        spell 23 20 21
+        tick 1
+        # --- MP, training and the bag must survive the persistence round trip ---
+        relog
+        bag
+        """);
+  }
+
+  /**
+   * The W52 地狱雷光 script ({@code SKILL_LIGHTFLOWER}=24, {@code MagElecBlizzard},
+   * Magic.pas:518 → 1191). The embedded runner seeds a level-31 Wizard at (20,20) — the row's
+   * {@code NeedL1} is 30 — with a learned 地狱雷光 row and a ring of eight <em>scarecrows</em>
+   * instead of trainers.
+   *
+   * <p>The dummy kind is the point: 地狱雷光 is the engine's only {@code LA_UNDEAD} branch, so
+   * the undead scarecrow ({@code Monster.DB} {@code Undead}=1) takes the full rolled power
+   * while any living target would take {@code power div 10} — a division that would erase the
+   * low bits the seeded damage stream is supposed to expose. The blast is centred on the
+   * caster (the click only rides along on the trailing {@code RM_MAGICFIRE} frame), so one
+   * ground click on the caster's own cell strikes every dummy in the radius-2 square at once.
+   *
+   * <p>Scarecrows have 20 HP, so the cast kills the whole ring: the bucket then also carries
+   * the {@code SM_DEATH} frames, the {@code SM_WINEXP} line and the seeded drop rolls that
+   * land on the ground. The second cast lands on an empty square — the row still spends its
+   * mana and rolls its power, but no target means no strikes and no training points, which is
+   * Delphi's {@code boTrain} signal reproduced on the wire.
+   */
+  public static List<Op> lightFlowerScript() {
+    return parseScript("""
+        # --- seeded level-31 Wizard at (20,20), ringed by eight undead scarecrows ---
+        bag
+        # --- CM_SPELL: the click rides on RM_MAGICFIRE; the blast is centred on the caster ---
+        spell 24 20 20
+        # --- the whole ring dies to the LA_UNDEAD full-power strike in this same bucket ---
+        tick 1
+        # --- second cast after the 1350 ms interval + 60 ms delay: an empty square, so MP is
+        #     spent and the power still rolls, but nothing is struck and nothing trains ---
+        tick 29
+        spell 24 20 20
+        tick 1
+        # --- experience, ground drops and training must survive the persistence round trip ---
+        relog
+        bag
+        """);
+  }
+
+  /**
+   * The W52 冰咆哮 script ({@code SKILL_SNOWWIND}=33, {@code MagBigExplosion} again,
+   * Magic.pas:578). Identical in shape to {@link #fireBoomScript()} — same shared-power rule,
+   * same instant {@code RM_MAGSTRUCK} delivery, same stationary ring — but a different
+   * Magic.DB row: {@code NeedL1}=35, so the embedded runner seeds a level-35 Wizard, and the
+   * blast radius comes from {@code MIR2_SNOW_WIND_RANGE} rather than
+   * {@code MIR2_FIREBOOM_RANGE}. Keeping both rows in the gate is what pins the two config
+   * fields to their own skill.
+   */
+  public static List<Op> snowWindScript() {
+    return parseScript("""
+        # --- seeded level-35 Wizard at the fixed spawn cell (20,20) ---
+        bag
+        # --- CM_SPELL: ground click on the ring's north arm (3x3 square, radius 1) ---
+        spell 33 20 19
+        tick 1
+        # --- clear the 1350 ms spell interval + the row's 60 ms delay, then the south arm ---
+        tick 29
+        spell 33 20 21
+        tick 1
+        # --- MP, training and the bag must survive the persistence round trip ---
+        relog
+        bag
+        """);
+  }
+
+  /**
    * The moving-monster comparison script (W23). Unlike {@link #pveScript()}, whose trainer
    * dummy is inert, this drives live AI: the monsters around the spawn acquire the player,
    * chase and attack.

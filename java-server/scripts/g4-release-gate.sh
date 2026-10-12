@@ -78,6 +78,10 @@ started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 results_id=(); results_status=(); results_exit=(); results_seconds=()
 failures=0
 skipped=0
+# Failing rows are also collected separately: the CI job log lives in the Actions blob
+# store, which restricted environments cannot read, so the runner has to make the failure
+# legible from its own stdout (job annotations) and from the summary file (step summary).
+failed_ids=(); failed_diag=()
 
 for index in "${!rows_id[@]}"; do
   id="${rows_id[$index]}"; kind="${rows_kind[$index]}"
@@ -122,9 +126,30 @@ for index in "${!rows_id[@]}"; do
 
   results_id+=("$id"); results_status+=("$verdict")
   results_exit+=("$code"); results_seconds+=("$elapsed")
-  [[ "$verdict" == FAIL ]] && failures=$((failures + 1))
+  if [[ "$verdict" == FAIL ]]; then
+    failures=$((failures + 1))
+    failed_ids+=("$id")
+    failed_diag+=("$(row_diagnosis "$report_dir/${rows_artifact[$index]}" "$log")")
+  fi
   echo "[g4-gate] -> $verdict (exit $code, ${elapsed}s, 日志 $log)"
 done
+
+# One-line diagnosis for a failing row: the shadowdiff report's own verdict line when the
+# row produced one (state/ack/message diff counts), otherwise the log's last non-empty line
+# (a crash, a usage error, a missing JAR...).
+row_diagnosis() {
+  local artifact_dir="$1" log="$2" report line
+  for report in "$artifact_dir/shadow-report.md" "$artifact_dir"/*/shadow-report.md; do
+    [[ -f "$report" ]] || continue
+    line="$(grep -m1 -E '^状态差异' "$report" 2>/dev/null || true)"
+    if [[ -n "$line" ]]; then
+      echo "$line"
+      return 0
+    fi
+  done
+  line="$(grep -v '^[[:space:]]*$' "$log" 2>/dev/null | tail -n 1 || true)"
+  echo "${line:0:200}"
+}
 
 {
   echo "# G4 发布门禁跑批汇总"
@@ -148,6 +173,25 @@ done
   echo
   echo "失败行数：$failures；跳过：$skipped。"
   echo
+  if (( failures > 0 )); then
+    echo "## 失败行明细"
+    echo
+    echo "| 门禁行 | 诊断 |"
+    echo "|---|---|"
+    for index in "${!failed_ids[@]}"; do
+      echo "| ${failed_ids[$index]} | ${failed_diag[$index]} |"
+    done
+    echo
+    for id in "${failed_ids[@]}"; do
+      echo "### \`$id\` 日志尾部"
+      echo
+      echo '```'
+      tail -n 40 "$report_dir/$id.log" 2>/dev/null || true
+      echo '```'
+      echo
+    done
+  fi
+  echo
   echo "> **红线：** 本汇总全绿只代表本地 Java↔Java 确定性门禁通过，**不等于 G4 签发**。"
   echo "> G4 还需要真实 mir2.exe / Delphi 服务端外部基线，以及技能、NPC 脚本、行会、攻城、"
   echo "> 交易的缺口收口——逐项状态见 \`java-server/docs/g4-capability-matrix.tsv\`。"
@@ -156,6 +200,13 @@ done
 echo
 echo "[g4-gate] 汇总写入 $summary"
 if (( failures > 0 )); then
+  # Machine-readable failure fingerprint. The CI workflow turns these lines into check-run
+  # annotations and a job summary, because the raw job log is unreadable from a sandboxed
+  # environment — without them a red G4 job says nothing but "exit code 1".
+  echo "[g4-gate] FAILING ROWS: $(IFS=,; echo "${failed_ids[*]}")"
+  for index in "${!failed_ids[@]}"; do
+    echo "[g4-gate] FAIL DIAG ${failed_ids[$index]}: ${failed_diag[$index]}"
+  done
   echo "[g4-gate] 结论：门禁未通过（$failures 行失败）"
   exit 1
 fi

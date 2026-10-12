@@ -272,10 +272,34 @@ jobs:
       # runner stays data-driven). `mvn verify` already runs in the `test` job, so it is
       # skipped here rather than duplicated.
       - name: Run the G4 release gate (shadowdiff rows)
+        shell: bash
         run: |
+          set +e
           scripts/g4-release-gate.sh \
             --skip-maven \
-            --report-dir "$RUNNER_TEMP/g4-release-gate"
+            --report-dir "$RUNNER_TEMP/g4-release-gate" 2>&1 \
+            | tee "$RUNNER_TEMP/g4-release-gate.log"
+          status=${PIPESTATUS[0]}
+          if (( status != 0 )); then
+            # A red G4 job must name the failing row without the raw job log: the Actions
+            # log/artifact storage is unreachable from restricted environments, while check
+            # run annotations and the job summary are readable through the API. So surface
+            # the runner's own failure fingerprint as annotations...
+            while IFS= read -r line; do
+              message=${line//'%'/'%25'}
+              message=${message//$'\r'/'%0D'}
+              message=${message//$'\n'/'%0A'}
+              echo "::error title=G4 gate failure::$message"
+            done < <(grep -E '^\[g4-gate\] (FAILING ROWS|FAIL DIAG|-> FAIL)' \
+                       "$RUNNER_TEMP/g4-release-gate.log" | tail -12)
+            # ...and put the whole summary (per-row verdicts + failing rows' log tails) into
+            # the job summary, which `gh api .../check-runs/<id>` also returns.
+            if [[ -f "$RUNNER_TEMP/g4-release-gate/g4-release-gate.md" ]]; then
+              cat "$RUNNER_TEMP/g4-release-gate/g4-release-gate.md" >> "$GITHUB_STEP_SUMMARY"
+            fi
+            tail -n 60 "$RUNNER_TEMP/g4-release-gate.log"
+          fi
+          exit "$status"
       - name: Upload G4 release gate evidence
         if: always()
         uses: actions/upload-artifact@v4
