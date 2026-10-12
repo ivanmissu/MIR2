@@ -73,12 +73,20 @@ final class G4ReleaseGateTest {
       "shadowdiff-skills-firewall",
       "shadowdiff-skills-firewall-negative",
       "shadowdiff-skills-spacemove",
-      "shadowdiff-skills-spacemove-negative");
+      "shadowdiff-skills-spacemove-negative",
+      "shadowdiff-skills-fireboom",
+      "shadowdiff-skills-fireboom-negative",
+      "shadowdiff-skills-lightflower",
+      "shadowdiff-skills-lightflower-negative",
+      "shadowdiff-skills-snowwind",
+      "shadowdiff-skills-snowwind-negative");
 
   /** Every listed row must prove the harness observes a deliberate divergence. */
   private static final Set<String> NEGATIVE_CONTROL_IDS = Set.of(
       "shadowdiff-ai-negative", "shadowdiff-skills-negative",
-      "shadowdiff-skills-firewall-negative", "shadowdiff-skills-spacemove-negative");
+      "shadowdiff-skills-firewall-negative", "shadowdiff-skills-spacemove-negative",
+      "shadowdiff-skills-fireboom-negative", "shadowdiff-skills-lightflower-negative",
+      "shadowdiff-skills-snowwind-negative");
 
   private record Row(String id, String kind, String blocking, String expect,
       String command, String artifact, String scope, String notes) {}
@@ -189,7 +197,10 @@ final class G4ReleaseGateTest {
   void skillsRowsDriveTheDedicatedSpellScenario() {
     for (String id : List.of("shadowdiff-skills", "shadowdiff-skills-negative",
         "shadowdiff-skills-firewall", "shadowdiff-skills-firewall-negative",
-        "shadowdiff-skills-spacemove", "shadowdiff-skills-spacemove-negative")) {
+        "shadowdiff-skills-spacemove", "shadowdiff-skills-spacemove-negative",
+        "shadowdiff-skills-fireboom", "shadowdiff-skills-fireboom-negative",
+        "shadowdiff-skills-lightflower", "shadowdiff-skills-lightflower-negative",
+        "shadowdiff-skills-snowwind", "shadowdiff-skills-snowwind-negative")) {
       Row row = rows().stream().filter(candidate -> candidate.id().equals(id)).findFirst()
           .orElseGet(() -> fail("the skills row disappeared from the manifest: " + id));
       assertTrue(ShadowDiffMain.Args.parse(shadowdiffArgs(row)).containsKey("skills"),
@@ -239,6 +250,52 @@ final class G4ReleaseGateTest {
       assertFalse(source.contains(row.id()),
           "the runner hard-codes scenario " + row.id() + "; it must come from the manifest only");
     }
+  }
+
+  private static final String WORKFLOW_RELATIVE = ".github/workflows/java-server.yml";
+
+  /**
+   * The failure fingerprint is the only readable trace of a red G4 job from a restricted
+   * environment: Actions job logs and artifacts live in a blob store such requests cannot
+   * reach, while check-run annotations and the job summary come back through the API. The
+   * helper that builds the fingerprint therefore has to be defined <em>above</em> the run
+   * loop — bash materialises a function when control reaches its definition, so one defined
+   * below the loop prints an empty {@code FAIL DIAG} exactly when CI needs it most (this
+   * regression was found by exercise, not by reading).
+   */
+  @org.junit.jupiter.api.Test
+  void theFailureFingerprintIsDefinedBeforeItIsUsedAndNamesEveryFailingRow() {
+    String source = read(repoRoot().resolve(RUNNER_RELATIVE));
+    int definition = source.indexOf("\nrow_diagnosis() {");
+    assertTrue(definition > 0, "the runner no longer defines row_diagnosis()");
+    int call = source.indexOf("$(row_diagnosis ");
+    assertTrue(call > 0, "the runner never calls row_diagnosis() from the run loop");
+    assertTrue(definition < call,
+        "row_diagnosis() is defined after its first call: bash answers \"command not found\" "
+            + "there and every FAIL DIAG line would be empty");
+    assertTrue(source.contains("FAILING ROWS:"),
+        "the runner must print the machine-readable failing-row list");
+    assertTrue(source.contains("FAIL DIAG "),
+        "the runner must print one diagnosis per failing row");
+  }
+
+  /**
+   * …and the workflow has to consume that fingerprint, because the raw log is unreadable
+   * from the environments this project is developed in.
+   */
+  @org.junit.jupiter.api.Test
+  void theWorkflowTurnsTheFingerprintIntoAnnotationsAndAJobSummary() {
+    Path workflow = repoRoot().resolve(WORKFLOW_RELATIVE);
+    assertTrue(Files.isRegularFile(workflow), "missing workflow " + WORKFLOW_RELATIVE);
+    String yaml = read(workflow);
+    assertTrue(yaml.contains("FAILING ROWS|FAIL DIAG"),
+        "the workflow must grep the runner's fingerprint out of the gate log");
+    assertTrue(yaml.contains("::error title=G4 gate failure::"),
+        "the fingerprint has to reach the check run as ::error annotations");
+    assertTrue(yaml.contains("GITHUB_STEP_SUMMARY"),
+        "the per-row summary must be attached to the job summary");
+    assertTrue(yaml.contains("PIPESTATUS[0]"),
+        "tee must not mask the gate's exit code — a red gate has to fail the job");
   }
 
   // ------------------------------------------------------------------ verdict honesty

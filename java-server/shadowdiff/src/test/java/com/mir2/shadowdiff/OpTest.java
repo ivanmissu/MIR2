@@ -121,6 +121,40 @@ class OpTest {
         Op.parseScript(String.join("\n", script.stream().map(Op::describe).toList())));
   }
 
+  /**
+   * W52: the three area-spell scripts must cast the real {@code CM_SPELL} operands, keep the
+   * two casts of a shared-power case far enough apart for the 1350 ms interval plus the row's
+   * own delay, and never fall back to wall-clock sleeps.
+   */
+  @Test
+  void areaSkillScriptsCastRealSpellsAndClearTheSpellIntervalWithoutSleeping() {
+    assertAreaScript(Op.fireBoomScript(), "23 20 19", "23 20 21");
+    assertAreaScript(Op.snowWindScript(), "33 20 19", "33 20 21");
+    assertAreaScript(Op.lightFlowerScript(), "24 20 20", "24 20 20");
+
+    // 地狱雷光 is caster-centred, so its click cell must be the caster's own cell — not a
+    // ring arm. That is the only script-level difference that keeps the two shapes apart.
+    assertTrue(Op.lightFlowerScript().stream().anyMatch(op -> op.kind() == Op.Kind.SPELL
+        && "24 20 20".equals(op.text())));
+  }
+
+  private static void assertAreaScript(List<Op> script, String firstCast, String secondCast) {
+    List<String> spells = script.stream().filter(op -> op.kind() == Op.Kind.SPELL)
+        .map(Op::text).toList();
+    assertEquals(List.of(firstCast, secondCast), spells,
+        "the script must send exactly the two documented CM_SPELL operand sets");
+    assertTrue(script.stream().noneMatch(op -> op.kind() == Op.Kind.SLEEP),
+        "manual-clock spell evidence must not depend on host wall time");
+    long pumped = script.stream().filter(op -> op.kind() == Op.Kind.TICK)
+        .mapToLong(Op::millis).sum();
+    assertTrue(pumped >= 29,
+        "the two casts need >= 29 ticks (1450 ms) to clear the 1350 ms interval, saw " + pumped);
+    assertTrue(script.stream().anyMatch(op -> op.kind() == Op.Kind.RELOG),
+        "the mana, training and drop state must be observed after the persistence round trip");
+    assertEquals(script,
+        Op.parseScript(String.join("\n", script.stream().map(Op::describe).toList())));
+  }
+
   @Test
   void aiScriptPumpsTheClockAroundEveryPlayerActionAndRoundTrips() {
     List<Op> script = Op.aiScript();

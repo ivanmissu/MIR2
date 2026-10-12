@@ -48,6 +48,24 @@
 
 ### 当前下一步（Next Session）
 
+> **W52 已交付（2026-10-12 · 计划与证据见 `java-server/docs/w52-next-plan.md` /
+> `java-server/docs/g0-evidence/2026-10-12-w52-area-skill-shadowdiff.md`）：**范围技能批次收口——
+> 爆裂火焰(23) / 地狱雷光(24) / 冰咆哮(33) 进入 shadowdiff `--skills --skill-case`，每个 case
+> 各配正负两条门禁行，`g4-release-gate.tsv` 由 16 行扩到 22 行。为让地狱雷光的 `LA_UNDEAD`
+> 满威力臂可见，`SkillCase` 新增 `TrainingDummyKind`（`trainer` / `scarecrow`；后者的
+> `Monster.DB Undead=1` 是首批十种怪里唯一的不死模板），既有 case 取值与默认行为一个未变。
+> 顺带补上 W51 遗留的 CI 可读性缺口：门禁脚本失败时打印 `FAILING ROWS` / `FAIL DIAG`，
+> workflow 把它转成 check-run 注解与 job summary —— 沙箱读不到 Actions 日志与 artifact，
+> 这两个通道是唯一可读的失败指纹；本地用「临时反转一行 `expect`」实跑验证了红色路径，
+> 由此发现并修掉「诊断函数定义晚于首次调用 ⇒ `FAIL DIAG` 恒为空」的接线缺陷，并补了两条回归测试。
+> **CI 复核**：PR #78 / run 38202881179 五个作业全绿，22 行门禁清单在 CI 首次跑通；另外用 `dist`
+> 分支上 CI 自建的 fat JAR（sha256 校验）逐条比对资源并跑完 22 行门禁（全绿）——CI 产物与仓库源码
+> 逐字节一致，`--ai-all` 行 10/10 PASS。矩阵行失败时现在还会打印整条 cause 链与第一个 `com.mir2`
+> 栈帧，避免再出现「知道哪一行红了、不知道红在哪」的 W51 式挂账。**优先级说明**：主计划优先级 ①Netty ②env-lint ③行会
+> ④技能/NPC 中，W51 已由需求方确认保留 ④（技能批次）方向、①–③ 顺延，W52 延续该决定，
+> 本周同样未改动 ①–③ 范围。G4 仍未签发，能力矩阵仍有 `unimplemented` 行（行会 / 攻城 / 交易 /
+> Market_Def 事务）。红线未动：16/17/20/30 红线技能、34–41 扩展段、57 怪行为、NPC 脚本引擎。
+
 > **W26 已交付（2026-09-24）：**组队管理系统（12人上限、创建/加人/踢人/退队/解散/离线死亡清理）、组队打怪经验加成与按等级权重分摊模型（12格视距判定、20%递增加成池）、完整组队 CM/SM 协议栈（658-666）及装备不可取下拒绝提示全量落地，本地 **371/371 绿**（+9）。实跑证据见 `java-server/docs/g0-evidence/2026-09-24-w26-group-and-unequip-hint.md`。**下一次开发优先级**：①**Netty 接入替换**（接入层最后一块，W02 起挂账；当前 `GateServer` 为 thread-per-connection + 虚拟线程，替换前需先确认是否仍有必要）；②**env-lint / 配置校验收口**（把 fail-fast 校验推广到全部 `MIR2_*`）；③**行会系统**（P3 独立候选，`GetGuildRelation` / 战盟敌对颜色等分支，动工前需重新确认范围）；④技能/魔法与 NPC 脚本引擎**红线仍未解除，不得开始**。G3 仍未正式过门：①3 名老玩家盲测、②Delphi↔Java 十怪执行，共同卡真实环境（Windows + mir2.exe + Delphi 服务端）。
 
 > **上一步（W25，已完成）：**接入层尾项三件（IP 黑名单 / `BlockMethod` / 包体突发守卫）全量落地，本地 362/362 绿（+32），含 7 个跨真实 TCP 的集成用例与一组负向对照。Delphi 侧时间泵勘查已完成且结论为否定，G3 ② 的跨实现动态 AI 对拍改走「墙钟但远离决策边界」路线。

@@ -138,6 +138,98 @@ class ScenarioRegressionTest {
   }
 
   @Test
+  void skillsFireBoomScenarioStrikesBothRingArmsIdentically(@TempDir Path reports)
+      throws Exception {
+    Path report = reports.resolve("skills-fireboom");
+    int status = ShadowDiffMain.run(new String[] {
+        "--embedded", "--skills", "--skill-case", "fireboom", "--strict-messages",
+        "--seed", "20260922", "--report-dir", report.toString()});
+    String markdown = readReport(report);
+    assertEquals(0, status,
+        "both 爆裂火焰 squares must strike the same dummies for the same shared power: "
+            + markdown.replace('\n', ' '));
+    assertTrue(markdown.contains("spell 23 20 19") && markdown.contains("spell 23 20 21"),
+        "both casts of the ring's north and south arms must be in the script");
+    assertTrue(markdown.contains("struck other dmg=12 hp=9987/9999"),
+        "the first shared-power roll reaches five dummies and must be observed on the wire");
+    assertTrue(markdown.contains("skills=[magic=23 level=0 train=4 key=0]"),
+        "both casts must train 爆裂火焰 and the row must survive the relog");
+  }
+
+  @Test
+  void skillsFireBoomWrongSeedIsDetected(@TempDir Path reports) throws Exception {
+    Path report = reports.resolve("skills-fireboom-negative");
+    int status = ShadowDiffMain.run(new String[] {
+        "--embedded", "--skills", "--skill-case", "fireboom",
+        "--seed", "20260922", "--right-seed", "99999",
+        "--report-dir", report.toString()});
+    assertEquals(1, status, "a different MAGIC stream must perturb the shared blast power: "
+        + readReport(report).replace('\n', ' '));
+  }
+
+  @Test
+  void skillsLightFlowerScenarioKillsTheUndeadRingIdentically(@TempDir Path reports)
+      throws Exception {
+    Path report = reports.resolve("skills-lightflower");
+    int status = ShadowDiffMain.run(new String[] {
+        "--embedded", "--skills", "--skill-case", "lightflower", "--strict-messages",
+        "--seed", "20260922", "--report-dir", report.toString()});
+    String markdown = readReport(report);
+    assertEquals(0, status,
+        "the caster-centred 地狱雷光 must kill the undead ring identically on both sides: "
+            + markdown.replace('\n', ' '));
+    assertTrue(markdown.contains("spell 24 20 20"));
+    assertTrue(markdown.contains("struck other dmg=37 hp=0/20"),
+        "the LA_UNDEAD arm must take the full shared power, not power div 10");
+    assertTrue(markdown.contains("exp +15 total=120"),
+        "eight 稻草人 kills must award the same experience on both servers");
+    assertTrue(markdown.contains("mp=514/572"),
+        "the second cast must spend its mana even though the square is empty (29 MP again)");
+    assertTrue(markdown.contains("skills=[magic=24 level=0 train=3 key=0]"),
+        "the second, empty-square cast must not train: training stays at the first cast's value");
+  }
+
+  @Test
+  void skillsLightFlowerWrongSeedIsDetected(@TempDir Path reports) throws Exception {
+    Path report = reports.resolve("skills-lightflower-negative");
+    int status = ShadowDiffMain.run(new String[] {
+        "--embedded", "--skills", "--skill-case", "lightflower",
+        "--seed", "20260922", "--right-seed", "99999",
+        "--report-dir", report.toString()});
+    assertEquals(1, status,
+        "a different seed must perturb the undead damage and the seeded drop rolls: "
+            + readReport(report).replace('\n', ' '));
+  }
+
+  @Test
+  void skillsSnowWindScenarioStrikesBothRingArmsIdentically(@TempDir Path reports)
+      throws Exception {
+    Path report = reports.resolve("skills-snowwind");
+    int status = ShadowDiffMain.run(new String[] {
+        "--embedded", "--skills", "--skill-case", "snowwind", "--strict-messages",
+        "--seed", "20260922", "--report-dir", report.toString()});
+    String markdown = readReport(report);
+    assertEquals(0, status,
+        "both 冰咆哮 squares must strike the same dummies for the same shared power: "
+            + markdown.replace('\n', ' '));
+    assertTrue(markdown.contains("spell 33 20 19") && markdown.contains("spell 33 20 21"));
+    assertTrue(markdown.contains("struck other dmg=23 hp=9976/9999"),
+        "the W44 row must reuse the MagBigExplosion shape with its own radius and power");
+    assertTrue(markdown.contains("skills=[magic=33 level=0 train=4 key=0]"));
+  }
+
+  @Test
+  void skillsSnowWindWrongSeedIsDetected(@TempDir Path reports) throws Exception {
+    Path report = reports.resolve("skills-snowwind-negative");
+    int status = ShadowDiffMain.run(new String[] {
+        "--embedded", "--skills", "--skill-case", "snowwind",
+        "--seed", "20260922", "--right-seed", "99999",
+        "--report-dir", report.toString()});
+    assertEquals(1, status, "a different MAGIC stream must perturb the 冰咆哮 power: "
+        + readReport(report).replace('\n', ' '));
+  }
+
+  @Test
   void unknownSkillCaseIsAUsageErrorBeforeAnyServerBoots(@TempDir Path reports) {
     assertThrows(IllegalArgumentException.class, () -> ShadowDiffMain.run(new String[] {
         "--embedded", "--skills", "--skill-case", "summon",

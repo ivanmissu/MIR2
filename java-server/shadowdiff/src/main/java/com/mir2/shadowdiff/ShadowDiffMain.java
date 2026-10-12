@@ -194,11 +194,14 @@ public final class ShadowDiffMain {
   }
 
   /**
-   * W41 spell-shadow scenario. A pre-seeded level-31 Taoist begins below full HP, already
-   * knows 群体治愈术 (29), casts it on the own cell and then advances the MANUAL clock by exactly
-   * the 800 ms delayed-impact window. The snapshot therefore has three independent wire-only
-   * observations to compare: immediate MP spend, delayed HP recovery, and SM_MAGIC_LVEXP skill
-   * training. A right-hand seed change perturbs the MAGIC-stream healing roll and must fail.
+   * Spell-shadow scenarios. Every case seeds one character, spawns the ring of dummies its
+   * script was written against and pumps a MANUAL clock, so the whole comparison is a
+   * function of the script, the seeds and the shipped config — never of the host's clock.
+   *
+   * <p>W41's 群体治愈术 case (a level-31 Taoist with an 80 HP deficit) remains the default:
+   * immediate MP spend, the delayed 800 ms HP recovery and the SM_MAGIC_LVEXP training line
+   * are three independent wire-only observations. W51 added 火墙/瞬息移动, W52 the three
+   * area spells — see {@link SkillCase} for each case's setup.
    */
   private static int runSkillScenario(Map<String, String> options, Duration settle,
       boolean strictMessages, Path reportDir, String account, String password,
@@ -215,11 +218,11 @@ public final class ShadowDiffMain {
         account, password, skillCase.job(), skillCase.level(), skillCase.healthDeficit(),
         List.of(skillCase.learned()), List.of(), 0));
     try (EmbeddedWorld left = EmbeddedWorld.boot(workDir.resolve("left"), "skills-left",
-            serverName, seed, monsters, "trainer", com.mir2.world.WorldClock.Mode.MANUAL,
-            accounts, null);
+            serverName, seed, monsters, skillCase.monsterKind(),
+            com.mir2.world.WorldClock.Mode.MANUAL, accounts, null);
         EmbeddedWorld right = EmbeddedWorld.boot(workDir.resolve("right"), "skills-right",
-            serverName, rightSeed, monsters, "trainer", com.mir2.world.WorldClock.Mode.MANUAL,
-            accounts, null)) {
+            serverName, rightSeed, monsters, skillCase.monsterKind(),
+            com.mir2.world.WorldClock.Mode.MANUAL, accounts, null)) {
       return compare(left.target(), right.target(), script, settle, strictMessages,
           reportDir, account, password, serverName);
     }
@@ -237,15 +240,52 @@ public final class ShadowDiffMain {
    *       {@code TFireBurnEvent} clock, so the MAGIC-stream damage rolls are observable.</li>
    *   <li>{@code spacemove} — W51 瞬息移动 (21) on a level-25 Wizard: the cast frame, the
    *       Random(11) success gate and the MapRandomMove landing cell are all wire-visible.</li>
+   *   <li>{@code fireboom} — W52 爆裂火焰 (23, SKILL_FIREBOOM) on a level-25 Wizard: the
+   *       ground-target square of {@code MagBigExplosion}, two casts onto opposite arms of the
+   *       dummy ring, so two independent shared-power rolls reach the wire.</li>
+   *   <li>{@code lightflower} — W52 地狱雷光 (24, SKILL_LIGHTFLOWER) on a level-31 Wizard
+   *       ringed by <em>scarecrow</em> dummies: the only {@code LA_UNDEAD} branch, and the
+   *       reason this case seeds an undead monster kind instead of the trainer.</li>
+   *   <li>{@code snowwind} — W52 冰咆哮 (33, SKILL_SNOWWIND) on a level-35 Wizard: the same
+   *       {@code MagBigExplosion} body as 爆裂火焰, but its radius comes from
+   *       {@code MIR2_SNOW_WIND_RANGE}, so the row keeps the two config fields apart.</li>
    * </ul>
+   *
+   * <p>Each case pins the monster kind its script was written against: the trainer dummy is
+   * stationary with 9999 HP (nothing dies, so the only randomness is the damage roll), while
+   * {@code lightflower} needs the undead scarecrow for the {@code LA_UNDEAD} full-power arm.
    */
   enum SkillCase {
     HEALING("healing", LevelAbilities.JOB_TAOIST, 31, 80, PlayerSkill.learned(29), 0,
-        Op::areaHealingScript),
+        TrainingDummyKind.TRAINER, Op::areaHealingScript),
     FIREWALL("firewall", LevelAbilities.JOB_WIZARD, 25, 0, PlayerSkill.learned(22), 8,
-        Op::fireWallScript),
+        TrainingDummyKind.TRAINER, Op::fireWallScript),
     SPACEMOVE("spacemove", LevelAbilities.JOB_WIZARD, 25, 0, new PlayerSkill(21, 3, 0, 0), 0,
-        Op::spaceMoveScript);
+        TrainingDummyKind.TRAINER, Op::spaceMoveScript),
+    FIREBOOM("fireboom", LevelAbilities.JOB_WIZARD, 25, 0, PlayerSkill.learned(23), 8,
+        TrainingDummyKind.TRAINER, Op::fireBoomScript),
+    LIGHTFLOWER("lightflower", LevelAbilities.JOB_WIZARD, 31, 0, PlayerSkill.learned(24), 8,
+        TrainingDummyKind.SCARECROW, Op::lightFlowerScript),
+    SNOWWIND("snowwind", LevelAbilities.JOB_WIZARD, 35, 0, PlayerSkill.learned(33), 8,
+        TrainingDummyKind.TRAINER, Op::snowWindScript);
+
+    /**
+     * The one monster template a case spawns its ring from. {@code scarecrow} is the only
+     * first-ten template with {@code Monster.DB} {@code Undead}=1, which is what makes the
+     * 地狱雷光 full-power arm observable at all ({@code power div 10} would swallow the low
+     * bits); it is also the only mobile kind used by a skill case, so its case keeps its tick
+     * count down to the two casts.
+     */
+    enum TrainingDummyKind {
+      TRAINER("trainer"),
+      SCARECROW("scarecrow");
+
+      private final String cliName;
+
+      TrainingDummyKind(String cliName) { this.cliName = cliName; }
+
+      String cliName() { return cliName; }
+    }
 
     private final String cliName;
     private final int job;
@@ -253,16 +293,19 @@ public final class ShadowDiffMain {
     private final int healthDeficit;
     private final PlayerSkill learned;
     private final int monsters;
+    private final TrainingDummyKind monsterKind;
     private final java.util.function.Supplier<List<Op>> script;
 
     SkillCase(String cliName, int job, int level, int healthDeficit, PlayerSkill learned,
-        int monsters, java.util.function.Supplier<List<Op>> script) {
+        int monsters, TrainingDummyKind monsterKind,
+        java.util.function.Supplier<List<Op>> script) {
       this.cliName = cliName;
       this.job = job;
       this.level = level;
       this.healthDeficit = healthDeficit;
       this.learned = learned;
       this.monsters = monsters;
+      this.monsterKind = monsterKind;
       this.script = script;
     }
 
@@ -270,7 +313,8 @@ public final class ShadowDiffMain {
       for (SkillCase skillCase : values()) {
         if (skillCase.cliName.equals(value)) return skillCase;
       }
-      throw new IllegalArgumentException("--skill-case must be one of healing, firewall, spacemove");
+      throw new IllegalArgumentException("--skill-case must be one of healing, firewall, "
+          + "spacemove, fireboom, lightflower, snowwind");
     }
 
     int job() { return job; }
@@ -278,6 +322,7 @@ public final class ShadowDiffMain {
     int healthDeficit() { return healthDeficit; }
     PlayerSkill learned() { return learned; }
     int monsters() { return monsters; }
+    String monsterKind() { return monsterKind.cliName(); }
     List<Op> script() { return script.get(); }
   }
 
@@ -306,9 +351,8 @@ public final class ShadowDiffMain {
             account, password, serverName);
       } catch (Exception error) {
         status = 2;
-        note = error.getClass().getSimpleName() + ": "
-            + String.valueOf(error.getMessage()).replace('|', '/').replace('\n', ' ');
-        System.err.printf(Locale.ROOT, "[shadowdiff] AI matrix row %s failed: %s%n", kind, error);
+        note = describeFailure(error);
+        System.err.printf(Locale.ROOT, "[shadowdiff] AI matrix row %s failed: %s%n", kind, note);
       }
       rows.add(new AiMatrixRow(kind, status, note));
     }
@@ -331,7 +375,43 @@ public final class ShadowDiffMain {
     Files.writeString(summary, markdown, StandardCharsets.UTF_8);
     System.out.printf(Locale.ROOT, "%n[shadowdiff] AI matrix=%d/%d PASS, report: %s%n",
         passed, rows.size(), summary.toAbsolutePath());
+    if (passed != rows.size()) {
+      // The gate's failure fingerprint reads this line out of the log (the raw Actions log is
+      // unreadable from restricted environments), so name every failed row *and* its root
+      // cause here instead of leaving a bare PASS-count for the reader to chase.
+      List<String> failed = new ArrayList<>();
+      for (AiMatrixRow row : rows) {
+        if (row.status() != 0) failed.add(row.kind() + " (" + row.note() + ")");
+      }
+      System.out.printf(Locale.ROOT, "[shadowdiff] AI matrix failed rows: %s%n",
+          String.join(", ", failed));
+    }
     return passed == rows.size() ? 0 : 1;
+  }
+
+  /**
+   * One-line description of a failure for the matrix table and the log. The whole {@code cause}
+   * chain matters: an {@code UncheckedIOException("failed reading MonItems/…")} hides the real
+   * reason (closed zip, disk error…) in its cause, and the log tail is often the only thing a
+   * restricted CI environment can read. Ends with the first {@code com.mir2} frame so a
+   * failure still points at our own code. Never contains a newline (the note is a table cell).
+   */
+  static String describeFailure(Throwable error) {
+    StringBuilder description = new StringBuilder();
+    for (Throwable current = error; current != null; current = current.getCause()) {
+      if (description.length() > 0) description.append(" <- ");
+      description.append(current.getClass().getSimpleName());
+      if (current.getMessage() != null) description.append(": ").append(current.getMessage());
+      if (current.getCause() == current) break;
+    }
+    for (StackTraceElement frame : error.getStackTrace()) {
+      if (frame.getClassName().startsWith("com.mir2.")) {
+        description.append(" @ ").append(frame.getClassName()).append('.')
+            .append(frame.getMethodName()).append(':').append(frame.getLineNumber());
+        break;
+      }
+    }
+    return description.toString().replace('|', '/').replace('\n', ' ').replace('\r', ' ');
   }
 
   private record AiMatrixRow(String kind, int status, String note) {}
@@ -742,13 +822,18 @@ public final class ShadowDiffMain {
                                给两台服务端配同一个值。
         --pve                  用内置 PvE 对拍脚本（走到木桩前连续攻击），并默认放 8 个木桩。
                                需要两侧同种子；这是「静止怪对拍」的开箱即用入口。
-        --skills               （embedded，W41）**技能对拍·群体治愈术**：预种 31 级道士、
+        --skills               （embedded，W41/W51/W52）**技能对拍**：默认场景预种 31 级道士、
                                80 HP 缺口和已学 29 号群体治愈术；真实 CM_SPELL 后以 MANUAL
                                时钟 tick 16（800 ms）观察 MP、HP 与 SM_MAGIC_LVEXP 技能熟练度。
                                需要两侧同种子；--right-seed 是该场景的非空转负控制。
-        --skill-case NAME      （--skills，W51）选择技能场景：healing（默认，即 W41 群体治愈）、
+        --skill-case NAME      （--skills，W51/W52）选择技能场景：healing（默认，即 W41 群体治愈）、
                                firewall（火墙 22：十字火墙烧木桩，灼烧伤害走 MAGIC 流）、
-                               spacemove（瞬息移动 21：施法帧 + 成功门 + MapRandomMove 落点）。
+                               spacemove（瞬息移动 21：施法帧 + 成功门 + MapRandomMove 落点）、
+                               fireboom（爆裂火焰 23：地面 3x3 方形，两次施法两次共享威力抽签）、
+                               lightflower（地狱雷光 24：以施法者为圆心，木桩换成不死稻草人，
+                               走 LA_UNDEAD 满威力分支，死亡/经验/掉落一并进入观测面）、
+                               snowwind（冰咆哮 33：与爆裂火焰共用 MagBigExplosion，半径走
+                               MIR2_SNOW_WIND_RANGE）。
         --ai                   （embedded）**会动的怪对拍**（W23）：两侧世界改用 MANUAL 世界时钟
                                （时间只在 tick op 推进），默认放 4 只鸡并用内置 AI 脚本。
                                怪物走位/攻击节拍因此只由 tick 数决定，与两台主机的墙钟无关；
