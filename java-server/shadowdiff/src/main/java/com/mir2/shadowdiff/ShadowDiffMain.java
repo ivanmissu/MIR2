@@ -249,11 +249,19 @@ public final class ShadowDiffMain {
    *   <li>{@code snowwind} — W52 冰咆哮 (33, SKILL_SNOWWIND) on a level-35 Wizard: the same
    *       {@code MagBigExplosion} body as 爆裂火焰, but its radius comes from
    *       {@code MIR2_SNOW_WIND_RANGE}, so the row keeps the two config fields apart.</li>
+   *   <li>{@code shield} — W53 魔法盾 (31, SKILL_MAGIC_SHIELD) on a level-31 Wizard:
+   *       ground-target cast, duration roll (18–19s), deterministic {@code BUFF_ALREADY_ACTIVE}
+   *       refusal while active, tick-driven expiry and persistent training.</li>
+   *   <li>{@code killundead} — W53 圣言术 (32, SKILL_KILLUNDEAD) on a level-32 Wizard
+   *       ringed by undead scarecrows: single-target cast with explicit monster id,
+   *       instant-kill roll from {@code TURN_UNDEAD} stream, synchronized death, experience,
+   *       drops and training.</li>
    * </ul>
    *
    * <p>Each case pins the monster kind its script was written against: the trainer dummy is
    * stationary with 9999 HP (nothing dies, so the only randomness is the damage roll), while
-   * {@code lightflower} needs the undead scarecrow for the {@code LA_UNDEAD} full-power arm.
+   * {@code lightflower} and {@code killundead} need the undead scarecrow for the
+   * {@code LA_UNDEAD} arm.
    */
   enum SkillCase {
     HEALING("healing", LevelAbilities.JOB_TAOIST, 31, 80, PlayerSkill.learned(29), 0,
@@ -267,14 +275,18 @@ public final class ShadowDiffMain {
     LIGHTFLOWER("lightflower", LevelAbilities.JOB_WIZARD, 31, 0, PlayerSkill.learned(24), 8,
         TrainingDummyKind.SCARECROW, Op::lightFlowerScript),
     SNOWWIND("snowwind", LevelAbilities.JOB_WIZARD, 35, 0, PlayerSkill.learned(33), 8,
-        TrainingDummyKind.TRAINER, Op::snowWindScript);
+        TrainingDummyKind.TRAINER, Op::snowWindScript),
+    SHIELD("shield", LevelAbilities.JOB_WIZARD, 31, 0, PlayerSkill.learned(31), 0,
+        TrainingDummyKind.TRAINER, Op::shieldScript),
+    KILLUNDEAD("killundead", LevelAbilities.JOB_WIZARD, 39, 0, new PlayerSkill(32, 1, 0, 0), 8,
+        TrainingDummyKind.SCARECROW, Op::killUndeadScript);
 
     /**
      * The one monster template a case spawns its ring from. {@code scarecrow} is the only
      * first-ten template with {@code Monster.DB} {@code Undead}=1, which is what makes the
-     * 地狱雷光 full-power arm observable at all ({@code power div 10} would swallow the low
-     * bits); it is also the only mobile kind used by a skill case, so its case keeps its tick
-     * count down to the two casts.
+     * 地狱雷光 full-power arm and 圣言术 instant-kill arm observable at all ({@code power div 10}
+     * or non-undead rejection would fail); it is also the only mobile kind used by skill cases,
+     * so their cases keep their tick counts down to the casts.
      */
     enum TrainingDummyKind {
       TRAINER("trainer"),
@@ -314,7 +326,7 @@ public final class ShadowDiffMain {
         if (skillCase.cliName.equals(value)) return skillCase;
       }
       throw new IllegalArgumentException("--skill-case must be one of healing, firewall, "
-          + "spacemove, fireboom, lightflower, snowwind");
+          + "spacemove, fireboom, lightflower, snowwind, shield, killundead");
     }
 
     int job() { return job; }
@@ -822,18 +834,22 @@ public final class ShadowDiffMain {
                                给两台服务端配同一个值。
         --pve                  用内置 PvE 对拍脚本（走到木桩前连续攻击），并默认放 8 个木桩。
                                需要两侧同种子；这是「静止怪对拍」的开箱即用入口。
-        --skills               （embedded，W41/W51/W52）**技能对拍**：默认场景预种 31 级道士、
+        --skills               （embedded，W41/W51/W52/W53）**技能对拍**：默认场景预种 31 级道士、
                                80 HP 缺口和已学 29 号群体治愈术；真实 CM_SPELL 后以 MANUAL
                                时钟 tick 16（800 ms）观察 MP、HP 与 SM_MAGIC_LVEXP 技能熟练度。
                                需要两侧同种子；--right-seed 是该场景的非空转负控制。
-        --skill-case NAME      （--skills，W51/W52）选择技能场景：healing（默认，即 W41 群体治愈）、
+        --skill-case NAME      （--skills，W51/W52/W53）选择技能场景：healing（默认，即 W41 群体治愈）、
                                firewall（火墙 22：十字火墙烧木桩，灼烧伤害走 MAGIC 流）、
                                spacemove（瞬息移动 21：施法帧 + 成功门 + MapRandomMove 落点）、
                                fireboom（爆裂火焰 23：地面 3x3 方形，两次施法两次共享威力抽签）、
                                lightflower（地狱雷光 24：以施法者为圆心，木桩换成不死稻草人，
                                走 LA_UNDEAD 满威力分支，死亡/经验/掉落一并进入观测面）、
                                snowwind（冰咆哮 33：与爆裂火焰共用 MagBigExplosion，半径走
-                               MIR2_SNOW_WIND_RANGE）。
+                               MIR2_SNOW_WIND_RANGE）、
+                               shield（魔法盾 31：自身地面施法，持续时间抽签 + 状态位，存续期重复施法
+                               确定性拒绝，超时消失后再次施法成功）、
+                               killundead（圣言术 32：不死稻草人单体命中，TURN_UNDEAD 流秒杀抽签，
+                               秒杀/经验/掉落/熟练度链路）。
         --ai                   （embedded）**会动的怪对拍**（W23）：两侧世界改用 MANUAL 世界时钟
                                （时间只在 tick op 推进），默认放 4 只鸡并用内置 AI 脚本。
                                怪物走位/攻击节拍因此只由 tick 数决定，与两台主机的墙钟无关；

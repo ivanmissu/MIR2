@@ -12,6 +12,10 @@
 # W52：爆裂火焰 / 地狱雷光 / 冰咆哮 三个范围技能进入 --skill-case，再新增六行（正负各三）；
 #       技能场景的木桩环改为按 case 指定种类——地狱雷光用不死稻草人（Monster.DB Undead=1）
 #       才能看到 LA_UNDEAD 满威力臂，其余 case 仍用静止木桩。仍无 Delphi/真实客户端差分证据。
+# W53：魔法盾 / 圣言术 两个法师技能进入 --skill-case，再新增四行（正负各二）；
+#       魔法盾覆盖持续时间抽签、存续期重复施法确定性拒绝与超时重施链路；
+#       圣言术覆盖单体指定目标、不死怪（Monster.DB Undead=1）TURN_UNDEAD 秒杀抽签、
+#       死亡/经验/掉落与训练链路。仍无 Delphi/真实客户端差分证据。
 # 列：id / kind / blocking / expect / command / artifact / scope / notes
 #   id        门禁行标识（小写 kebab，全局唯一）
 #   kind      maven | shadowdiff
@@ -48,3 +52,7 @@ shadowdiff-skills-lightflower	shadowdiff	yes	exit-0	java --enable-native-access=
 shadowdiff-skills-lightflower-negative	shadowdiff	yes	exit-1	java --enable-native-access=ALL-UNNAMED -jar {{jar}} --embedded --skills --skill-case lightflower --seed 20260922 --right-seed 99999 --report-dir {{report}}/shadowdiff-skills-lightflower-negative	shadowdiff-skills-lightflower-negative	地狱雷光负向对照：右侧换种子后不死目标伤害与掉落抽签必须出现差异（实测伤害、金币堆数量 2 vs 1 与训练点数同时不同）	W52 负向对照；exit-1 是期望结果，exit 2 崩溃一律失败
 shadowdiff-skills-snowwind	shadowdiff	yes	exit-0	java --enable-native-access=ALL-UNNAMED -jar {{jar}} --embedded --skills --skill-case snowwind --strict-messages --seed 20260922 --report-dir {{report}}/shadowdiff-skills-snowwind	shadowdiff-skills-snowwind	W52 冰咆哮（SKILL_SNOWWIND=33，与爆裂火焰共用 MagBigExplosion，半径走 MIR2_SNOW_WIND_RANGE）：35 级法师（NeedL1=35）两次施法打木桩环南北两臂，共享威力抽签、33 MP 扣减与训练逐步一致	W52 首次把 W44 冰咆哮接入 shadowdiff；该行把 nSnowWindRange 与 nFireBoomRage 两个配置字段分开钉住；Java↔Java 对拍，不构成 Delphi/真实客户端证据
 shadowdiff-skills-snowwind-negative	shadowdiff	yes	exit-1	java --enable-native-access=ALL-UNNAMED -jar {{jar}} --embedded --skills --skill-case snowwind --seed 20260922 --right-seed 99999 --report-dir {{report}}/shadowdiff-skills-snowwind-negative	shadowdiff-skills-snowwind-negative	冰咆哮负向对照：右侧换种子后共享威力抽签必须出现差异（实测 dmg 23/23 vs 21/22 与训练点数 4 vs 5）	W52 负向对照；exit-1 是期望结果，exit 2 崩溃一律失败
+shadowdiff-skills-shield	shadowdiff	yes	exit-0	java --enable-native-access=ALL-UNNAMED -jar {{jar}} --embedded --skills --skill-case shield --strict-messages --seed 20260922 --report-dir {{report}}/shadowdiff-skills-shield	shadowdiff-skills-shield	W53 魔法盾（SKILL_MAGIC_SHIELD=31）：31 级法师地面施法激活魔法盾，持续时间抽签（MAGIC 流）、存续期重复施法确定性拒绝、时钟推进超时消失与重施训练两侧逐步一致；重登后熟练度保持	W53 首次把魔法盾接入 shadowdiff；Java↔Java 确定性对拍，不构成 Delphi/真实客户端证据
+shadowdiff-skills-shield-negative	shadowdiff	yes	exit-1	java --enable-native-access=ALL-UNNAMED -jar {{jar}} --embedded --skills --skill-case shield --seed 20260922 --right-seed 99999 --report-dir {{report}}/shadowdiff-skills-shield-negative	shadowdiff-skills-shield-negative	魔法盾负向对照：右侧换种子后持续时间抽签（MAGIC 流 19s vs 18s）在 18.25 秒处的重施判定必须出现差异，证明持续时间与状态位判定不是空转	W53 负向对照；exit-1 是期望结果，exit 2 崩溃一律失败
+shadowdiff-skills-killundead	shadowdiff	yes	exit-0	java --enable-native-access=ALL-UNNAMED -jar {{jar}} --embedded --skills --skill-case killundead --strict-messages --seed 20260922 --report-dir {{report}}/shadowdiff-skills-killundead	shadowdiff-skills-killundead	W53 圣言术（SKILL_KILLUNDEAD=32）：39 级法师对不死稻草人单体施法，TURN_UNDEAD 流秒杀抽签、击杀死亡帧、+15 经验、地面掉落与训练两侧逐步一致；重登后经验与熟练度保持	W53 首次把圣言术接入 shadowdiff；Java↔Java 确定性对拍，不构成 Delphi/真实客户端证据
+shadowdiff-skills-killundead-negative	shadowdiff	yes	exit-1	java --enable-native-access=ALL-UNNAMED -jar {{jar}} --embedded --skills --skill-case killundead --seed 20260922 --right-seed 99999 --report-dir {{report}}/shadowdiff-skills-killundead-negative	shadowdiff-skills-killundead-negative	圣言术负向对照：右侧换种子后 TURN_UNDEAD 秒杀抽签与击杀判定必须出现差异（首发未命中 vs 秒杀），证明圣言术判定不是空转	W53 负向对照；exit-1 是期望结果，exit 2 崩溃一律失败

@@ -79,14 +79,19 @@ final class G4ReleaseGateTest {
       "shadowdiff-skills-lightflower",
       "shadowdiff-skills-lightflower-negative",
       "shadowdiff-skills-snowwind",
-      "shadowdiff-skills-snowwind-negative");
+      "shadowdiff-skills-snowwind-negative",
+      "shadowdiff-skills-shield",
+      "shadowdiff-skills-shield-negative",
+      "shadowdiff-skills-killundead",
+      "shadowdiff-skills-killundead-negative");
 
   /** Every listed row must prove the harness observes a deliberate divergence. */
   private static final Set<String> NEGATIVE_CONTROL_IDS = Set.of(
       "shadowdiff-ai-negative", "shadowdiff-skills-negative",
       "shadowdiff-skills-firewall-negative", "shadowdiff-skills-spacemove-negative",
       "shadowdiff-skills-fireboom-negative", "shadowdiff-skills-lightflower-negative",
-      "shadowdiff-skills-snowwind-negative");
+      "shadowdiff-skills-snowwind-negative", "shadowdiff-skills-shield-negative",
+      "shadowdiff-skills-killundead-negative");
 
   private record Row(String id, String kind, String blocking, String expect,
       String command, String artifact, String scope, String notes) {}

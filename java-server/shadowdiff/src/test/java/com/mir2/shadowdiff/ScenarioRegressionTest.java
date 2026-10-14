@@ -230,6 +230,62 @@ class ScenarioRegressionTest {
   }
 
   @Test
+  void skillsShieldScenarioActivatesRefusesAndExpiresIdentically(@TempDir Path reports)
+      throws Exception {
+    Path report = reports.resolve("skills-shield");
+    int status = ShadowDiffMain.run(new String[] {
+        "--embedded", "--skills", "--skill-case", "shield", "--strict-messages",
+        "--seed", "20260922", "--report-dir", report.toString()});
+    String markdown = readReport(report);
+    assertEquals(0, status,
+        "魔法盾 activation, duplicate refusal, and expiry must match on both sides: "
+            + markdown.replace('\n', ' '));
+    assertTrue(markdown.contains("spell 31 20 20"));
+    assertTrue(markdown.contains("skills=[magic=31 level=0 train=6 key=0]"),
+        "the shield casts must train the skill and survive the relog");
+  }
+
+  @Test
+  void skillsShieldWrongSeedIsDetected(@TempDir Path reports) throws Exception {
+    Path report = reports.resolve("skills-shield-negative");
+    int status = ShadowDiffMain.run(new String[] {
+        "--embedded", "--skills", "--skill-case", "shield",
+        "--seed", "20260922", "--right-seed", "99999",
+        "--report-dir", report.toString()});
+    assertEquals(1, status, "a different MAGIC stream must perturb the shield duration: "
+        + readReport(report).replace('\n', ' '));
+  }
+
+  @Test
+  void skillsKillUndeadScenarioKillsTargetScarecrowIdentically(@TempDir Path reports)
+      throws Exception {
+    Path report = reports.resolve("skills-killundead");
+    int status = ShadowDiffMain.run(new String[] {
+        "--embedded", "--skills", "--skill-case", "killundead", "--strict-messages",
+        "--seed", "20260922", "--report-dir", report.toString()});
+    String markdown = readReport(report);
+    assertEquals(0, status,
+        "圣言术 instant-kill against the scarecrow must match on both sides: "
+            + markdown.replace('\n', ' '));
+    assertTrue(markdown.contains("spell 32 20 19 2") && markdown.contains("spell 32 20 21 6"));
+    assertTrue(markdown.contains("combat=[death other at=(20,21), exp +15 total=15]"),
+        "the instant kill of scarecrow #6 must be observed on the wire");
+    assertTrue(markdown.contains("skills=[magic=32 level=1 train=3 key=0]"),
+        "the successful kill must train the skill and survive relog");
+  }
+
+  @Test
+  void skillsKillUndeadWrongSeedIsDetected(@TempDir Path reports) throws Exception {
+    Path report = reports.resolve("skills-killundead-negative");
+    int status = ShadowDiffMain.run(new String[] {
+        "--embedded", "--skills", "--skill-case", "killundead",
+        "--seed", "20260922", "--right-seed", "99999",
+        "--report-dir", report.toString()});
+    assertEquals(1, status, "a different TURN_UNDEAD stream must perturb the instant-kill outcome: "
+        + readReport(report).replace('\n', ' '));
+  }
+
+  @Test
   void unknownSkillCaseIsAUsageErrorBeforeAnyServerBoots(@TempDir Path reports) {
     assertThrows(IllegalArgumentException.class, () -> ShadowDiffMain.run(new String[] {
         "--embedded", "--skills", "--skill-case", "summon",
