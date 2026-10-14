@@ -163,6 +163,56 @@ class OpTest {
     assertEquals(killundead, Op.parseScript(String.join("\n", killundead.stream().map(Op::describe).toList())));
   }
 
+  /**
+   * W54: the two 护身符-gated Taoist defence-buff scripts (幽灵盾 14 / 神圣战甲术 15) are
+   * shape-identical twins — the same fizzle→takeon opening, the same five casts, the same
+   * staggered deadline ladder and the same relog finale — differing only in the spell id
+   * the casts carry. Pinning the shared shape (and pinning the twins to each other) means
+   * any behaviour difference the paired gate rows ever report is attributable to the
+   * Magic.DB row's {@code btType} arm — the MAC vs the AC word — and not to script drift.
+   */
+  @Test
+  void w54DefenceBuffScriptsAreShapeIdenticalTwinsBehindADeadlineLadder() {
+    List<Op> ghostshield = Op.ghostShieldScript();
+    List<Op> holyarmour = Op.holyArmourScript();
+    List<Op.Kind> ghostKinds = ghostshield.stream().map(Op::kind).toList();
+    assertEquals(ghostKinds, holyarmour.stream().map(Op::kind).toList(),
+        "the twins may differ only in the spell id, never in op order or op count");
+    assertEquals(29, ghostshield.size());
+
+    assertEquals(java.util.Collections.nCopies(5, "14 20 20"),
+        ghostshield.stream().filter(op -> op.kind() == Op.Kind.SPELL).map(Op::text).toList());
+    assertEquals(java.util.Collections.nCopies(5, "15 20 20"),
+        holyarmour.stream().filter(op -> op.kind() == Op.Kind.SPELL).map(Op::text).toList());
+
+    for (List<Op> script : List.of(ghostshield, holyarmour)) {
+      List<Op.Kind> kinds = script.stream().map(Op::kind).toList();
+      assertTrue(script.stream().noneMatch(op -> op.kind() == Op.Kind.SLEEP),
+          "manual-clock expiry evidence must not depend on host wall time");
+      // The fizzle must run with the charm still in the bag and the four live casts after
+      // the takeon: that order is what walks both arms of W46's CheckAmulet gate.
+      assertEquals(1, kinds.indexOf(Op.Kind.SPELL), "the missing-charm fizzle opens the script");
+      assertEquals(4, kinds.indexOf(Op.Kind.TAKEON), "the 护身符 is worn only once the fizzle proved the gate");
+      assertEquals(4, kinds.subList(kinds.indexOf(Op.Kind.TAKEON), kinds.size()).stream()
+          .filter(kind -> kind == Op.Kind.SPELL).count(), "every later cast runs on the worn charm");
+      // The ladder pins the duration-roll evidence: measured in ticks from cast #2 its
+      // running total is 1, 996, 1001, 1011, 1020, 1030, 1040, 1045, which puts each of the
+      // four combined max(20·R1 − 29, 20·R2) deadlines {1000, 1011, 1020, 1040} in its own
+      // observation bucket; from cast #3 the total is 1, 996, 1001, 1020, 1040, 1041, which
+      // does the same for the single-roll deadlines {1000, 1020, 1040}.
+      assertEquals(List.of(1L, 28L, 1L, 28L, 1L, 995L, 5L, 10L, 9L, 10L, 10L, 5L,
+          1L, 995L, 5L, 19L, 20L, 1L, 1L),
+          script.stream().filter(op -> op.kind() == Op.Kind.TICK).map(Op::millis).toList(),
+          "every candidate expiry deadline needs its own observation bucket");
+      assertEquals(Op.Kind.RELOG, kinds.get(kinds.size() - 2),
+          "cast #4's window must still be running when the relog clears it");
+      assertEquals(Op.Kind.BAG, kinds.get(kinds.size() - 1),
+          "the post-relog census proves the charm dura persisted while the buff did not");
+      assertEquals(script,
+          Op.parseScript(String.join("\n", script.stream().map(Op::describe).toList())));
+    }
+  }
+
   private static void assertAreaScript(List<Op> script, String firstCast, String secondCast) {
     List<String> spells = script.stream().filter(op -> op.kind() == Op.Kind.SPELL)
         .map(Op::text).toList();

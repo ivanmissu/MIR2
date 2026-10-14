@@ -64,6 +64,10 @@ class ShadowDiffMainArgsTest {
     assertEquals(ShadowDiffMain.SkillCase.SNOWWIND, ShadowDiffMain.SkillCase.parse("snowwind"));
     assertEquals(ShadowDiffMain.SkillCase.SHIELD, ShadowDiffMain.SkillCase.parse("shield"));
     assertEquals(ShadowDiffMain.SkillCase.KILLUNDEAD, ShadowDiffMain.SkillCase.parse("killundead"));
+    assertEquals(ShadowDiffMain.SkillCase.GHOSTSHIELD,
+        ShadowDiffMain.SkillCase.parse("ghostshield"));
+    assertEquals(ShadowDiffMain.SkillCase.HOLYARMOUR,
+        ShadowDiffMain.SkillCase.parse("holyarmour"));
   }
 
   /**
@@ -101,6 +105,32 @@ class ShadowDiffMainArgsTest {
     assertEquals("trainer", ShadowDiffMain.SkillCase.SHIELD.monsterKind());
     assertEquals("scarecrow", ShadowDiffMain.SkillCase.KILLUNDEAD.monsterKind(),
         "圣言术 requires an undead target (Monster.DB Undead=1)");
+  }
+
+  /**
+   * W54: the two Taoist defence-buff cases pin their Taoist setup — the {@code NeedL1} of
+   * their Magic.DB rows, a stationary trainer (nothing dies; the only randomness is the
+   * duration and training draws) and the bag seeded with exactly one 护身符: the script's
+   * opening fizzle proves the charm counts only once worn, and four casts × 100 dura must
+   * never exhaust it. Every pre-W54 case keeps the empty-bag seeding it has always had.
+   */
+  @Test
+  void w54DefenceBuffCasesPinTheirTaoistSetupAndCharmBag() {
+    assertEquals(22, ShadowDiffMain.SkillCase.GHOSTSHIELD.level(),
+        "幽灵盾 NeedL1=22 — the seeded Taoist sits exactly on the row's own requirement");
+    assertEquals(25, ShadowDiffMain.SkillCase.HOLYARMOUR.level(),
+        "神圣战甲术 NeedL1=25 — its row demands three more levels than the twin's");
+    assertEquals("trainer", ShadowDiffMain.SkillCase.GHOSTSHIELD.monsterKind());
+    assertEquals("trainer", ShadowDiffMain.SkillCase.HOLYARMOUR.monsterKind(),
+        "the buff targets the caster; the dummy only keeps the world alive");
+    assertEquals(0, ShadowDiffMain.SkillCase.GHOSTSHIELD.monsters());
+    assertEquals(0, ShadowDiffMain.SkillCase.HOLYARMOUR.monsters());
+    for (ShadowDiffMain.SkillCase skillCase : ShadowDiffMain.SkillCase.values()) {
+      boolean w54 = skillCase == ShadowDiffMain.SkillCase.GHOSTSHIELD
+          || skillCase == ShadowDiffMain.SkillCase.HOLYARMOUR;
+      assertEquals(w54 ? List.of("护身符") : List.of(), skillCase.bagItems(),
+          skillCase.name() + " bag seeding");
+    }
   }
 
   @Test

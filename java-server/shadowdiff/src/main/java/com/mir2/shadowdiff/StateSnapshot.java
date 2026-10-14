@@ -53,6 +53,15 @@ import java.util.Objects;
  * includes the magic id, level, training points and key, all durable values the player can
  * observe after a relog. It makes an accepted healing cast's training mutation comparable
  * instead of reducing spell evidence to only transient packets.
+ *
+ * <p>{@code ac}/{@code mac} are the W54 defence-buff surface: the packed {@code MakeLong(lo, hi)}
+ * defence words exactly as the last {@code SM_ABILITY} carried them (-1 before any ability frame
+ * arrived). 神圣战甲术/幽灵盾 do not damage, refuse or move anything — their whole observable
+ * effect is the raised upper AC/MAC bound while {@code STATE_DEFENCEUP}/{@code STATE_MAGDEFENCEUP}
+ * runs and the drop back to the naked values when the window lapses, both delivered by the
+ * {@code RecalcAbilitys} + {@code RM_ABILITY} refresh (ObjBase.pas:3418-3421, 4243-4247). Without
+ * these two fields a duration-roll divergence would only ever show up in the (ident-only)
+ * message multiset, never in STATE.
  */
 public record StateSnapshot(
     String mapId,
@@ -74,7 +83,9 @@ public record StateSnapshot(
     List<String> groupMembers,
     int nameColor,
     List<String> groundItems,
-    List<String> skills) {
+    List<String> skills,
+    int ac,
+    int mac) {
 
   public StateSnapshot {
     mapId = Objects.requireNonNullElse(mapId, "");
@@ -85,6 +96,16 @@ public record StateSnapshot(
     groupMembers = List.copyOf(groupMembers);
     groundItems = List.copyOf(groundItems);
     skills = List.copyOf(skills);
+  }
+
+  /** Compatibility overload for callers predating the W54 defence-word (AC/MAC) snapshot. */
+  public StateSnapshot(String mapId, int x, int y, int direction, int hp, int maxHp,
+      int mp, int maxMp, int level, long experience, long gold, List<String> bagItems,
+      List<String> wornItems, List<String> combat, List<String> neighbours, long worldTime,
+      List<String> groupMembers, int nameColor, List<String> groundItems, List<String> skills) {
+    this(mapId, x, y, direction, hp, maxHp, mp, maxMp, level, experience, gold, bagItems,
+        wornItems, combat, neighbours, worldTime, groupMembers, nameColor, groundItems, skills,
+        -1, -1);
   }
 
   /** Compatibility overload for callers predating the W41 learned-skill snapshot. */
@@ -148,6 +169,13 @@ public record StateSnapshot(
         + (groupMembers.isEmpty() ? "" : " group=" + groupMembers)
         + (nameColor < 0 ? "" : " nameColor=" + nameColor)
         + (groundItems.isEmpty() ? "" : " ground=" + groundItems)
-        + (skills.isEmpty() ? "" : " skills=" + skills);
+        + (skills.isEmpty() ? "" : " skills=" + skills)
+        + (ac < 0 ? "" : " ac=" + abilityRange(ac))
+        + (mac < 0 ? "" : " mac=" + abilityRange(mac));
+  }
+
+  /** Renders a packed Delphi {@code MakeLong(lo, hi)} defence word as {@code lo-hi}. */
+  public static String abilityRange(int packed) {
+    return packed < 0 ? "n/a" : (packed & 0xffff) + "-" + (packed >>> 16);
   }
 }

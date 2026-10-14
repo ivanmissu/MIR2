@@ -587,6 +587,149 @@ public record Op(Kind kind, Direction direction, String text, long millis, Strin
   }
 
   /**
+   * The W54 幽灵盾 script ({@code SKILL_HANGMAJINBUB}=14, {@code MagMakeDefenceArea(..., 1)},
+   * Magic.pas:451 → ObjBase.pas:24207/24309). The embedded runner seeds a level-22 Taoist at
+   * (20,20) — {@code NeedL1}=22 — with a learned 幽灵盾 row and one 护身符 <em>in the bag</em>:
+   * the charm only counts once worn, so the script exercises both arms of W46's
+   * {@code CheckAmulet} gate (Magic.pas:428) over the real wire.
+   *
+   * <p>Phase 1 — the missing-charm fizzle: the first cast runs with the 护身符 still in the bag,
+   * so {@code boSpellFail} stays {@code True}: {@code +GOOD} (the cast was accepted), the 4 MP
+   * spent and <em>not</em> refunded, one {@code SM_MAGICFIRE_FAIL}, and nothing else — no hint,
+   * no ability refresh, no training, no charm wear.
+   *
+   * <p>Phase 2 — the worn charm: {@code takeon 护身符} lands it in {@code U_ARMRINGL}, and every
+   * later cast burns one 100-dura charge ({@code SM_DURACHANGE}, tracked into the worn-item
+   * census). Each cast rolls its duration in <em>seconds</em> off the DAMAGE stream:
+   * {@code GetPower13(60)=30} at skill level 0 plus {@code LoWord(SC)*10 = 20} for the level-22
+   * Taoist, spread {@code HiSC-LoSC+1 = 2} → R ∈ {50, 51, 52}. The buff raises only the upper
+   * MAC bound ({@code 2 + Level div 7 = 5}: mac 2-5 → 2-10, ObjBase.pas:3420), republished
+   * through {@code RM_ABILITY}, with the green 「魔法防御力增加R秒」 hint.
+   *
+   * <p>Cast #2 lands while cast #1's window still runs: {@code MagDefenceUp} keeps
+   * {@code max(remaining, new roll)} and refreshes the hint/recalc/训练 unconditionally — Delphi's
+   * "a longer running window survives a shorter recast, and the recast still counts" quirk
+   * (ObjBase.pas:24248/24309). The combined deadline measured from cast #2 is therefore
+   * {@code max(20·R1 - 29, 20·R2)} ticks ∈ {1000, 1011, 1020, 1040}, and the fine-grained pump
+   * ladder afterwards (995/5/10/9/10/10/5) puts every one of those four deadlines in its own
+   * observation bucket: the tick bucket where a side's window lapses carries the
+   * 「魔法防御力恢复正常」 hint plus the shared {@code RM_ABILITY} refresh (ObjBase.pas:4181/4243-4247)
+   * that drops mac back to 2-5. Two servers whose duration rolls diverged — the whole point of
+   * {@code --right-seed} — must therefore part ways in STATE (the mac word) at one of those
+   * buckets, not merely in the message multiset.
+   *
+   * <p>Cast #3 repeats the cycle against a single fresh roll (deadlines {1000, 1020, 1040} from
+   * its own cast tick), and cast #4 re-buffs immediately before the relog: the status array
+   * lives only in memory ({@code m_dwStatusArr}), so the entry snapshot after the relog must
+   * show the naked mac word again while the trained points, the spent mana and the charm's
+   * remaining dura (9600/10000 after four charges) all restore from the persisted row — the
+   * wire half of W46's {@code theBuffNeverLeaksIntoThePersistedCharacterRecord}.
+   */
+  public static List<Op> ghostShieldScript() {
+    return parseScript("""
+        # --- seeded level-22 Taoist at (20,20); the 护身符 is in the bag, NOT worn ---
+        bag
+        # --- cast #0 with no worn charm: +GOOD, 4 MP gone, SM_MAGICFIRE_FAIL, nothing else ---
+        spell 14 20 20
+        tick 1
+        # --- clear the 1350 ms spell interval + the row's 40 ms delay (28 x 50 ms) ---
+        tick 28
+        # --- wear the charm into U_ARMRINGL: from here every cast burns one 100-dura charge ---
+        takeon 护身符
+        bag
+        # --- cast #1: rolls R1 ∈ {50,51,52} s, lifts the upper MAC bound to 2-10, trains ---
+        spell 14 20 20
+        tick 1
+        tick 28
+        # --- cast #2 while the window runs: max(remaining, R2) quirk, hint + training anyway ---
+        spell 14 20 20
+        tick 1
+        # --- deadline ladder: combined window ends 1000/1011/1020/1040 ticks after cast #2;
+        #     every candidate expiry gets its own bucket, so divergent rolls part ways here ---
+        tick 995
+        tick 5
+        tick 10
+        tick 9
+        tick 10
+        tick 10
+        tick 5
+        # --- cast #3: a clean single-roll cycle, deadlines 1000/1020/1040 ticks out ---
+        spell 14 20 20
+        tick 1
+        tick 995
+        tick 5
+        tick 19
+        tick 20
+        tick 1
+        # --- cast #4 re-buffs, then the relog must clear the transient status while the
+        #     training, mana and charm wear all persist ---
+        spell 14 20 20
+        tick 1
+        relog
+        bag
+        """);
+  }
+
+  /**
+   * The W54 神圣战甲术 script ({@code SKILL_DEJIWONHO}=15, {@code MagMakeDefenceArea(..., 0)},
+   * Magic.pas:456 → ObjBase.pas:24207/24255). Structurally the twin of
+   * {@link #ghostShieldScript()} — same 护身符 gate, same 15 MP row shape (4 MP at skill level 0),
+   * same 40 ms delay, same {50, 51, 52} second roll for a Taoist of this level band — with the
+   * two differences the Magic.DB rows themselves carry: {@code NeedL1}=25 (so the runner seeds a
+   * level-25 Taoist) and {@code btType=0}, which selects {@code DefenceUp}/{@code STATE_DEFENCEUP}
+   * instead of {@code MagDefenceUp}: the buff lifts the upper <em>AC</em> bound ({@code 2 + 25
+   * div 7 = 5}: ac 0-0 → 0-5, ObjBase.pas:3418 — a Taoist's naked AC is always 0) and the hints
+   * read 「防御力增加R秒」 / 「防御力恢复正常」 (ObjBase.pas:4175). Keeping the two scripts shape-identical
+   * is deliberate: any behavioural difference the 对拍 reports between the {@code ghostshield}
+   * and {@code holyarmour} rows is then attributable to the state slot and the ability word the
+   * Magic.DB row selects, which is exactly the pair W46's {@code btType} branch hinges on.
+   */
+  public static List<Op> holyArmourScript() {
+    return parseScript("""
+        # --- seeded level-25 Taoist at (20,20); the 护身符 is in the bag, NOT worn ---
+        bag
+        # --- cast #0 with no worn charm: +GOOD, 4 MP gone, SM_MAGICFIRE_FAIL, nothing else ---
+        spell 15 20 20
+        tick 1
+        # --- clear the 1350 ms spell interval + the row's 40 ms delay (28 x 50 ms) ---
+        tick 28
+        # --- wear the charm into U_ARMRINGL: from here every cast burns one 100-dura charge ---
+        takeon 护身符
+        bag
+        # --- cast #1: rolls R1 ∈ {50,51,52} s, lifts the upper AC bound to 0-5, trains ---
+        spell 15 20 20
+        tick 1
+        tick 28
+        # --- cast #2 while the window runs: max(remaining, R2) quirk, hint + training anyway ---
+        spell 15 20 20
+        tick 1
+        # --- deadline ladder: combined window ends 1000/1011/1020/1040 ticks after cast #2;
+        #     every candidate expiry gets its own bucket, so divergent rolls part ways here ---
+        tick 995
+        tick 5
+        tick 10
+        tick 9
+        tick 10
+        tick 10
+        tick 5
+        # --- cast #3: a clean single-roll cycle, deadlines 1000/1020/1040 ticks out ---
+        spell 15 20 20
+        tick 1
+        tick 995
+        tick 5
+        tick 19
+        tick 20
+        tick 1
+        # --- cast #4 re-buffs, then the relog must clear the transient status while the
+        #     training, mana and charm wear all persist ---
+        spell 15 20 20
+        tick 1
+        relog
+        bag
+        """);
+  }
+
+  /**
    * The moving-monster comparison script (W23). Unlike {@link #pveScript()}, whose trainer
    * dummy is inert, this drives live AI: the monsters around the spawn acquire the player,
    * chase and attack.
