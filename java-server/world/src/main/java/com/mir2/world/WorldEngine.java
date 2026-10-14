@@ -2159,6 +2159,7 @@ public final class WorldEngine implements AutoCloseable {
       int seconds = rollMagicShieldSeconds(player, skill, magic);
       player.magicShieldLevel = skill.level();
       player.magicShieldUntil = now + Math.max(1, seconds) * 1_000L;
+      trainSpellSkill(player, skill, magic);
       emit(player, new WorldEvent.SystemMessage(player.id,
           "魔法盾已生效，持续" + Math.max(1, seconds) + "秒"));
     }

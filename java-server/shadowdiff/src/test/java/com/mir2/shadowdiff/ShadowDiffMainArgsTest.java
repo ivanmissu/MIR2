@@ -62,6 +62,8 @@ class ShadowDiffMainArgsTest {
     assertEquals(ShadowDiffMain.SkillCase.LIGHTFLOWER,
         ShadowDiffMain.SkillCase.parse("lightflower"));
     assertEquals(ShadowDiffMain.SkillCase.SNOWWIND, ShadowDiffMain.SkillCase.parse("snowwind"));
+    assertEquals(ShadowDiffMain.SkillCase.SHIELD, ShadowDiffMain.SkillCase.parse("shield"));
+    assertEquals(ShadowDiffMain.SkillCase.KILLUNDEAD, ShadowDiffMain.SkillCase.parse("killundead"));
   }
 
   /**
@@ -85,6 +87,20 @@ class ShadowDiffMainArgsTest {
         "the lightflower case depends on the Monster.DB Undead column staying set");
     assertFalse(MonsterTemplate.forName("trainer").undead(),
         "the stationary dummy must stay a living target for the other cases");
+  }
+
+  /**
+   * W53: 魔法盾 and 圣言术 cases pin their wizard setup and monster kind.
+   */
+  @Test
+  void w53SkillCasesPinTheirLevelRequirementsAndDummyKind() {
+    assertEquals(31, ShadowDiffMain.SkillCase.SHIELD.level(),
+        "魔法盾 NeedL1=31 — seeded wizard level 31 clears it");
+    assertEquals(39, ShadowDiffMain.SkillCase.KILLUNDEAD.level(),
+        "圣言术 skill level 1 NeedL2=35, level 39 clears it and passes instant-kill gate");
+    assertEquals("trainer", ShadowDiffMain.SkillCase.SHIELD.monsterKind());
+    assertEquals("scarecrow", ShadowDiffMain.SkillCase.KILLUNDEAD.monsterKind(),
+        "圣言术 requires an undead target (Monster.DB Undead=1)");
   }
 
   @Test

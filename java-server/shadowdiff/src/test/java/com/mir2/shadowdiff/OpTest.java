@@ -138,6 +138,31 @@ class OpTest {
         && "24 20 20".equals(op.text())));
   }
 
+  /**
+   * W53: 魔法盾 and 圣言术 scripts must cast real {@code CM_SPELL} operands and verify
+   * duration/expiry/instant-kill determinism without wall-clock sleeps.
+   */
+  @Test
+  void w53SkillScriptsCastRealSpellsAndRoundTrip() {
+    List<Op> shield = Op.shieldScript();
+    List<String> shieldSpells = shield.stream().filter(op -> op.kind() == Op.Kind.SPELL)
+        .map(Op::text).toList();
+    assertEquals(List.of("31 20 20", "31 20 20", "31 20 20", "31 20 20", "31 20 20"),
+        shieldSpells, "shield script exercises activation, refusal while active, expiry, and recast");
+    assertTrue(shield.stream().noneMatch(op -> op.kind() == Op.Kind.SLEEP));
+    assertTrue(shield.stream().anyMatch(op -> op.kind() == Op.Kind.RELOG));
+    assertEquals(shield, Op.parseScript(String.join("\n", shield.stream().map(Op::describe).toList())));
+
+    List<Op> killundead = Op.killUndeadScript();
+    List<String> killSpells = killundead.stream().filter(op -> op.kind() == Op.Kind.SPELL)
+        .map(Op::text).toList();
+    assertEquals(List.of("32 20 19 2", "32 20 21 6"), killSpells,
+        "killundead targets scarecrow #2 on north arm then scarecrow #6 on south arm");
+    assertTrue(killundead.stream().noneMatch(op -> op.kind() == Op.Kind.SLEEP));
+    assertTrue(killundead.stream().anyMatch(op -> op.kind() == Op.Kind.RELOG));
+    assertEquals(killundead, Op.parseScript(String.join("\n", killundead.stream().map(Op::describe).toList())));
+  }
+
   private static void assertAreaScript(List<Op> script, String firstCast, String secondCast) {
     List<String> spells = script.stream().filter(op -> op.kind() == Op.Kind.SPELL)
         .map(Op::text).toList();

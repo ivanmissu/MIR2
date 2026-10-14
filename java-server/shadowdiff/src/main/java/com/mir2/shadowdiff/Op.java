@@ -499,6 +499,94 @@ public record Op(Kind kind, Direction direction, String text, long millis, Strin
   }
 
   /**
+   * The W53 魔法盾 script ({@code SKILL_MAGIC_SHIELD}=31, {@code MagBubbleDefenceUp},
+   * Magic.pas:568 → ObjBase.pas:24331). The embedded runner seeds a level-31 Wizard at
+   * (20,20) — {@code NeedL1}=31 — with a learned 魔法盾 row.
+   *
+   * <p>The ground-click cast on the caster's own cell spends 20 MP, rolls a duration of
+   * 18–19 seconds (derived from MC and {@code GetPower(RPow(MC) + 15)}) from the MAGIC
+   * stream, raises {@code STATE_BUBBLEDEFENCEUP} and emits the green hint
+   * "魔法盾已生效，持续N秒".
+   *
+   * <p>A second cast after 29 pumped ticks (1450 ms, clearing the spell interval) while the
+   * shield is still active is rejected deterministically with
+   * {@code BUFF_ALREADY_ACTIVE} ("魔法盾效果仍在持续") without spending mana or training.
+   *
+   * <p>Pumping across the shield's expiry deadline allows fresh casts: the third cast rolls
+   * duration again. A fourth cast at the 18.25-second boundary (365 ticks) exercises the
+   * duration difference between 18s and 19s rolls under different seeds (negative control).
+   * The relog proves the training and mana persist.
+   */
+  public static List<Op> shieldScript() {
+    return parseScript("""
+        # --- seeded level-31 Wizard at the fixed spawn cell (20,20) ---
+        bag
+        # --- cast #1: activates shield, spends 20 MP, rolls duration and trains ---
+        spell 31 20 20
+        tick 1
+        # --- clear the 1350 ms spell interval (29 x 50 ms), cast #2 while active:
+        #     deterministic BUFF_ALREADY_ACTIVE refusal without spending mana ---
+        tick 29
+        spell 31 20 20
+        tick 1
+        # --- advance 370 ticks (18.5 s) to clear the first 19s shield duration ---
+        tick 370
+        # --- cast #3 after expiry: rolls duration again, spends mana and trains ---
+        spell 31 20 20
+        tick 1
+        # --- advance 400 ticks (20 s) to clear the second 19s shield duration ---
+        tick 400
+        # --- cast #4: rolls third duration from MAGIC stream (19s vs 18s) ---
+        spell 31 20 20
+        tick 1
+        # --- pump 365 ticks (18.25 s): under 18s roll (seed 99999) shield has expired;
+        #     under 19s roll (seed 20260922) shield is still active ---
+        tick 365
+        spell 31 20 20
+        tick 1
+        # --- MP, training and bag must survive the persistence round trip ---
+        relog
+        bag
+        """);
+  }
+
+  /**
+   * The W53 圣言术 script ({@code SKILL_KILLUNDEAD}=32, {@code MagTurnUndead},
+   * Magic.pas:572 → 901). The embedded runner seeds a level-39 Wizard at (20,20) —
+   * with a level-1 圣言术 row and a ring of eight undead scarecrows.
+   *
+   * <p>Unlike the area spells, 圣言术 is a single-target hostile spell requiring an explicit
+   * target object ID: the client targets scarecrow #2 standing at (20,19) on the north arm.
+   * The level-10 scarecrow passes both level gates (38 > 10 and 10 < 50), rolls the 51%
+   * instant-kill chance from the {@code TURN_UNDEAD} stream: on the first cast under seed
+   * 20260922 (k=87) the roll fails, leaving the monster provoked; on the second cast against
+   * scarecrow #6 at (20,21) (k=50) the roll succeeds, instantly killing the scarecrow with
+   * {@code SM_MAGICFIRE}, {@code SM_DEATH}, {@code SM_WINEXP +15}, ground drops and
+   * {@code SM_MAGIC_LVEXP} training.
+   *
+   * <p>The second cast strikes scarecrow #6 at (20,21) on the south arm after clearing
+   * the 1350 ms spell interval + 120 ms row delay (30 ticks = 1500 ms).
+   */
+  public static List<Op> killUndeadScript() {
+    return parseScript("""
+        # --- seeded level-39 Wizard at (20,20), ringed by eight undead scarecrows ---
+        bag
+        # --- CM_SPELL: target scarecrow #2 at (20,19) on the ring's north arm ---
+        spell 32 20 19 2
+        # --- instant-kill outcome, mana spend and any training land on this tick ---
+        tick 1
+        # --- clear the 1350 ms spell interval + 120 ms delay (30 x 50 ms = 1500 ms),
+        #     then strike scarecrow #6 at (20,21) on the south arm ---
+        tick 30
+        spell 32 20 21 6
+        tick 1
+        # --- experience, drops and training must survive the persistence round trip ---
+        relog
+        bag
+        """);
+  }
+
+  /**
    * The moving-monster comparison script (W23). Unlike {@link #pveScript()}, whose trainer
    * dummy is inert, this drives live AI: the monsters around the spawn acquire the player,
    * chase and attack.
