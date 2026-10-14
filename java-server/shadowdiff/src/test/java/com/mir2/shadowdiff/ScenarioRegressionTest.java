@@ -286,6 +286,75 @@ class ScenarioRegressionTest {
   }
 
   @Test
+  void skillsGhostShieldScenarioBurnsCharmsAndExpiryLadderIdentically(@TempDir Path reports)
+      throws Exception {
+    Path report = reports.resolve("skills-ghostshield");
+    int status = ShadowDiffMain.run(new String[] {
+        "--embedded", "--skills", "--skill-case", "ghostshield", "--strict-messages",
+        "--seed", "20260922", "--report-dir", report.toString()});
+    String markdown = readReport(report);
+    assertEquals(0, status,
+        "幽灵盾 charm burn, MAC window and expiry ladder must match on both sides: "
+            + markdown.replace('\n', ' '));
+    assertTrue(markdown.contains("spell 14 20 20"));
+    assertTrue(markdown.contains("mac=2-10"),
+        "the worn-charm cast must lift the upper MAC bound by 2 + Level div 7 = 5");
+    assertTrue(markdown.contains("worn=[护身符 9600/10000]"),
+        "four accepted casts must burn four 100-dura charges, observable per cast");
+    assertTrue(markdown.contains("skills=[magic=14 level=0 train=6 key=0]"),
+        "every charm-backed cast trains (the fizzle does not) and the row survives the relog");
+    assertTrue(markdown.contains("mp=142/146"),
+        "the missing-charm fizzle spends its 4 MP and never refunds it");
+  }
+
+  @Test
+  void skillsGhostShieldWrongSeedIsDetected(@TempDir Path reports) throws Exception {
+    Path report = reports.resolve("skills-ghostshield-negative");
+    int status = ShadowDiffMain.run(new String[] {
+        "--embedded", "--skills", "--skill-case", "ghostshield",
+        "--seed", "20260922", "--right-seed", "99999",
+        "--report-dir", report.toString()});
+    assertEquals(1, status,
+        "a different DAMAGE stream must perturb the duration roll (the expiry ladder turns it "
+            + "into a mac-word STATE diff) and the training rolls: "
+            + readReport(report).replace('\n', ' '));
+  }
+
+  @Test
+  void skillsHolyArmourScenarioLiftsTheAcBoundIdentically(@TempDir Path reports)
+      throws Exception {
+    Path report = reports.resolve("skills-holyarmour");
+    int status = ShadowDiffMain.run(new String[] {
+        "--embedded", "--skills", "--skill-case", "holyarmour", "--strict-messages",
+        "--seed", "20260922", "--report-dir", report.toString()});
+    String markdown = readReport(report);
+    assertEquals(0, status,
+        "神圣战甲术 charm burn, AC window and expiry ladder must match on both sides: "
+            + markdown.replace('\n', ' '));
+    assertTrue(markdown.contains("spell 15 20 20"));
+    assertTrue(markdown.contains("ac=0-5"),
+        "the btType=0 arm lifts the upper AC bound (a Taoist's naked AC is 0-0)");
+    assertTrue(markdown.contains("mac=2-5"),
+        "神圣战甲术 must leave the magic defence word alone — the twin case's mac=2-10 is the "
+            + "only thing that keeps the two btType arms apart");
+    assertTrue(markdown.contains("worn=[护身符 9600/10000]"));
+    assertTrue(markdown.contains("skills=[magic=15 level=0 train=6 key=0]"),
+        "every charm-backed cast trains and the row survives the relog");
+  }
+
+  @Test
+  void skillsHolyArmourWrongSeedIsDetected(@TempDir Path reports) throws Exception {
+    Path report = reports.resolve("skills-holyarmour-negative");
+    int status = ShadowDiffMain.run(new String[] {
+        "--embedded", "--skills", "--skill-case", "holyarmour",
+        "--seed", "20260922", "--right-seed", "99999",
+        "--report-dir", report.toString()});
+    assertEquals(1, status,
+        "a different DAMAGE stream must perturb the duration roll into an ac-word STATE diff: "
+            + readReport(report).replace('\n', ' '));
+  }
+
+  @Test
   void unknownSkillCaseIsAUsageErrorBeforeAnyServerBoots(@TempDir Path reports) {
     assertThrows(IllegalArgumentException.class, () -> ShadowDiffMain.run(new String[] {
         "--embedded", "--skills", "--skill-case", "summon",

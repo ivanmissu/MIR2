@@ -201,7 +201,8 @@ public final class ShadowDiffMain {
    * <p>W41's 群体治愈术 case (a level-31 Taoist with an 80 HP deficit) remains the default:
    * immediate MP spend, the delayed 800 ms HP recovery and the SM_MAGIC_LVEXP training line
    * are three independent wire-only observations. W51 added 火墙/瞬息移动, W52 the three
-   * area spells — see {@link SkillCase} for each case's setup.
+   * area spells, W53 魔法盾/圣言术 and W54 the two 护身符-gated Taoist defence buffs — see
+   * {@link SkillCase} for each case's setup.
    */
   private static int runSkillScenario(Map<String, String> options, Duration settle,
       boolean strictMessages, Path reportDir, String account, String password,
@@ -216,7 +217,7 @@ public final class ShadowDiffMain {
     long rightSeed = longOption(options, "right-seed", seed);
     List<SeededAccount> accounts = List.of(new SeededAccount(
         account, password, skillCase.job(), skillCase.level(), skillCase.healthDeficit(),
-        List.of(skillCase.learned()), List.of(), 0));
+        List.of(skillCase.learned()), skillCase.bagItems(), 0));
     try (EmbeddedWorld left = EmbeddedWorld.boot(workDir.resolve("left"), "skills-left",
             serverName, seed, monsters, skillCase.monsterKind(),
             com.mir2.world.WorldClock.Mode.MANUAL, accounts, null);
@@ -252,34 +253,48 @@ public final class ShadowDiffMain {
    *   <li>{@code shield} — W53 魔法盾 (31, SKILL_MAGIC_SHIELD) on a level-31 Wizard:
    *       ground-target cast, duration roll (18–19s), deterministic {@code BUFF_ALREADY_ACTIVE}
    *       refusal while active, tick-driven expiry and persistent training.</li>
-   *   <li>{@code killundead} — W53 圣言术 (32, SKILL_KILLUNDEAD) on a level-32 Wizard
+   *   <li>{@code killundead} — W53 圣言术 (32, SKILL_KILLUNDEAD) on a level-39 Wizard
    *       ringed by undead scarecrows: single-target cast with explicit monster id,
    *       instant-kill roll from {@code TURN_UNDEAD} stream, synchronized death, experience,
    *       drops and training.</li>
+   *   <li>{@code ghostshield} — W54 幽灵盾 (14, SKILL_HANGMAJINBUB) on a level-22 Taoist
+   *       seeded with one bag 护身符: the missing-charm fizzle arm, the worn charm's per-cast
+   *       100-dura burn, the {50,51,52}s {@code STATE_MAGDEFENCEUP} duration roll against a
+   *       fine-grained expiry ladder, the recast-keeps-the-longer-window quirk and the
+   *       transient-status relog — observed through the upper MAC bound (2-5 ↔ 2-10).</li>
+   *   <li>{@code holyarmour} — W54 神圣战甲术 (15, SKILL_DEJIWONHO) on a level-25 Taoist:
+   *       the shape-identical twin of {@code ghostshield} whose {@code btType=0} arm lifts the
+   *       upper AC bound instead (0-0 ↔ 0-5).</li>
    * </ul>
    *
    * <p>Each case pins the monster kind its script was written against: the trainer dummy is
    * stationary with 9999 HP (nothing dies, so the only randomness is the damage roll), while
    * {@code lightflower} and {@code killundead} need the undead scarecrow for the
-   * {@code LA_UNDEAD} arm.
+   * {@code LA_UNDEAD} arm. Each case also pins the bag its script consumes: only the two W54
+   * defence-buff cases seed an item (the 护身符 their {@code CheckAmulet} gate burns), every
+   * earlier case keeps the empty-bag seeding it has always had.
    */
   enum SkillCase {
     HEALING("healing", LevelAbilities.JOB_TAOIST, 31, 80, PlayerSkill.learned(29), 0,
-        TrainingDummyKind.TRAINER, Op::areaHealingScript),
+        TrainingDummyKind.TRAINER, List.of(), Op::areaHealingScript),
     FIREWALL("firewall", LevelAbilities.JOB_WIZARD, 25, 0, PlayerSkill.learned(22), 8,
-        TrainingDummyKind.TRAINER, Op::fireWallScript),
+        TrainingDummyKind.TRAINER, List.of(), Op::fireWallScript),
     SPACEMOVE("spacemove", LevelAbilities.JOB_WIZARD, 25, 0, new PlayerSkill(21, 3, 0, 0), 0,
-        TrainingDummyKind.TRAINER, Op::spaceMoveScript),
+        TrainingDummyKind.TRAINER, List.of(), Op::spaceMoveScript),
     FIREBOOM("fireboom", LevelAbilities.JOB_WIZARD, 25, 0, PlayerSkill.learned(23), 8,
-        TrainingDummyKind.TRAINER, Op::fireBoomScript),
+        TrainingDummyKind.TRAINER, List.of(), Op::fireBoomScript),
     LIGHTFLOWER("lightflower", LevelAbilities.JOB_WIZARD, 31, 0, PlayerSkill.learned(24), 8,
-        TrainingDummyKind.SCARECROW, Op::lightFlowerScript),
+        TrainingDummyKind.SCARECROW, List.of(), Op::lightFlowerScript),
     SNOWWIND("snowwind", LevelAbilities.JOB_WIZARD, 35, 0, PlayerSkill.learned(33), 8,
-        TrainingDummyKind.TRAINER, Op::snowWindScript),
+        TrainingDummyKind.TRAINER, List.of(), Op::snowWindScript),
     SHIELD("shield", LevelAbilities.JOB_WIZARD, 31, 0, PlayerSkill.learned(31), 0,
-        TrainingDummyKind.TRAINER, Op::shieldScript),
+        TrainingDummyKind.TRAINER, List.of(), Op::shieldScript),
     KILLUNDEAD("killundead", LevelAbilities.JOB_WIZARD, 39, 0, new PlayerSkill(32, 1, 0, 0), 8,
-        TrainingDummyKind.SCARECROW, Op::killUndeadScript);
+        TrainingDummyKind.SCARECROW, List.of(), Op::killUndeadScript),
+    GHOSTSHIELD("ghostshield", LevelAbilities.JOB_TAOIST, 22, 0, PlayerSkill.learned(14), 0,
+        TrainingDummyKind.TRAINER, List.of("护身符"), Op::ghostShieldScript),
+    HOLYARMOUR("holyarmour", LevelAbilities.JOB_TAOIST, 25, 0, PlayerSkill.learned(15), 0,
+        TrainingDummyKind.TRAINER, List.of("护身符"), Op::holyArmourScript);
 
     /**
      * The one monster template a case spawns its ring from. {@code scarecrow} is the only
@@ -306,10 +321,11 @@ public final class ShadowDiffMain {
     private final PlayerSkill learned;
     private final int monsters;
     private final TrainingDummyKind monsterKind;
+    private final List<String> bagItems;
     private final java.util.function.Supplier<List<Op>> script;
 
     SkillCase(String cliName, int job, int level, int healthDeficit, PlayerSkill learned,
-        int monsters, TrainingDummyKind monsterKind,
+        int monsters, TrainingDummyKind monsterKind, List<String> bagItems,
         java.util.function.Supplier<List<Op>> script) {
       this.cliName = cliName;
       this.job = job;
@@ -318,6 +334,7 @@ public final class ShadowDiffMain {
       this.learned = learned;
       this.monsters = monsters;
       this.monsterKind = monsterKind;
+      this.bagItems = List.copyOf(bagItems);
       this.script = script;
     }
 
@@ -326,7 +343,8 @@ public final class ShadowDiffMain {
         if (skillCase.cliName.equals(value)) return skillCase;
       }
       throw new IllegalArgumentException("--skill-case must be one of healing, firewall, "
-          + "spacemove, fireboom, lightflower, snowwind, shield, killundead");
+          + "spacemove, fireboom, lightflower, snowwind, shield, killundead, ghostshield, "
+          + "holyarmour");
     }
 
     int job() { return job; }
@@ -335,6 +353,8 @@ public final class ShadowDiffMain {
     PlayerSkill learned() { return learned; }
     int monsters() { return monsters; }
     String monsterKind() { return monsterKind.cliName(); }
+    /** The bag the case's script consumes; empty for every case before W54. */
+    List<String> bagItems() { return bagItems; }
     List<Op> script() { return script.get(); }
   }
 
@@ -834,11 +854,11 @@ public final class ShadowDiffMain {
                                给两台服务端配同一个值。
         --pve                  用内置 PvE 对拍脚本（走到木桩前连续攻击），并默认放 8 个木桩。
                                需要两侧同种子；这是「静止怪对拍」的开箱即用入口。
-        --skills               （embedded，W41/W51/W52/W53）**技能对拍**：默认场景预种 31 级道士、
+        --skills               （embedded，W41/W51/W52/W53/W54）**技能对拍**：默认场景预种 31 级道士、
                                80 HP 缺口和已学 29 号群体治愈术；真实 CM_SPELL 后以 MANUAL
                                时钟 tick 16（800 ms）观察 MP、HP 与 SM_MAGIC_LVEXP 技能熟练度。
                                需要两侧同种子；--right-seed 是该场景的非空转负控制。
-        --skill-case NAME      （--skills，W51/W52/W53）选择技能场景：healing（默认，即 W41 群体治愈）、
+        --skill-case NAME      （--skills，W51/W52/W53/W54）选择技能场景：healing（默认，即 W41 群体治愈）、
                                firewall（火墙 22：十字火墙烧木桩，灼烧伤害走 MAGIC 流）、
                                spacemove（瞬息移动 21：施法帧 + 成功门 + MapRandomMove 落点）、
                                fireboom（爆裂火焰 23：地面 3x3 方形，两次施法两次共享威力抽签）、
@@ -849,7 +869,13 @@ public final class ShadowDiffMain {
                                shield（魔法盾 31：自身地面施法，持续时间抽签 + 状态位，存续期重复施法
                                确定性拒绝，超时消失后再次施法成功）、
                                killundead（圣言术 32：不死稻草人单体命中，TURN_UNDEAD 流秒杀抽签，
-                               秒杀/经验/掉落/熟练度链路）。
+                               秒杀/经验/掉落/熟练度链路）、
+                               ghostshield（幽灵盾 14：22 级道士 + 背包预种护身符，无符施法 SM_MAGICFIRE_FAIL
+                               只扣蓝、佩戴后每施法烧 100 点护身符耐久（SM_DURACHANGE 进入装备观测面）、
+                               {50,51,52} 秒持续抽签（DAMAGE 流）抬高 MAC 上界 2-5→2-10（SM_ABILITY 观测），
+                               细粒度到期阶梯逐桶观察 魔法防御力恢复正常、重登清空瞬态状态）、
+                               holyarmour（神圣战甲术 15：25 级道士，与 ghostshield 同构脚本，btType=0 臂
+                               抬高 AC 上界 0-0→0-5，提示串为 防御力增加/恢复正常）。
         --ai                   （embedded）**会动的怪对拍**（W23）：两侧世界改用 MANUAL 世界时钟
                                （时间只在 tick op 推进），默认放 4 只鸡并用内置 AI 脚本。
                                怪物走位/攻击节拍因此只由 tick 数决定，与两台主机的墙钟无关；
@@ -884,8 +910,9 @@ public final class ShadowDiffMain {
         --right-label/-host/-login-port/-select-port/-game-port   右侧目标
 
       判定:
-        STATE   状态快照差异（地图/坐标/朝向/HP/MP/等级/经验/金币/背包/装备/战斗/视野内角色/
-                世界时间/组队名单/自身名字颜色/已学技能熟练度）→ FAIL
+        STATE   状态快照差异（地图/坐标/朝向/HP/MP/等级/经验/金币/背包/装备（含 SM_DURACHANGE
+                耐久）/战斗/视野内角色/世界时间/组队名单/自身名字颜色/已学技能熟练度/
+                AC·MAC 防御字（W54，取自 SM_ABILITY））→ FAIL
                 战斗 = 本 op 期间观测到的 SM_STRUCK 伤害与 HP、SM_DEATH、SM_WINEXP
         ACKS    +GOOD/+FAIL 应答序列差异 → FAIL
         MESSAGES 服务端消息集合差异 → 提示（--strict-messages 时 FAIL）

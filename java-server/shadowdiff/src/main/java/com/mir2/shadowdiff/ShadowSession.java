@@ -60,6 +60,15 @@ final class ShadowSession implements AutoCloseable {
   private int maxHp = -1;
   private int mp = -1;
   private int maxMp = -1;
+  /**
+   * The packed {@code MakeLong(lo, hi)} AC/MAC defence words from the last {@code SM_ABILITY}
+   * body, or -1 before the first ability frame. The W54 defence-buff surface: 神圣战甲术 raises
+   * the upper AC bound and 幽灵盾 the upper MAC bound while their status window runs, and the
+   * expiry refresh drops them back — the client repaints its defence display from exactly these
+   * words, so a buff that lapsed on only one server is a STATE difference here.
+   */
+  private int ac = -1;
+  private int mac = -1;
   private int level = -1;
   private long experience = -1;
   private long gold = -1;
@@ -258,7 +267,7 @@ final class ShadowSession implements AutoCloseable {
     return new StateSnapshot(mapId, position.x(), position.y(), direction.code(),
         hp, maxHp, mp, maxMp, level, experience, gold, itemLines(bag), itemLines(worn),
         List.copyOf(combat), neighbourLines(), worldTime, List.copyOf(groupMembers),
-        nameColor, groundItems.values().stream().sorted().toList(), skillLines());
+        nameColor, groundItems.values().stream().sorted().toList(), skillLines(), ac, mac);
   }
 
   /**
@@ -694,6 +703,18 @@ final class ShadowSession implements AutoCloseable {
           }
         }
       }
+      // SM_DURACHANGE as the Java gate encodes it (GameProtocolAdapter's ItemDurabilityChanged
+      // arm, pinned by W46's GameDefenceBuffProtocolTest): recog = the worn item's remaining
+      // dura, param = its slot. (Delphi's RM→SM conversion words the pair the other way round —
+      // Recog=slot, Param=dura, ObjBase.pas:5837-5843 — a recorded pre-existing deviation, not
+      // something the Java↔Java 对拍 can arbitrate.) The client patches the worn item's dura in
+      // place, which is what makes the 护身符 charge every 幽灵盾/神圣战甲术 cast burns (W46's
+      // UseAmulet: 100 dura per cast) an immediately observable STATE fact instead of something
+      // only the next relog's SM_SENDUSEITEMS refresh would reveal.
+      case ProtocolConstants.SM_DURACHANGE -> {
+        BackpackItem item = worn.get(message.param());
+        if (item != null) worn.put(message.param(), item.withDura(message.recog()));
+      }
       default -> {
         // Observed and reported by ident name; no state to track.
       }
@@ -711,8 +732,11 @@ final class ShadowSession implements AutoCloseable {
     if (bytes.length < 50) return;
     ByteBuffer buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
     level = buffer.getShort() & 0xffff;
-    buffer.getInt(); // AC
-    buffer.getInt(); // MAC
+    // W54: the AC/MAC defence words are the only wire-visible trace of the 神圣战甲术/幽灵盾
+    // status windows — RecalcAbilitys lifts just the upper bound while the window runs and
+    // drops it back on expiry, each time republished through this frame (ObjBase.pas:3418-3421).
+    ac = buffer.getInt();
+    mac = buffer.getInt();
     buffer.getInt(); // DC
     buffer.getInt(); // MC
     buffer.getInt(); // SC

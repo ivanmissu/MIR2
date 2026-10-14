@@ -139,6 +139,14 @@ public final class ShadowDiff {
     if (!a.skills().equals(b.skills())) {
       out.add("skills: " + a.skills() + " vs " + b.skills());
     }
+    if (a.ac() != b.ac()) {
+      out.add("ac: " + StateSnapshot.abilityRange(a.ac()) + " vs "
+          + StateSnapshot.abilityRange(b.ac()));
+    }
+    if (a.mac() != b.mac()) {
+      out.add("mac: " + StateSnapshot.abilityRange(a.mac()) + " vs "
+          + StateSnapshot.abilityRange(b.mac()));
+    }
   }
 
   private static List<String> sortedCopy(List<String> values) {

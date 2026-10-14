@@ -169,4 +169,66 @@ class ShadowDiffTest {
     assertFalse(legacy.describe().contains("group="));
     assertFalse(legacy.describe().contains("nameColor="));
   }
+
+  // ------------------------------------------------------- W54: packed AC/MAC defence words
+
+  /** The level-22 幽灵盾 caster mid-window: worn charm, trained row, one buffed defence word. */
+  private static StateSnapshot defenceState(int ac, int mac) {
+    return new StateSnapshot("0", 20, 20, 4, 150, 150, 138, 146, 22, 0, 0,
+        List.of(), List.of("护身符 9900/10000"), List.of(), List.of(), 1_054_900,
+        List.of(), -1, List.of(), List.of("magic=14 level=0 train=3 key=0"), ac, mac);
+  }
+
+  @Test
+  void defenceWordDriftIsAStateFailureNotJustAMessageHint() {
+    // The whole W54 observability claim: a duration-roll divergence must surface as a packed
+    // defence-word STATE difference at the expiry bucket — not merely as an advisory message
+    // multiset difference about who received the 恢复正常 hint. Left is still inside its
+    // {50,51,52}s window (mac 2-10); right's window already lapsed (mac back to 2-5).
+    OpObservation left = observation("tick 10", List.of(), List.of("SM_SYSMESSAGE"),
+        defenceState(0, (10 << 16) | 2));
+    OpObservation right = observation("tick 10", List.of(), List.of("SM_SYSMESSAGE"),
+        defenceState(0, (5 << 16) | 2));
+    ShadowDiff.Result result = ShadowDiff.compare("L", "R",
+        List.of(left), List.of(right), false);
+    assertFalse(result.passed());
+    ShadowDiff.Entry entry = result.entries().getFirst();
+    assertEquals(ShadowDiff.Severity.STATE, entry.severity());
+    assertTrue(entry.details().stream().anyMatch(detail -> detail.equals("mac: 2-10 vs 2-5")),
+        entry.details().toString());
+  }
+
+  @Test
+  void acWordDriftIsAStateFailureForThePhysicalArmToo() {
+    // 神圣战甲术 lifts the AC word instead; the differ must treat the twin identically.
+    OpObservation left = observation("tick 5", List.of(), List.of("SM_SYSMESSAGE"),
+        defenceState(5 << 16, (5 << 16) | 2));
+    OpObservation right = observation("tick 5", List.of(), List.of("SM_SYSMESSAGE"),
+        defenceState(0, (5 << 16) | 2));
+    ShadowDiff.Result result = ShadowDiff.compare("L", "R",
+        List.of(left), List.of(right), false);
+    assertFalse(result.passed());
+    assertEquals(ShadowDiff.Severity.STATE, result.entries().getFirst().severity());
+    assertTrue(result.entries().getFirst().details().stream()
+        .anyMatch(detail -> detail.startsWith("ac:")),
+        result.entries().getFirst().details().toString());
+  }
+
+  @Test
+  void defenceWordsRenderAsRangesAndStayInvisibleUntilTheFirstAbilityFrame() {
+    assertEquals("2-10", StateSnapshot.abilityRange((10 << 16) | 2));
+    assertEquals("0-5", StateSnapshot.abilityRange(5 << 16));
+    assertEquals("n/a", StateSnapshot.abilityRange(-1));
+    // Pre-W54 snapshots — and the pre-ability-frame snapshots of any era — must not render
+    // the words, or every existing report line would change shape.
+    StateSnapshot compat = new StateSnapshot("0", 20, 20, 4, 150, 150, 146, 146, 22, 0, 0,
+        List.of(), List.of(), List.of(), List.of(), 1_000_000,
+        List.of(), -1, List.of(), List.of());
+    assertEquals(-1, compat.ac());
+    assertEquals(-1, compat.mac());
+    assertFalse(compat.describe().contains("ac="));
+    assertFalse(compat.describe().contains("mac="));
+    StateSnapshot painted = defenceState(0, (10 << 16) | 2);
+    assertTrue(painted.describe().endsWith("ac=0-0 mac=2-10"), painted.describe());
+  }
 }

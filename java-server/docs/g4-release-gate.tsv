@@ -16,6 +16,13 @@
 #       魔法盾覆盖持续时间抽签、存续期重复施法确定性拒绝与超时重施链路；
 #       圣言术覆盖单体指定目标、不死怪（Monster.DB Undead=1）TURN_UNDEAD 秒杀抽签、
 #       死亡/经验/掉落与训练链路。仍无 Delphi/真实客户端差分证据。
+# W54：幽灵盾 / 神圣战甲术 两个道士增益技能进入 --skill-case，再新增四行（正负各二）；
+#       幽灵盾以 22 级道士、神圣战甲术以 25 级道士运行，二者共用背包预种护身符与形状相同的
+#       到期阶梯脚本（无符首发 fizzle、佩戴后每发烧 100 耐久、{50,51,52} 秒持续抽签、
+#       1000/1011/1020/1040 tick 逐桶隔离的重施 max-window、重登清空瞬态状态）；
+#       STATE 新增 AC/MAC 防御字观测面（取自 SM_ABILITY），持续抽签偏离直接表现为防御字差异。
+#       SM_DURACHANGE 的 Recog/Param 词序是 Java gate 既有编码（Delphi 词序相反，见 W54 计划 §二）。
+#       仍无 Delphi/真实客户端差分证据。
 # 列：id / kind / blocking / expect / command / artifact / scope / notes
 #   id        门禁行标识（小写 kebab，全局唯一）
 #   kind      maven | shadowdiff
@@ -56,3 +63,7 @@ shadowdiff-skills-shield	shadowdiff	yes	exit-0	java --enable-native-access=ALL-U
 shadowdiff-skills-shield-negative	shadowdiff	yes	exit-1	java --enable-native-access=ALL-UNNAMED -jar {{jar}} --embedded --skills --skill-case shield --seed 20260922 --right-seed 99999 --report-dir {{report}}/shadowdiff-skills-shield-negative	shadowdiff-skills-shield-negative	魔法盾负向对照：右侧换种子后持续时间抽签（MAGIC 流 19s vs 18s）在 18.25 秒处的重施判定必须出现差异，证明持续时间与状态位判定不是空转	W53 负向对照；exit-1 是期望结果，exit 2 崩溃一律失败
 shadowdiff-skills-killundead	shadowdiff	yes	exit-0	java --enable-native-access=ALL-UNNAMED -jar {{jar}} --embedded --skills --skill-case killundead --strict-messages --seed 20260922 --report-dir {{report}}/shadowdiff-skills-killundead	shadowdiff-skills-killundead	W53 圣言术（SKILL_KILLUNDEAD=32）：39 级法师对不死稻草人单体施法，TURN_UNDEAD 流秒杀抽签、击杀死亡帧、+15 经验、地面掉落与训练两侧逐步一致；重登后经验与熟练度保持	W53 首次把圣言术接入 shadowdiff；Java↔Java 确定性对拍，不构成 Delphi/真实客户端证据
 shadowdiff-skills-killundead-negative	shadowdiff	yes	exit-1	java --enable-native-access=ALL-UNNAMED -jar {{jar}} --embedded --skills --skill-case killundead --seed 20260922 --right-seed 99999 --report-dir {{report}}/shadowdiff-skills-killundead-negative	shadowdiff-skills-killundead-negative	圣言术负向对照：右侧换种子后 TURN_UNDEAD 秒杀抽签与击杀判定必须出现差异（首发未命中 vs 秒杀），证明圣言术判定不是空转	W53 负向对照；exit-1 是期望结果，exit 2 崩溃一律失败
+shadowdiff-skills-ghostshield	shadowdiff	yes	exit-0	java --enable-native-access=ALL-UNNAMED -jar {{jar}} --embedded --skills --skill-case ghostshield --strict-messages --seed 20260922 --report-dir {{report}}/shadowdiff-skills-ghostshield	shadowdiff-skills-ghostshield	W54 幽灵盾（SKILL_HANGMAJINBUB=14）：22 级道士背包预种护身符，无符首发只扣 4 MP 的 SM_MAGICFIRE_FAIL、佩戴后四发各烧 100 点耐久（SM_DURACHANGE 进入装备观测面）、{50,51,52} 秒持续抽签（DAMAGE 流）与到期阶梯把 MAC 上界 2-5↔2-10 的升降逐桶钉住（SM_ABILITY 防御字观测面）、重施取 max(剩余,新掷) 且照常训练、重登后瞬态状态清空而耐久/训练持久，两侧逐步一致	W54 首次把 W46 幽灵盾接入 shadowdiff；Java↔Java 确定性对拍，不构成 Delphi/真实客户端证据
+shadowdiff-skills-ghostshield-negative	shadowdiff	yes	exit-1	java --enable-native-access=ALL-UNNAMED -jar {{jar}} --embedded --skills --skill-case ghostshield --seed 20260922 --right-seed 99999 --report-dir {{report}}/shadowdiff-skills-ghostshield-negative	shadowdiff-skills-ghostshield-negative	幽灵盾负向对照：右侧换种子后持续抽签（DAMAGE 流）与训练抽签（SKILL_TRAIN 流）必须出现差异——实测首发训练 3 vs 2、联合窗口在 tick 15 桶以 mac 2-10 vs 2-5 首次拉开，证明防御字观测面不是空转	W54 负向对照；exit-1 是期望结果，exit 2 崩溃一律失败
+shadowdiff-skills-holyarmour	shadowdiff	yes	exit-0	java --enable-native-access=ALL-UNNAMED -jar {{jar}} --embedded --skills --skill-case holyarmour --strict-messages --seed 20260922 --report-dir {{report}}/shadowdiff-skills-holyarmour	shadowdiff-skills-holyarmour	W54 神圣战甲术（SKILL_DEJIWONHO=15）：25 级道士与 ghostshield 同构脚本，btType=0 臂抬高 AC 上界 0-0↔0-5 而 MAC 恒 2-5，把 MagMakeDefenceArea 的两条 btType 臂分开钉住；护身符门、持续阶梯、训练与重登语义同幽灵盾	W54 首次把 W46 神圣战甲术接入 shadowdiff；Java↔Java 确定性对拍，不构成 Delphi/真实客户端证据
+shadowdiff-skills-holyarmour-negative	shadowdiff	yes	exit-1	java --enable-native-access=ALL-UNNAMED -jar {{jar}} --embedded --skills --skill-case holyarmour --seed 20260922 --right-seed 99999 --report-dir {{report}}/shadowdiff-skills-holyarmour-negative	shadowdiff-skills-holyarmour-negative	神圣战甲术负向对照：右侧换种子后持续抽签与训练抽签必须出现差异——实测首发训练 3 vs 2、联合窗口在 tick 15 桶以 ac 0-5 vs 0-0 拉开，证明 btType=0 臂的防御字判定不是空转	W54 负向对照；exit-1 是期望结果，exit 2 崩溃一律失败

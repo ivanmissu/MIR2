@@ -83,7 +83,11 @@ final class G4ReleaseGateTest {
       "shadowdiff-skills-shield",
       "shadowdiff-skills-shield-negative",
       "shadowdiff-skills-killundead",
-      "shadowdiff-skills-killundead-negative");
+      "shadowdiff-skills-killundead-negative",
+      "shadowdiff-skills-ghostshield",
+      "shadowdiff-skills-ghostshield-negative",
+      "shadowdiff-skills-holyarmour",
+      "shadowdiff-skills-holyarmour-negative");
 
   /** Every listed row must prove the harness observes a deliberate divergence. */
   private static final Set<String> NEGATIVE_CONTROL_IDS = Set.of(
@@ -91,7 +95,8 @@ final class G4ReleaseGateTest {
       "shadowdiff-skills-firewall-negative", "shadowdiff-skills-spacemove-negative",
       "shadowdiff-skills-fireboom-negative", "shadowdiff-skills-lightflower-negative",
       "shadowdiff-skills-snowwind-negative", "shadowdiff-skills-shield-negative",
-      "shadowdiff-skills-killundead-negative");
+      "shadowdiff-skills-killundead-negative", "shadowdiff-skills-ghostshield-negative",
+      "shadowdiff-skills-holyarmour-negative");
 
   private record Row(String id, String kind, String blocking, String expect,
       String command, String artifact, String scope, String notes) {}
@@ -205,11 +210,43 @@ final class G4ReleaseGateTest {
         "shadowdiff-skills-spacemove", "shadowdiff-skills-spacemove-negative",
         "shadowdiff-skills-fireboom", "shadowdiff-skills-fireboom-negative",
         "shadowdiff-skills-lightflower", "shadowdiff-skills-lightflower-negative",
-        "shadowdiff-skills-snowwind", "shadowdiff-skills-snowwind-negative")) {
+        "shadowdiff-skills-snowwind", "shadowdiff-skills-snowwind-negative",
+        "shadowdiff-skills-shield", "shadowdiff-skills-shield-negative",
+        "shadowdiff-skills-killundead", "shadowdiff-skills-killundead-negative",
+        "shadowdiff-skills-ghostshield", "shadowdiff-skills-ghostshield-negative",
+        "shadowdiff-skills-holyarmour", "shadowdiff-skills-holyarmour-negative")) {
       Row row = rows().stream().filter(candidate -> candidate.id().equals(id)).findFirst()
           .orElseGet(() -> fail("the skills row disappeared from the manifest: " + id));
       assertTrue(ShadowDiffMain.Args.parse(shadowdiffArgs(row)).containsKey("skills"),
           id + ": must use the dedicated pre-seeded spell scenario");
+    }
+  }
+
+  /** W54: each skill-case gate row must drive its own case, and positives run strict. */
+  @org.junit.jupiter.api.Test
+  void skillCaseRowsDriveTheirOwnCase() {
+    Map<String, String> caseRows = Map.of(
+        "shadowdiff-skills-firewall", "firewall",
+        "shadowdiff-skills-spacemove", "spacemove",
+        "shadowdiff-skills-fireboom", "fireboom",
+        "shadowdiff-skills-lightflower", "lightflower",
+        "shadowdiff-skills-snowwind", "snowwind",
+        "shadowdiff-skills-shield", "shield",
+        "shadowdiff-skills-killundead", "killundead",
+        "shadowdiff-skills-ghostshield", "ghostshield",
+        "shadowdiff-skills-holyarmour", "holyarmour");
+    for (Map.Entry<String, String> entry : caseRows.entrySet()) {
+      Row row = rows().stream().filter(candidate -> candidate.id().equals(entry.getKey()))
+          .findFirst().orElseGet(() -> fail("the skill-case row disappeared: " + entry.getKey()));
+      Map<String, String> options = ShadowDiffMain.Args.parse(shadowdiffArgs(row));
+      assertEquals(entry.getValue(), options.get("skill-case"),
+          entry.getKey() + ": must drive --skill-case " + entry.getValue());
+    }
+    for (String id : List.of("shadowdiff-skills-ghostshield", "shadowdiff-skills-holyarmour")) {
+      Row row = rows().stream().filter(candidate -> candidate.id().equals(id)).findFirst()
+          .orElseGet(() -> fail("the W54 positive row disappeared: " + id));
+      assertTrue(ShadowDiffMain.Args.parse(shadowdiffArgs(row)).containsKey("strict-messages"),
+          id + ": positive rows compare the ident multiset too, not just STATE");
     }
   }
 
